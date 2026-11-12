@@ -11,7 +11,7 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 1. Open the link. On iPhone/iPad, tap Share → **Add to Home Screen** to use it like an app.
 2. In **Settings**, add free keys if you want them:
    - **TMDB** (posters and the movie/show catalog): themoviedb.org → Settings → API
-   - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): faster playback in the app's own player. Without a key, the **free online player** (webtor.io) plays torrents on any device, iPhone included.
+   - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): fastest, and handles every file format. Without a key, your own relay streams torrents into the app for free (MP4 releases on iPhone), with webtor.io as a fallback.
    - **OpenSubtitles / SubDL** (Arabic and English subtitles)
 3. Choose your **Torrent sources** in Settings and start searching.
 
@@ -64,6 +64,8 @@ lib/server/handlers.ts        Fetch-API router, runs in the browser (direct mode
                               (CORS allow-list, optional ACCESS_TOKEN)
 worker/index.ts               optional Cloudflare Worker entry
 lib/runtime.ts                browser-vs-server differences (CORS-safe headers, error messages)
+lib/bt/                       BitTorrent client for the Worker: bencode, HTTP trackers, wire protocol, streaming session
+worker/stream-do.ts           Durable Object serving /api/stream/* (torrent → HTTP video)
 app/
   page.tsx                    App shell: iPhone tabs · iPad dual-pane · desktop sidebar + ⌘K
   layout.tsx, manifest.ts     PWA metadata, safe-area viewport, Cairo/Tajawal/Inter fonts
@@ -109,6 +111,9 @@ public/
 Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
 
 ### Streaming engines
+- **Built-in streaming through your relay (free, plays in the app):** the Cloudflare Worker runs its own download-only BitTorrent client (`lib/bt/`, `worker/stream-do.ts`). One Durable Object per torrent connects to peers over Cloudflare's outbound TCP sockets, fetches the file list from the magnet, downloads pieces in playback order (each SHA-1 verified), and serves the file as a normal HTTP video with Range support. Nothing is stored; pieces stay in memory only while being watched. It's the default when you have a relay and no Debrid key.
+  - Limits that come from Cloudflare Workers: no UDP (so peers come from HTTP trackers and peer exchange, not DHT), about six outbound connections at a time, and no transcoding. On iPhone only MP4/M4V/MOV releases play (YTS releases are MP4); MKV needs Debrid or the free online player.
+  - Verified locally against WebTorrent 3 + bittorrent-tracker in Cloudflare's runtime (`wrangler dev`), with a real video played and seeked in the app. Behaviour against public swarms and the free plan's CPU limits is unverified.
 - **Free online player (default without a Debrid key):** the app opens [webtor.io](https://webtor.io) with the chosen magnet (`https://webtor.io/ext/magnet?url=<magnet>`, the route webtor's browser extension uses). Webtor's servers download the torrent and stream it to any browser, iPhone Safari included, with no account. They also convert MKV to HLS and can search OpenSubtitles. Trade-offs: it's a third-party service that sees what you play, the free plan streams at up to 5 Mbit/s (fine for 1080p, too slow for 4K), and it uses its own player.
   - It opens as a separate page rather than embedded: webtor's iframe embed fails on iPhone Safari with "CSRF token mismatch", because Safari blocks third-party cookies inside iframes.
   - The app's picked Arabic/English subtitles can be downloaded as `.vtt` (via your relay) and uploaded in webtor's player.

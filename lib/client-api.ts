@@ -1,6 +1,14 @@
 'use client';
 import { DEFAULT_API_BASE } from './config';
+import { parseMagnet } from './magnet';
 import { useApp, type ServerCaps } from './store';
+import type { SessionStats } from './bt/session';
+
+export type StreamStats = SessionStats;
+export type StreamPrepare =
+  | { status: 'ready'; fileIdx: number; fileName: string; size: number; mime: string; path: string; stats: StreamStats }
+  | { status: 'pending'; stats: StreamStats }
+  | { status: 'error'; message: string };
 import type { ResolvedStream, SearchResponse, SubtitleCue, SubtitleTrackInfo, TmdbDetails, TmdbEpisode, TmdbItem, TorrentResult } from './types';
 
 /** Backend base URL: Settings override → build-time default (may be '' = not configured). */
@@ -67,6 +75,25 @@ export const api = {
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),
   subtitleCues: (token: string, signal?: AbortSignal) => get<{ cues: SubtitleCue[] }>('/api/subtitles/file', { token }, signal),
+
+  /** Built-in cloud streaming: ask the relay to open the torrent. Poll until `ready`. */
+  async streamPrepare(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<StreamPrepare> {
+    const res = await call(`/api/stream/${r.infoHash}/prepare`, {
+      method: 'POST',
+      headers: { ...headers(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trackers: parseMagnet(r.magnet)?.trackers ?? [], fileIdx: r.fileIdx, ...ctx }),
+      signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return body as StreamPrepare;
+  },
+  streamStatus: (infoHash: string, signal?: AbortSignal) => get<StreamStats>(`/api/stream/${infoHash}/status`, {}, signal),
+  /** Absolute video URL for a prepared stream (token in the query: <video> can't send headers). */
+  streamUrl(path: string): string {
+    const t = useApp.getState().settings.accessToken;
+    return apiBase() + path + (t ? `?t=${encodeURIComponent(t)}` : '');
+  },
 
   async resolveDebrid(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<ResolvedStream> {
     const s = useApp.getState().settings;

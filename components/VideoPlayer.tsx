@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type Hls from 'hls.js';
-import { api, apiBase } from '@/lib/client-api';
+import { api, apiBase, type StreamStats } from '@/lib/client-api';
 import { canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
@@ -25,7 +25,7 @@ import { IconBack, IconCC, IconExpand, IconMute, IconPause, IconPip, IconPlay, I
 import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles } from './subtitles';
 
 
-type Engine = 'debrid' | 'webtorrent' | 'webtor' | 'direct';
+type Engine = 'debrid' | 'cloud' | 'webtorrent' | 'webtor' | 'direct';
 type Phase = 'idle' | 'resolving' | 'ready' | 'error';
 
 interface Source {
@@ -76,6 +76,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [error, setError] = useState<string>();
   const [source, setSource] = useState<Source>();
   const [wtStats, setWtStats] = useState<WebTorrentStats>();
+  const [cloudStats, setCloudStats] = useState<StreamStats>();
   const [engineOverride, setEngineOverride] = useState<Engine>();
 
   const [playing, setPlaying] = useState(false);
@@ -104,9 +105,10 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     if (pref === 'debrid') return debridOk ? 'debrid' : 'Add a Debrid API key in Settings to stream on this device.';
     if (pref === 'webtorrent') return wtOk ? 'webtorrent' : 'WebTorrent needs a desktop Chromium/Firefox browser. Use the free online player on iPhone/iPad.';
     if (pref === 'webtor') return 'webtor';
+    if (pref === 'cloud') return caps?.stream ? 'cloud' : 'Built-in streaming needs your own relay (Settings → Advanced: own backend).';
     if (debridOk) return 'debrid';
-    // No Debrid key: the free online player works on every device, including iPhone.
-    return 'webtor';
+    // No Debrid key: stream through the user's own relay if it supports it, else the free online player.
+    return caps?.stream ? 'cloud' : 'webtor';
   }, [req?.kind, engineOverride, settings, caps]);
 
   useEffect(() => {
@@ -116,7 +118,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     wtRef.current?.destroy();
     wtRef.current = null;
-    setSource(undefined); setError(undefined); setProgress(undefined); setWtStats(undefined); setPanel(false);
+    setSource(undefined); setError(undefined); setProgress(undefined); setWtStats(undefined); setCloudStats(undefined); setPanel(false);
     if (!req) { setPhase('idle'); return; }
 
     const ac = new AbortController();
@@ -128,8 +130,33 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         setSource({ url: req.url!, engine: 'direct', fileName: req.url!.split('/').pop()?.split('?')[0] });
         return;
       }
-      if (engine !== 'debrid' && engine !== 'webtorrent' && engine !== 'webtor') throw new Error(engine);
+      if (engine !== 'debrid' && engine !== 'cloud' && engine !== 'webtorrent' && engine !== 'webtor') throw new Error(engine);
       const r = req.result!;
+
+      if (engine === 'cloud') {
+        setStatus('Opening the torrent on your relay…');
+        const deadline = Date.now() + 120_000;
+        for (;;) {
+          const res = await api.streamPrepare(r, { season: req.season, episode: req.episode }, ac.signal);
+          if (res.status === 'error') throw new Error(res.message);
+          if (res.status === 'ready') {
+            const ext = res.fileName.split('.').pop()?.toLowerCase() ?? '';
+            const playable = ['mp4', 'm4v', 'mov'].includes(ext) || (ext === 'mkv' && canPlayMkv()) || (ext === 'webm' && !isIOS());
+            if (!playable) {
+              throw new Error(`This release is a .${ext} file, which ${isIOS() ? 'iPhone/iPad Safari' : 'this browser'} can’t play directly. Pick an MP4 release (YTS results are MP4) or use the free online player.`);
+            }
+            setCloudStats(res.stats);
+            setSource({ url: api.streamUrl(res.path), engine, fileName: res.fileName, mime: res.mime });
+            return;
+          }
+          const s = res.stats;
+          setStatus(s.peers ? `Connected to ${s.peers} peer${s.peers > 1 ? 's' : ''}, reading the file list…` : `Finding peers… (${s.candidates + s.peersTried} found, ${s.trackersOk} tracker${s.trackersOk === 1 ? '' : 's'} answered)`);
+          if (Date.now() > deadline) {
+            throw new Error(`Couldn’t reach any peers for this torrent through your relay (${s.trackersOk} trackers answered, ${s.peersTried} peers tried${s.lastPeerError ? `, last: ${s.lastPeerError}` : s.lastTrackerError ? `, last: ${s.lastTrackerError}` : ''}). Try a result with more seeders.`);
+          }
+          await sleep(1500, ac.signal);
+        }
+      }
 
       if (engine === 'webtor') {
         setSource({ url: r.magnet, engine, fileName: r.fileName ?? r.title });
@@ -179,6 +206,17 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       wtRef.current = null;
     };
   }, [req?.nonce, engineOverride]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Cloud streaming keep-alive: each ping refills the relay's connection budget and reports speed ──
+  const cloudHash = source?.engine === 'cloud' ? req?.result?.infoHash : undefined;
+  useEffect(() => {
+    if (!cloudHash) { setCloudStats(undefined); return; }
+    const ac = new AbortController();
+    const t = setInterval(() => {
+      api.streamStatus(cloudHash, ac.signal).then(setCloudStats).catch(() => undefined);
+    }, 4000);
+    return () => { clearInterval(t); ac.abort(); };
+  }, [cloudHash]);
 
   // ── Attach source to <video> (native / hls.js / progressive) ───────────────
   useEffect(() => {
@@ -537,6 +575,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
             <div className="max-w-md space-y-3">
               <p className="text-sm text-red-300">{error}</p>
               <div className="flex flex-wrap justify-center gap-2">
+                {req?.kind === 'torrent' && caps?.stream && source?.engine !== 'cloud' && engineOverride !== 'cloud' && (
+                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('cloud')}>Stream via your relay</button>
+                )}
                 {req?.kind === 'torrent' && engineOverride !== 'webtor' && (
                   <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('webtor')}>Try free online player</button>
                 )}
@@ -585,7 +626,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-white">{req.title}{req.season != null ? ` · S${String(req.season).padStart(2, '0')}E${String(req.episode ?? '').padStart(2, '0')}` : ''}</p>
             <p className="truncate text-[11px] text-white/60">
-              {source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
+              {source?.engine === 'cloud' ? 'your relay' : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
+              {source?.engine === 'cloud' && cloudStats && ` · ${cloudStats.peers} peer${cloudStats.peers === 1 ? '' : 's'} · ↓ ${formatBytes(cloudStats.downSpeed)}/s`}
               {wtStats && ` · ${wtStats.numPeers} peers · ↓ ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%`}
             </p>
           </div>

@@ -12,6 +12,15 @@ compatibility_date = "2025-09-01"
 # Serve on https://<name>.<account>.workers.dev (the URL you paste into the app Settings)
 workers_dev = true
 
+# Built-in torrent streaming: one Durable Object per torrent (free plan: SQLite-backed classes).
+[[durable_objects.bindings]]
+name = "STREAM"
+class_name = "TorrentStream"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TorrentStream"]
+
 [vars]
 INDEXERS = "torrentio,torznab,yts,eztv"
 TORRENTIO_URL = "https://torrentio.strem.fun"

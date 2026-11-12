@@ -5,7 +5,7 @@ import type { DebridProvider, MediaType, TorrentResult } from './types';
 
 export type View = 'discover' | 'search' | 'player' | 'settings';
 export type SearchMode = 'catalog' | 'torrent';
-export type EnginePref = 'auto' | 'debrid' | 'webtor' | 'webtorrent';
+export type EnginePref = 'auto' | 'debrid' | 'cloud' | 'webtor' | 'webtorrent';
 
 export interface SubtitleStyle {
   scale: number; // 0.6 – 2
@@ -59,6 +59,8 @@ export interface ServerCaps {
   indexers: string[];
   clientTorznab: boolean;
   accessToken?: boolean;
+  /** Backend can stream torrents itself (built-in cloud streaming). */
+  stream?: boolean;
   /** True when running without a backend (API code runs in the browser). */
   direct?: boolean;
   /** Set when a configured backend could not be reached or rejected us. */

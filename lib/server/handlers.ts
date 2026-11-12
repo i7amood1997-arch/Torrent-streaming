@@ -78,6 +78,7 @@ function config(env: Env) {
     indexers: c.enabled.filter((i) => i !== 'torznab' || !!c.torznabUrl),
     clientTorznab: env.ALLOW_CLIENT_TORZNAB === 'true',
     accessToken: !!env.ACCESS_TOKEN,
+    stream: env.STREAM_ENABLED === 'true',
   });
 }
 

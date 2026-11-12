@@ -49,10 +49,11 @@ export function SettingsPanel() {
 
       <section className="card space-y-4 p-4">
         <h3 className="font-semibold text-white">Streaming engine</h3>
-        <Field label="Engine" hint="Free: webtor.io streams torrents for you on any device, iPhone included. A paid Debrid key is faster and works with the app's own player and subtitle styling.">
+        <Field label="Engine" hint="Free: your own relay downloads the torrent and plays it here in the app (MP4 releases on iPhone). A paid Debrid key is faster and handles every format.">
           <select className="input" value={settings.engine} onChange={(e) => updateSettings({ engine: e.target.value as EnginePref })}>
-            <option value="auto">Auto (Debrid if you have a key, otherwise the free player)</option>
-            <option value="webtor">Free online player (webtor.io, no account)</option>
+            <option value="auto">Auto (Debrid key → your relay → free online player)</option>
+            <option value="cloud" disabled={!caps?.stream}>Built-in streaming (your relay, free, plays in the app)</option>
+            <option value="webtor">Free online player (webtor.io, separate tab)</option>
             <option value="debrid">Debrid (HTTP / HLS)</option>
             <option value="webtorrent" disabled={!platform.webTorrent}>WebTorrent (WebRTC, desktop)</option>
           </select>
