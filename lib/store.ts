@@ -31,6 +31,8 @@ export interface Settings {
   torznabKey: string;
   /** Torrent sources to query (subset of what the API offers). */
   indexers: string[];
+  /** No-backend mode: retry blocked sources through public relays (keyless searches only). */
+  publicRelays: boolean;
   engine: EnginePref;
   subtitle: SubtitleStyle;
 }
@@ -94,6 +96,7 @@ export const DEFAULT_SETTINGS: Settings = {
   torznabUrl: '',
   torznabKey: '',
   indexers: ['torrentio', 'yts', 'eztv'],
+  publicRelays: true,
   engine: 'auto',
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true },
 };

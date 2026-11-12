@@ -18,18 +18,26 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 Keys are saved only in your browser.
 
 ### How it works without a server
-The API code (`lib/server/handlers.ts`) runs **inside the browser** ("direct mode") and calls each service directly. That only works for services that allow requests from other websites (CORS). If a source shows **"blocked by the browser"**, that service refuses direct browser access, and it will only work through the optional backend below.
+The API code (`lib/server/handlers.ts`) runs **inside the browser** ("direct mode") and calls each service directly.
+
+If a site is blocked, either because it refuses requests from websites (CORS) or because your internet provider blocks it, there are two fixes:
+
+1. **Public relays (automatic, on by default):** searches for blocked sites are retried through free public CORS relays (`lib/relays.ts`), and the app remembers which relay worked. Only keyless search requests go through them, never your API keys or your Jackett/Prowlarr address. They can see your search terms, may be slow, and can disappear. Turn them off in Settings → Torrent sources.
+2. **Your own free relay (reliable and private):**
+
+   [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/i7amood1997-arch/Torrent-streaming)
+
+   Tap the button, create or log in to a free Cloudflare account, allow GitHub access, then tap **Deploy**. Paste the resulting `https://….workers.dev` address into **Settings → Advanced → Backend URL**. Your own relay also covers Debrid and subtitle sites, which public relays never handle.
 
 ### Publishing updates
 Every push to the default branch runs `.github/workflows/pages.yml` (lint → test → build → deploy).
 One-time setting: **Settings → Pages → Source: GitHub Actions**.
 
-### Optional: your own backend
-Only needed for sources that show "blocked by the browser", or if you want to keep keys on a server. The same code runs as a free Cloudflare Worker:
+### Own relay from the command line (alternative to the button)
 ```bash
 npx wrangler login && npx wrangler deploy     # prints https://streamdeck-api.<account>.workers.dev
 ```
-Then paste that URL into **Settings → Advanced: own backend**. Server-side keys go in with `npx wrangler secret put NAME`. If you store a Debrid key there, also set `ACCESS_TOKEN`.
+Server-side keys go in with `npx wrangler secret put NAME`. If you store a Debrid key there, also set `ACCESS_TOKEN`.
 
 ## Local development
 

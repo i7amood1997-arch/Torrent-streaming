@@ -9,6 +9,8 @@ import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
 
+const DEPLOY_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/i7amood1997-arch/Torrent-streaming';
+
 const SOURCES = [
   { id: 'torrentio', name: 'Torrentio', help: 'Best for Catalog mode — streams by IMDB id (movies & episodes).' },
   { id: 'yts', name: 'YTS', help: 'Movies, small MP4 encodes (good for iPhone).' },
@@ -102,6 +104,18 @@ export function SettingsPanel() {
             );
           })}
         </div>
+        {caps?.direct && (
+          <label className="flex items-start gap-3 rounded-lg border border-ink-700 p-3">
+            <input type="checkbox" className="mt-1" checked={settings.publicRelays} onChange={(e) => updateSettings({ publicRelays: e.target.checked })} />
+            <span>
+              <span className="block text-sm font-medium text-ink-200">Use public relays when a site is blocked</span>
+              <span className="block text-xs text-ink-400">
+                Free third-party services that fetch blocked sites for you. They can see what you search (never your keys),
+                and may be slow or stop working. For a private, reliable relay, set up your own below.
+              </span>
+            </span>
+          </label>
+        )}
         {settings.indexers.includes('torznab') && (caps?.clientTorznab ? (
           <div className="grid gap-3">
             <Field label="Jackett / Prowlarr Torznab URL" hint="Must be https:// and reachable from the internet, e.g. https://host/api/v2.0/indexers/all/results/torznab">
@@ -130,14 +144,21 @@ export function SettingsPanel() {
           </span>
         </div>
         <p className="text-xs leading-relaxed text-ink-400">
-          Nothing to set up: the app talks to each service directly from your browser. If a source shows
-          “blocked by the browser”, it only works through a small backend (see the README). Leave this empty otherwise.
+          If sources say “blocked” or “unreachable”, your own free relay fixes it reliably and privately (only you use it).
+          One time, about 5 minutes, no coding:
         </p>
+        <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-ink-200">
+          <li>Tap <b>Deploy to Cloudflare</b> below.</li>
+          <li>Create a free Cloudflare account (or log in) and allow it to use your GitHub.</li>
+          <li>Tap <b>Deploy</b> and wait about a minute.</li>
+          <li>Copy the address that ends in <code>.workers.dev</code> and paste it into <b>Backend URL</b> below.</li>
+        </ol>
+        <a className="btn-primary w-full sm:w-auto" href={DEPLOY_URL} target="_blank" rel="noopener noreferrer">Deploy to Cloudflare (free)</a>
         {caps?.offline && <p className="text-xs text-red-300/90">{caps.offline}</p>}
-        <Field label="Backend URL" hint={<>The Cloudflare Worker from this repo (<code>npx wrangler deploy</code>).{DEFAULT_API_BASE && <> Leave empty to use the default: <code className="break-all">{DEFAULT_API_BASE}</code></>}</>}>
+        <Field label="Backend URL" hint={<>Paste your <code>.workers.dev</code> address here. Leave empty to use the app without one.{DEFAULT_API_BASE && <> Leave empty to use the default: <code className="break-all">{DEFAULT_API_BASE}</code></>}</>}>
           <input className="input font-mono text-xs" inputMode="url" placeholder={DEFAULT_API_BASE || 'https://streamdeck-api.<account>.workers.dev'} value={settings.apiBase} onChange={(e) => updateSettings({ apiBase: e.target.value.trim() })} />
         </Field>
-        <Field label="Access token" hint={caps?.accessToken ? 'This backend requires a token.' : 'Only needed if the Worker sets ACCESS_TOKEN.'}>
+        <Field label="Access token" hint={caps?.accessToken ? 'This backend requires a token.' : 'Leave empty unless you set an ACCESS_TOKEN on your relay.'}>
           <input {...secret} value={settings.accessToken} onChange={(e) => updateSettings({ accessToken: e.target.value.trim() })} />
         </Field>
         <button type="button" className="btn-ghost border border-ink-600" onClick={() => api.loadCaps()}>Test connection</button>

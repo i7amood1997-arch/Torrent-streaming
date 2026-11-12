@@ -16,7 +16,8 @@
 import { XMLParser } from 'fast-xml-parser';
 import { buildMagnet, parseMagnet } from './magnet';
 import { parseRelease, parseSize, QUALITY_ORDER } from './release-parser';
-import { describeError, serverOnlyHeaders } from './runtime';
+import { fetchJsonWithRelays } from './relays';
+import { describeError, isBrowser, serverOnlyHeaders } from './runtime';
 import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from './types';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -36,6 +37,8 @@ export interface IndexerConfig {
   eztvUrl: string;
   apibayUrl: string;
   timeoutMs: number;
+  /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
+  publicRelays?: boolean;
   /** Used to translate tmdbId → imdbId when only a TMDB id is supplied. */
   resolveImdbId?: (tmdbId: number, type: 'movie' | 'series') => Promise<string | undefined>;
 }
@@ -55,6 +58,7 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     eztvUrl: trimSlash(env.EZTV_URL || 'https://eztvx.to'),
     apibayUrl: trimSlash(env.APIBAY_URL || 'https://apibay.org'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 9000),
+    publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
 }
 
@@ -385,7 +389,12 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
   };
   const ctx: Ctx = {
     config,
-    fetchJson: async (url, init) => (await fetchWithTimeout(url, init)).json(),
+    // Only keyless JSON indexers (Torrentio, YTS, EZTV, apibay) use fetchJson, so they may fall back to
+    // public relays. Torznab uses fetchText: its URL carries an API key and must never be relayed.
+    fetchJson: async (url, init) => {
+      const direct = async () => (await fetchWithTimeout(url, init)).json();
+      return isBrowser && config.publicRelays ? fetchJsonWithRelays(url, direct, { timeoutMs: config.timeoutMs }) : direct();
+    },
     fetchText: async (url, init) => (await fetchWithTimeout(url, init)).text(),
   };
 

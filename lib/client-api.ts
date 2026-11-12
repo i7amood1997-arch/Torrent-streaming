@@ -12,10 +12,11 @@ export function apiBase(): string {
  * Settings for "direct mode" (no backend): every source is available and the
  * user's own Settings choose which ones run. Keys still come from request headers.
  */
-const DIRECT_ENV: Record<string, string> = {
+const directEnv = (): Record<string, string> => ({
   INDEXERS: 'torrentio,torznab,yts,eztv,apibay',
   ALLOW_CLIENT_TORZNAB: 'true',
-};
+  USE_PUBLIC_RELAYS: String(useApp.getState().settings.publicRelays),
+});
 
 /**
  * Transport: with a backend URL, a normal cross-origin fetch. Without one, the very
@@ -26,7 +27,7 @@ async function call(path: string, init: RequestInit = {}): Promise<Response> {
   if (base) return fetch(base + path, init);
   const { handleApi } = await import('./server/handlers');
   init.signal?.throwIfAborted();
-  return handleApi(new Request(new URL(path, location.origin), init), DIRECT_ENV);
+  return handleApi(new Request(new URL(path, location.origin), init), directEnv());
 }
 
 function headers(): Record<string, string> {
