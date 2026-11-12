@@ -9,6 +9,8 @@
 name = "streamdeck-api"
 main = "worker/index.ts"
 compatibility_date = "2025-09-01"
+# Serve on https://<name>.<account>.workers.dev (the URL you paste into the app Settings)
+workers_dev = true
 
 [vars]
 INDEXERS = "torrentio,torznab,yts,eztv"
