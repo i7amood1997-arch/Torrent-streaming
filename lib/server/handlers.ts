@@ -18,6 +18,7 @@ import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
 import { createTmdbClient, TmdbError } from '../tmdb';
 import { ALL_INDEXERS, configFromEnv, searchTorrents, type IndexerId } from '../torrent-indexer';
+import { describeError } from '../runtime';
 import type { DebridProvider, SearchQuery } from '../types';
 
 export type Env = Record<string, string | undefined>;
@@ -115,7 +116,7 @@ async function search(req: Request, env: Env, sp: URLSearchParams) {
   try {
     return json(await searchTorrents(query, cfg), 200, { 'Cache-Control': 'private, max-age=120' });
   } catch (e) {
-    return err((e as Error).message, 400);
+    return err(describeError(e), 400);
   }
 }
 
@@ -144,7 +145,7 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
         return err('Unknown action', 400);
     }
   } catch (e) {
-    return err((e as Error).message, e instanceof TmdbError ? e.status : 500);
+    return err(describeError(e), e instanceof TmdbError ? e.status : 500);
   }
 }
 
@@ -172,7 +173,7 @@ async function debridResolve(req: Request, env: Env) {
     );
   } catch (e) {
     const status = e instanceof DebridError ? (e.status === 401 || e.status === 403 ? 401 : 502) : 500;
-    return err((e as Error).message, status);
+    return err(describeError(e), status);
   }
 }
 
@@ -202,7 +203,7 @@ async function subtitleFile(req: Request, env: Env, sp: URLSearchParams) {
   try {
     return json({ cues: await fetchSubtitleCues(token, subtitleKeys(req, env)) }, 200, { 'Cache-Control': 'private, max-age=86400' });
   } catch (e) {
-    return err((e as Error).message, 502);
+    return err(describeError(e), 502);
   }
 }
 
@@ -231,7 +232,7 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
       else res = err('Not found', 404);
     } catch (e) {
-      res = err((e as Error).message ?? 'Internal error', 500);
+      res = err(describeError(e) || 'Internal error', 500);
     }
   }
 

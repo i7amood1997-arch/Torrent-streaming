@@ -4,48 +4,39 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 
 > Only stream content you have the rights to access. Indexer sources are configurable and you are responsible for complying with the laws of your country.
 
-## How it's hosted
+## Use it
 
-```
- GitHub Pages (static PWA)                 Cloudflare Worker (free tier)
- https://<user>.github.io/Torrent-streaming ──fetch──▶ https://streamdeck-api.<account>.workers.dev/api/*
-   UI, player, WebTorrent, service worker              indexers · TMDB · Debrid · subtitles (CORS + secrets)
-```
+**https://i7amood1997-arch.github.io/Torrent-streaming/** is hosted free on GitHub Pages. There's no server to set up.
 
-GitHub Pages can only serve static files. Indexer, Debrid and subtitle APIs mostly don't send CORS headers, and server-side keys must stay secret, so the API runs as a small **Cloudflare Worker**. The site works without it, but only for magnet links via WebTorrent on desktop; it shows a "Backend not connected" banner.
+1. Open the link. On iPhone/iPad, tap Share → **Add to Home Screen** to use it like an app.
+2. In **Settings**, add free keys if you want them:
+   - **TMDB** (posters and the movie/show catalog): themoviedb.org → Settings → API
+   - **Real-Debrid / TorBox / Debrid-Link** (needed on iPhone/iPad to play torrents)
+   - **OpenSubtitles / SubDL** (Arabic and English subtitles)
+3. Choose your **Torrent sources** in Settings and start searching.
 
-## Deploy
+Keys are saved only in your browser.
 
-### 1. Site → GitHub Pages
-1. Repository **Settings → Pages → Build and deployment → Source: GitHub Actions** (one-time).
-2. Push to the default branch, or run the **Deploy site to GitHub Pages** workflow manually.
-   It lints, tests, builds the static export with the correct sub-path, and publishes `out/`.
-3. Site URL: `https://i7amood1997-arch.github.io/Torrent-streaming/`
+### How it works without a server
+The API code (`lib/server/handlers.ts`) runs **inside the browser** ("direct mode") and calls each service directly. That only works for services that allow requests from other websites (CORS). If a source shows **"blocked by the browser"**, that service refuses direct browser access, and it will only work through the optional backend below.
 
-### 2. API → Cloudflare Worker
-**From your computer:**
+### Publishing updates
+Every push to the default branch runs `.github/workflows/pages.yml` (lint → test → build → deploy).
+One-time setting: **Settings → Pages → Source: GitHub Actions**.
+
+### Optional: your own backend
+Only needed for sources that show "blocked by the browser", or if you want to keep keys on a server. The same code runs as a free Cloudflare Worker:
 ```bash
-npm install
-npx wrangler login
-npx wrangler deploy        # prints https://streamdeck-api.<account>.workers.dev
-# optional server-side keys (otherwise each user enters their own in Settings):
-npx wrangler secret put TMDB_API_KEY
-npx wrangler secret put ACCESS_TOKEN   # set this if you store Debrid keys on the Worker
+npx wrangler login && npx wrangler deploy     # prints https://streamdeck-api.<account>.workers.dev
 ```
-
-**Or from GitHub Actions:** add the repository secrets `CLOUDFLARE_API_TOKEN` (template "Edit Cloudflare Workers") and `CLOUDFLARE_ACCOUNT_ID`. The **Deploy API Worker** workflow then deploys on every change to `lib/`, `worker/` or `wrangler.toml`.
-
-### 3. Connect them
-Either add the repository **variable** `API_BASE_URL` = your Worker URL (Settings → Secrets and variables → Actions → Variables) and re-run the Pages workflow, or paste the Worker URL into the app's **Settings → API backend**.
-`ALLOWED_ORIGINS` in `wrangler.toml` already allows `https://i7amood1997-arch.github.io`.
+Then paste that URL into **Settings → Advanced: own backend**. Server-side keys go in with `npx wrangler secret put NAME`. If you store a Debrid key there, also set `ACCESS_TOKEN`.
 
 ## Local development
 
 ```bash
 npm install
-cp .env.example .env.local   # NEXT_PUBLIC_API_BASE=http://localhost:8787
-npm run dev:api              # Worker on :8787 (secrets for local dev go in .dev.vars)
-npm run dev                  # UI on :3000
+npm run dev                  # UI on :3000 (direct mode, no backend)
+npm run dev:api              # optional: Worker on :8787 → set NEXT_PUBLIC_API_BASE in .env.local
 npm test                     # unit tests (parsers, indexers, subtitles, Worker handler)
 ```
 
@@ -54,10 +45,11 @@ On iPhone/iPad: open the site in Safari → Share → **Add to Home Screen**.
 ## Architecture
 
 ```
-worker/index.ts               Cloudflare Worker entry → lib/server/handlers.ts
-lib/server/handlers.ts        Fetch-API router: /api/config, /api/search, /api/tmdb,
+lib/server/handlers.ts        Fetch-API router, runs in the browser (direct mode) or in the optional Worker: /api/config, /api/search, /api/tmdb,
                               /api/debrid/resolve, /api/subtitles, /api/subtitles/file
                               (CORS allow-list, optional ACCESS_TOKEN)
+worker/index.ts               optional Cloudflare Worker entry
+lib/runtime.ts                browser-vs-server differences (CORS-safe headers, error messages)
 app/
   page.tsx                    App shell: iPhone tabs · iPad dual-pane · desktop sidebar + ⌘K
   layout.tsx, manifest.ts     PWA metadata, safe-area viewport, Cairo/Tajawal/Inter fonts
@@ -119,7 +111,7 @@ Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNA
 | `⌘/Ctrl K` torrent search · `Space`/`K` play · `F` fullscreen · `←/→` ±10 s (`Shift` ±30) · `↑/↓` volume · `M` mute · `C` subtitles · `[ ]` subtitle delay · `P` PiP · click = play, double-click = fullscreen | tap = controls · double-tap left/right = ∓10 s · double-tap centre = play/pause · horizontal drag = scrub |
 
 ## Security notes
-- API keys entered in Settings live only in the browser's `localStorage`. They're sent as headers to your own Worker, which forwards them to the provider and never stores them.
+- API keys entered in Settings live only in the browser's `localStorage`. In direct mode they go straight to the service they belong to. With a backend, they pass through your own Worker, which never stores them.
 - Keys stored as **Worker secrets** can be used by anyone who can reach the Worker. Set `ACCESS_TOKEN` (and enter it in Settings) before storing a Debrid key there. `ALLOWED_ORIGINS` stops other websites from calling the Worker from a browser, but it doesn't stop scripts.
 - A client-supplied Torznab URL is ignored unless `ALLOW_CLIENT_TORZNAB=true`, so the Worker isn't an open proxy.
 - The subtitle download token only accepts OpenSubtitles file ids or SubDL `/subtitle/*.zip` paths.

@@ -16,6 +16,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { buildMagnet, parseMagnet } from './magnet';
 import { parseRelease, parseSize, QUALITY_ORDER } from './release-parser';
+import { describeError, serverOnlyHeaders } from './runtime';
 import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from './types';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
@@ -376,7 +377,7 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
   const fetchWithTimeout = async (url: string, init?: RequestInit) => {
     const res = await fetch(url, {
       ...init,
-      headers: { 'User-Agent': UA, Accept: 'application/json, application/xml;q=0.9, */*;q=0.8', ...init?.headers },
+      headers: { ...serverOnlyHeaders({ 'User-Agent': UA }), Accept: 'application/json, application/xml;q=0.9, */*;q=0.8', ...init?.headers },
       signal: AbortSignal.timeout(config.timeoutMs),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -395,7 +396,7 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
   const all: TorrentResult[] = [];
   settled.forEach((s, i) => {
     if (s.status === 'fulfilled') all.push(...s.value);
-    else errors.push({ indexer: active[i].id, message: s.reason instanceof Error ? s.reason.message : String(s.reason) });
+    else errors.push({ indexer: active[i].id, message: describeError(s.reason) });
   });
 
   const results = sortBySeeders(mergeResults(all).filter((r) => matchesEpisode(r, q)));

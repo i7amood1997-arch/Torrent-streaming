@@ -29,6 +29,8 @@ export interface Settings {
   subdlKey: string;
   torznabUrl: string;
   torznabKey: string;
+  /** Torrent sources to query (subset of what the API offers). */
+  indexers: string[];
   engine: EnginePref;
   subtitle: SubtitleStyle;
 }
@@ -55,7 +57,9 @@ export interface ServerCaps {
   indexers: string[];
   clientTorznab: boolean;
   accessToken?: boolean;
-  /** Set when the backend could not be reached or rejected us. */
+  /** True when running without a backend (API code runs in the browser). */
+  direct?: boolean;
+  /** Set when a configured backend could not be reached or rejected us. */
   offline?: string;
 }
 
@@ -89,6 +93,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
+  indexers: ['torrentio', 'yts', 'eztv'],
   engine: 'auto',
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true },
 };

@@ -3,6 +3,7 @@
  * Search by IMDB id / TMDB id / release title, Arabic + English first.
  */
 import { unzipSync } from 'fflate';
+import { describeError, serverOnlyHeaders } from './runtime';
 import { decodeSubtitleBytes, parseSubtitles, releaseSimilarity } from './subtitle-parser';
 import type { SubtitleCue, SubtitleTrackInfo } from './types';
 
@@ -71,7 +72,7 @@ async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): 
   else return [];
 
   const res = await fetch(`${OS_API}/subtitles?${p}`, {
-    headers: { 'Api-Key': key, 'User-Agent': ua, Accept: 'application/json' },
+    headers: { 'Api-Key': key, ...serverOnlyHeaders({ 'User-Agent': ua }), Accept: 'application/json' },
     signal: AbortSignal.timeout(9000),
   });
   if (!res.ok) throw new Error(`OpenSubtitles ${res.status}`);
@@ -139,7 +140,7 @@ export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
   const errors: { provider: string; message: string }[] = [];
   settled.forEach((s, i) => {
     if (s.status === 'fulfilled') tracks.push(...s.value);
-    else errors.push({ provider: jobs[i][0], message: String((s.reason as Error)?.message ?? s.reason) });
+    else errors.push({ provider: jobs[i][0], message: describeError(s.reason) });
   });
   if (!jobs.length) errors.push({ provider: 'config', message: 'No subtitle provider key configured (OpenSubtitles or SubDL).' });
   tracks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.downloads ?? 0) - (a.downloads ?? 0));
@@ -155,7 +156,7 @@ export async function fetchSubtitleCues(tokenStr: string, keys: SubtitleKeys): P
     if (!keys.openSubtitles) throw new Error('OpenSubtitles key missing');
     const dl = await fetch(`${OS_API}/download`, {
       method: 'POST',
-      headers: { 'Api-Key': keys.openSubtitles, 'User-Agent': keys.userAgent || DEFAULT_UA, 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: { 'Api-Key': keys.openSubtitles, ...serverOnlyHeaders({ 'User-Agent': keys.userAgent || DEFAULT_UA }), 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ file_id: token.fileId, sub_format: 'srt' }),
       signal: AbortSignal.timeout(9000),
     });

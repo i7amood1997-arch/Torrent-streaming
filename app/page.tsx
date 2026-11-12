@@ -109,7 +109,7 @@ export default function Home() {
           {caps?.offline && listView !== 'settings' && (
             <div className="card mb-4 flex flex-wrap items-center gap-3 border-accent/40 bg-accent/5 p-3 text-sm">
               <p className="min-w-0 flex-1 text-ink-200">
-                <b className="text-accent">Backend not connected.</b> {caps.offline} Search, Debrid and subtitles need the API Worker. Magnet links still play on desktop via WebTorrent.
+                <b className="text-accent">Backend not reachable.</b> {caps.offline} Fix the URL in Settings, or clear it to use the app without a backend.
               </p>
               <button className="btn-primary" onClick={() => setView('settings')}>Set up</button>
             </div>

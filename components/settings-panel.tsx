@@ -9,6 +9,14 @@ import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
 
+const SOURCES = [
+  { id: 'torrentio', name: 'Torrentio', help: 'Best for Catalog mode — streams by IMDB id (movies & episodes).' },
+  { id: 'yts', name: 'YTS', help: 'Movies, small MP4 encodes (good for iPhone).' },
+  { id: 'eztv', name: 'EZTV', help: 'TV episodes (Catalog mode).' },
+  { id: 'apibay', name: 'The Pirate Bay API', help: 'Raw text search of all video.' },
+  { id: 'torznab', name: 'Jackett / Prowlarr', help: 'Your own indexer manager (Torznab).' },
+];
+
 const PROVIDERS: { id: DebridProvider; name: string; help: string }[] = [
   { id: 'realdebrid', name: 'Real-Debrid', help: 'real-debrid.com/apitoken' },
   { id: 'torbox', name: 'TorBox', help: 'torbox.app/settings → API key' },
@@ -36,23 +44,6 @@ export function SettingsPanel() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
       <h2 className="text-lg font-semibold text-white">Settings</h2>
-
-      <section className="card space-y-4 p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="font-semibold text-white">API backend</h3>
-          <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${!caps ? 'bg-ink-700 text-ink-400' : caps.offline ? 'bg-red-500/15 text-red-300' : 'bg-hd/15 text-hd'}`}>
-            {!caps ? 'checking…' : caps.offline ? 'not connected' : 'connected'}
-          </span>
-        </div>
-        {caps?.offline && <p className="text-xs text-red-300/90">{caps.offline}</p>}
-        <Field label="Worker URL" hint={<>The Cloudflare Worker from this repo (<code>npx wrangler deploy</code>).{DEFAULT_API_BASE && <> Leave empty to use the default: <code className="break-all">{DEFAULT_API_BASE}</code></>}</>}>
-          <input className="input font-mono text-xs" inputMode="url" placeholder={DEFAULT_API_BASE || 'https://streamdeck-api.<account>.workers.dev'} value={settings.apiBase} onChange={(e) => updateSettings({ apiBase: e.target.value.trim() })} />
-        </Field>
-        <Field label="Access token" hint={caps?.accessToken ? 'This backend requires a token.' : 'Only needed if the Worker sets ACCESS_TOKEN.'}>
-          <input {...secret} value={settings.accessToken} onChange={(e) => updateSettings({ accessToken: e.target.value.trim() })} />
-        </Field>
-        <button type="button" className="btn-ghost border border-ink-600" onClick={() => api.loadCaps()}>Test connection</button>
-      </section>
 
       <section className="card space-y-4 p-4">
         <h3 className="font-semibold text-white">Streaming engine</h3>
@@ -94,20 +85,35 @@ export function SettingsPanel() {
       </section>
 
       <section className="card space-y-4 p-4">
-        <h3 className="font-semibold text-white">Indexers</h3>
-        <p className="text-sm text-ink-400">Enabled on server: <span className="text-ink-200">{caps?.indexers.join(', ') || '—'}</span></p>
-        {caps?.clientTorznab ? (
-          <>
-            <Field label="Torznab URL (Jackett / Prowlarr)" hint="e.g. http://host:9117/api/v2.0/indexers/all/results/torznab">
+        <h3 className="font-semibold text-white">Torrent sources</h3>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {SOURCES.map((src) => {
+            const on = settings.indexers.includes(src.id);
+            const offered = !caps || caps.indexers.includes(src.id) || (src.id === 'torznab' && caps.clientTorznab);
+            return (
+              <label key={src.id} className={`flex items-start gap-3 rounded-lg border p-3 ${on ? 'border-accent/50 bg-accent/5' : 'border-ink-700'} ${offered ? '' : 'opacity-40'}`}>
+                <input type="checkbox" className="mt-1" disabled={!offered} checked={on}
+                  onChange={(e) => updateSettings({ indexers: e.target.checked ? [...settings.indexers, src.id] : settings.indexers.filter((i) => i !== src.id) })} />
+                <span>
+                  <span className="block text-sm font-medium text-ink-200">{src.name}</span>
+                  <span className="block text-xs text-ink-400">{src.help}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+        {settings.indexers.includes('torznab') && (caps?.clientTorznab ? (
+          <div className="grid gap-3">
+            <Field label="Jackett / Prowlarr Torznab URL" hint="Must be https:// and reachable from the internet, e.g. https://host/api/v2.0/indexers/all/results/torznab">
               <input className="input font-mono text-xs" value={settings.torznabUrl} onChange={(e) => updateSettings({ torznabUrl: e.target.value.trim() })} />
             </Field>
             <Field label="Torznab API key">
               <input {...secret} value={settings.torznabKey} onChange={(e) => updateSettings({ torznabKey: e.target.value.trim() })} />
             </Field>
-          </>
+          </div>
         ) : (
-          <p className="text-xs text-ink-400">Configure Jackett/Prowlarr with <code>TORZNAB_URL</code> / <code>TORZNAB_API_KEY</code> on the server (or set <code>ALLOW_CLIENT_TORZNAB=true</code> to enter it here).</p>
-        )}
+          <p className="text-xs text-ink-400">Torznab is configured on the backend (<code>TORZNAB_URL</code>).</p>
+        ))}
       </section>
 
       {platform.ios && (
@@ -116,8 +122,29 @@ export function SettingsPanel() {
         </section>
       )}
 
+      <section className="card space-y-4 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-semibold text-white">Advanced: own backend <span className="font-normal text-ink-400">(optional)</span></h3>
+          <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${!caps || caps.direct ? 'bg-ink-700 text-ink-400' : caps.offline ? 'bg-red-500/15 text-red-300' : 'bg-hd/15 text-hd'}`}>
+            {!caps ? 'checking…' : caps.direct ? 'not needed' : caps.offline ? 'not connected' : 'connected'}
+          </span>
+        </div>
+        <p className="text-xs leading-relaxed text-ink-400">
+          Nothing to set up: the app talks to each service directly from your browser. If a source shows
+          “blocked by the browser”, it only works through a small backend (see the README). Leave this empty otherwise.
+        </p>
+        {caps?.offline && <p className="text-xs text-red-300/90">{caps.offline}</p>}
+        <Field label="Backend URL" hint={<>The Cloudflare Worker from this repo (<code>npx wrangler deploy</code>).{DEFAULT_API_BASE && <> Leave empty to use the default: <code className="break-all">{DEFAULT_API_BASE}</code></>}</>}>
+          <input className="input font-mono text-xs" inputMode="url" placeholder={DEFAULT_API_BASE || 'https://streamdeck-api.<account>.workers.dev'} value={settings.apiBase} onChange={(e) => updateSettings({ apiBase: e.target.value.trim() })} />
+        </Field>
+        <Field label="Access token" hint={caps?.accessToken ? 'This backend requires a token.' : 'Only needed if the Worker sets ACCESS_TOKEN.'}>
+          <input {...secret} value={settings.accessToken} onChange={(e) => updateSettings({ accessToken: e.target.value.trim() })} />
+        </Field>
+        <button type="button" className="btn-ghost border border-ink-600" onClick={() => api.loadCaps()}>Test connection</button>
+      </section>
+
       <p className="text-xs leading-relaxed text-ink-400">
-        Keys are stored only in this browser and are sent to this app’s own server routes, which forward them to the provider. Only stream content you have the rights to access; you are responsible for complying with the laws of your country.
+        Keys are stored only in this browser and are sent only to the service they belong to (or to your own backend, if you set one). Only stream content you have the rights to access; you are responsible for complying with the laws of your country.
       </p>
     </div>
   );

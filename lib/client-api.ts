@@ -8,10 +8,25 @@ export function apiBase(): string {
   return (useApp.getState().settings.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
 }
 
-function endpoint(path: string): string {
+/**
+ * Settings for "direct mode" (no backend): every source is available and the
+ * user's own Settings choose which ones run. Keys still come from request headers.
+ */
+const DIRECT_ENV: Record<string, string> = {
+  INDEXERS: 'torrentio,torznab,yts,eztv,apibay',
+  ALLOW_CLIENT_TORZNAB: 'true',
+};
+
+/**
+ * Transport: with a backend URL, a normal cross-origin fetch. Without one, the very
+ * same handler code runs in this browser tab (lazy-loaded) and calls each service directly.
+ */
+async function call(path: string, init: RequestInit = {}): Promise<Response> {
   const base = apiBase();
-  if (!base) throw new Error('No API backend configured — add your Worker URL in Settings.');
-  return base + path;
+  if (base) return fetch(base + path, init);
+  const { handleApi } = await import('./server/handlers');
+  init.signal?.throwIfAborted();
+  return handleApi(new Request(new URL(path, location.origin), init), DIRECT_ENV);
 }
 
 function headers(): Record<string, string> {
@@ -33,7 +48,7 @@ function headers(): Record<string, string> {
 async function get<T>(path: string, params: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
-  const res = await fetch(`${endpoint(path)}?${qs}`, { headers: headers(), signal });
+  const res = await call(`${path}?${qs}`, { headers: headers(), signal });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body as T;
@@ -46,7 +61,7 @@ export const api = {
   tmdbSeason: (id: number, season: number) => get<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
 
   search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
-    get<SearchResponse>('/api/search', p, signal),
+    get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
 
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),
@@ -54,7 +69,7 @@ export const api = {
 
   async resolveDebrid(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<ResolvedStream> {
     const s = useApp.getState().settings;
-    const res = await fetch(endpoint('/api/debrid/resolve'), {
+    const res = await call('/api/debrid/resolve', {
       method: 'POST',
       headers: { ...headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: s.debridProvider, magnet: r.magnet, fileIdx: r.fileIdx, ...ctx }),
@@ -65,20 +80,24 @@ export const api = {
     return body as ResolvedStream;
   },
 
-  /** Probe the backend. On failure, caps get an `offline` reason so the UI can explain instead of hanging. */
+  /** Probe capabilities. Direct mode never "fails"; a configured-but-unreachable backend sets `offline`. */
   async loadCaps() {
+    const set = useApp.getState().setCaps;
+    const base = apiBase();
+    if (!base) {
+      const res = await call('/api/config');
+      return set({ ...(await res.json()), direct: true });
+    }
     const offline = (reason: string): ServerCaps => ({
       tmdb: false, debrid: { realdebrid: false, torbox: false, debridlink: false },
       subtitles: { opensubtitles: false, subdl: false }, indexers: [], clientTorznab: false, offline: reason,
     });
-    const set = useApp.getState().setCaps;
-    if (!apiBase()) return set(offline('No API backend configured yet.'));
     try {
-      const res = await fetch(endpoint('/api/config'), { headers: headers(), signal: AbortSignal.timeout(8000) });
+      const res = await fetch(base + '/api/config', { headers: headers(), signal: AbortSignal.timeout(8000) });
       if (!res.ok) return set(offline(`Backend responded with HTTP ${res.status}.`));
       set(await res.json());
     } catch (e) {
-      set(offline(`Can't reach the backend at ${apiBase()} (${(e as Error).message}).`));
+      set(offline(`Can't reach the backend at ${base} (${(e as Error).message}).`));
     }
   },
 };
