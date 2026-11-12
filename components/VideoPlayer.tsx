@@ -23,7 +23,7 @@ import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
 import { IconBack, IconCC, IconExpand, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
 import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles } from './subtitles';
-import { WebtorPlayer, type WebtorSubtitle } from './webtor-player';
+
 
 type Engine = 'debrid' | 'webtorrent' | 'webtor' | 'direct';
 type Phase = 'idle' | 'resolving' | 'ready' | 'error';
@@ -51,6 +51,13 @@ const fmtTime = (s: number) => {
 };
 
 const resumeKey = (id: string) => `resume:${id}`;
+
+/**
+ * webtor.io opens a magnet as a top-level page via /ext/magnet?url=… (the route its
+ * browser extension uses). Its embedded iframe player fails on iPhone Safari with
+ * "CSRF token mismatch" because Safari blocks third-party cookies inside iframes.
+ */
+const webtorUrl = (magnet: string) => `https://webtor.io/ext/magnet?url=${encodeURIComponent(magnet)}`;
 
 export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const req = useApp((s) => s.nowPlaying);
@@ -428,30 +435,49 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
   // ── Render ────────────────────────────────────────────────────────────────
   if (source?.engine === 'webtor' && req && phase !== 'error') {
-    // Pass auto-selected Arabic/English subtitles as VTT links served by the user's own relay (if any).
+    // Subtitle download links (via the user's own relay), for uploading into webtor's player if needed.
     const base = apiBase();
-    const webtorSubs: WebtorSubtitle[] = base && !settings.accessToken
+    const subLinks = base && !settings.accessToken
       ? LANGS.flatMap((l) => {
           const t = subs.loaded[l]?.info;
-          return t?.token ? [{ srclang: l, label: l === 'ar' ? 'العربية' : 'English', src: `${base}/api/subtitles/file?format=vtt${l === 'ar' ? '&rtl=1' : ''}&token=${encodeURIComponent(t.token)}`, default: l === settings.subtitle.primaryLang }] : [];
+          return t?.token ? [{ lang: l, href: `${base}/api/subtitles/file?format=vtt${l === 'ar' ? '&rtl=1' : ''}&token=${encodeURIComponent(t.token)}` }] : [];
         })
       : [];
     return (
       <div className="relative w-full">
-        <div className="relative aspect-video w-full overflow-hidden bg-black md:rounded-xl">
-          <WebtorPlayer
-            magnet={source.url}
-            title={req.title}
-            imdbId={req.imdbId}
-            subtitles={webtorSubs}
-            onError={(m) => { setError(m); setPhase('error'); }}
-          />
+        <div className="relative grid aspect-video w-full place-items-center overflow-hidden bg-gradient-to-b from-ink-900 to-black p-6 text-center md:rounded-xl">
+          <div className="max-w-sm space-y-4">
+            <p className="text-sm text-ink-200">Ready to play with the free online player.</p>
+            <a href={webtorUrl(source.url)} target="_blank" rel="noopener noreferrer" className="btn-primary px-6 py-3 text-base">
+              ▶ Play free on webtor.io
+            </a>
+            {req.result?.quality === '4K' && (
+              <p className="rounded-lg bg-accent/10 px-3 py-2 text-xs text-accent">
+                webtor’s free plan streams at up to 5 Mbit/s, which is too slow for 4K. Go back and pick a 1080p or 720p result for smooth playback.
+              </p>
+            )}
+            <p className="text-[11px] leading-relaxed text-ink-400">
+              Opens webtor.io in a new tab. Their servers fetch the torrent, so it may take a minute to start.
+            </p>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-[11px] text-ink-400 md:px-0">
-          {onBack && <button className="btn-ghost -ml-1 px-2 py-1 text-xs md:hidden" onClick={onBack}>← Results</button>}
-          <span>Free online player by webtor.io. It may take a minute to start, and speed depends on its free servers.</span>
-          {req.kind === 'torrent' && hasDebrid(settings, caps) && (
-            <button className="btn-ghost border border-ink-600 px-2 py-1 text-xs" onClick={() => setEngineOverride('debrid')}>Use Debrid</button>
+        <div className="space-y-2 px-3 py-2 text-[11px] text-ink-400 md:px-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {onBack && <button className="btn-ghost -ml-1 px-2 py-1 text-xs md:hidden" onClick={onBack}>← Results</button>}
+            {req.kind === 'torrent' && hasDebrid(settings, caps) && (
+              <button className="btn-ghost border border-ink-600 px-2 py-1 text-xs" onClick={() => setEngineOverride('debrid')}>Use Debrid instead</button>
+            )}
+          </div>
+          <p>Subtitles: in webtor’s player, tap the subtitles button. It can search OpenSubtitles itself.</p>
+          {subLinks.length > 0 && (
+            <p className="flex flex-wrap items-center gap-2">
+              <span>Or save the app’s picks and upload them there:</span>
+              {subLinks.map((s) => (
+                <a key={s.lang} href={s.href} download={`${s.lang}.vtt`} target="_blank" rel="noopener noreferrer" className="pill border-ink-600 text-ink-200">
+                  {s.lang === 'ar' ? 'العربية .vtt' : 'English .vtt'}
+                </a>
+              ))}
+            </p>
           )}
         </div>
       </div>
