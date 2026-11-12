@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type Hls from 'hls.js';
-import { api } from '@/lib/client-api';
+import { api, apiBase } from '@/lib/client-api';
 import { canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
@@ -23,8 +23,9 @@ import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
 import { IconBack, IconCC, IconExpand, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
 import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles } from './subtitles';
+import { WebtorPlayer, type WebtorSubtitle } from './webtor-player';
 
-type Engine = 'debrid' | 'webtorrent' | 'direct';
+type Engine = 'debrid' | 'webtorrent' | 'webtor' | 'direct';
 type Phase = 'idle' | 'resolving' | 'ready' | 'error';
 
 interface Source {
@@ -94,12 +95,11 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const debridOk = hasDebrid(settings, caps);
     const wtOk = supportsWebTorrent();
     if (pref === 'debrid') return debridOk ? 'debrid' : 'Add a Debrid API key in Settings to stream on this device.';
-    if (pref === 'webtorrent') return wtOk ? 'webtorrent' : 'WebTorrent needs a desktop Chromium/Firefox browser. Use a Debrid service on iPhone/iPad.';
+    if (pref === 'webtorrent') return wtOk ? 'webtorrent' : 'WebTorrent needs a desktop Chromium/Firefox browser. Use the free online player on iPhone/iPad.';
+    if (pref === 'webtor') return 'webtor';
     if (debridOk) return 'debrid';
-    if (wtOk) return 'webtorrent';
-    return isIOS()
-      ? 'iPhone/iPad Safari cannot stream torrents peer-to-peer. Add a Real-Debrid, TorBox or Debrid-Link key in Settings.'
-      : 'No streaming engine available. Add a Debrid key in Settings.';
+    // No Debrid key: the free online player works on every device, including iPhone.
+    return 'webtor';
   }, [req?.kind, engineOverride, settings, caps]);
 
   useEffect(() => {
@@ -121,8 +121,14 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         setSource({ url: req.url!, engine: 'direct', fileName: req.url!.split('/').pop()?.split('?')[0] });
         return;
       }
-      if (engine !== 'debrid' && engine !== 'webtorrent') throw new Error(engine);
+      if (engine !== 'debrid' && engine !== 'webtorrent' && engine !== 'webtor') throw new Error(engine);
       const r = req.result!;
+
+      if (engine === 'webtor') {
+        setSource({ url: r.magnet, engine, fileName: r.fileName ?? r.title });
+        setPhase('ready');
+        return;
+      }
 
       if (engine === 'webtorrent') {
         setStatus('Connecting to WebRTC peers…');
@@ -172,7 +178,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const video = videoRef.current;
     hlsRef.current?.destroy();
     hlsRef.current = null;
-    if (!video || !source) {
+    if (!video || !source || source.engine === 'webtor') {
       if (video) { video.removeAttribute('src'); video.load(); }
       return;
     }
@@ -421,6 +427,37 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   }, [req, seekBy]);
 
   // ── Render ────────────────────────────────────────────────────────────────
+  if (source?.engine === 'webtor' && req && phase !== 'error') {
+    // Pass auto-selected Arabic/English subtitles as VTT links served by the user's own relay (if any).
+    const base = apiBase();
+    const webtorSubs: WebtorSubtitle[] = base && !settings.accessToken
+      ? LANGS.flatMap((l) => {
+          const t = subs.loaded[l]?.info;
+          return t?.token ? [{ srclang: l, label: l === 'ar' ? 'العربية' : 'English', src: `${base}/api/subtitles/file?format=vtt${l === 'ar' ? '&rtl=1' : ''}&token=${encodeURIComponent(t.token)}`, default: l === settings.subtitle.primaryLang }] : [];
+        })
+      : [];
+    return (
+      <div className="relative w-full">
+        <div className="relative aspect-video w-full overflow-hidden bg-black md:rounded-xl">
+          <WebtorPlayer
+            magnet={source.url}
+            title={req.title}
+            imdbId={req.imdbId}
+            subtitles={webtorSubs}
+            onError={(m) => { setError(m); setPhase('error'); }}
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 text-[11px] text-ink-400 md:px-0">
+          {onBack && <button className="btn-ghost -ml-1 px-2 py-1 text-xs md:hidden" onClick={onBack}>← Results</button>}
+          <span>Free online player by webtor.io. It may take a minute to start, and speed depends on its free servers.</span>
+          {req.kind === 'torrent' && hasDebrid(settings, caps) && (
+            <button className="btn-ghost border border-ink-600 px-2 py-1 text-xs" onClick={() => setEngineOverride('debrid')}>Use Debrid</button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const showSubs = !subsHidden && LANGS.some((l) => subs.loaded[l]?.cues.length);
   const shownTime = scrub ?? time;
 
@@ -474,6 +511,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
             <div className="max-w-md space-y-3">
               <p className="text-sm text-red-300">{error}</p>
               <div className="flex flex-wrap justify-center gap-2">
+                {req?.kind === 'torrent' && engineOverride !== 'webtor' && (
+                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('webtor')}>Try free online player</button>
+                )}
                 {req?.kind === 'torrent' && supportsWebTorrent() && source?.engine !== 'webtorrent' && (
                   <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('webtorrent')}>Try WebTorrent</button>
                 )}

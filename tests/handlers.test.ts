@@ -48,3 +48,13 @@ describe('codepage fallback', () => {
     expect(decodeSubtitleBytes(new Uint8Array([0xd3, 0xe1, 0xc7, 0xe3]), 'ar')).toBe('سلام');
   });
 });
+
+describe('subtitle VTT for external players', () => {
+  it('rejects bad tokens and keeps CORS restricted elsewhere', async () => {
+    const env = { ALLOWED_ORIGINS: 'https://u.github.io' };
+    const bad = await handleApi(req('/api/subtitles/file?format=vtt&token=bogus', { headers: { Origin: 'https://webtor.io' } }), env);
+    expect(bad.status).toBe(502);
+    expect(bad.headers.get('access-control-allow-origin')).toBeNull();
+    expect(bad.headers.get('x-public-cors')).toBeNull();
+  });
+});

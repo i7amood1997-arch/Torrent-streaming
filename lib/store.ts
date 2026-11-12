@@ -5,7 +5,7 @@ import type { DebridProvider, MediaType, TorrentResult } from './types';
 
 export type View = 'discover' | 'search' | 'player' | 'settings';
 export type SearchMode = 'catalog' | 'torrent';
-export type EnginePref = 'auto' | 'debrid' | 'webtorrent';
+export type EnginePref = 'auto' | 'debrid' | 'webtor' | 'webtorrent';
 
 export interface SubtitleStyle {
   scale: number; // 0.6 – 2

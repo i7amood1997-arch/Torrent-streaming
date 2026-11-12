@@ -11,7 +11,7 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 1. Open the link. On iPhone/iPad, tap Share → **Add to Home Screen** to use it like an app.
 2. In **Settings**, add free keys if you want them:
    - **TMDB** (posters and the movie/show catalog): themoviedb.org → Settings → API
-   - **Real-Debrid / TorBox / Debrid-Link** (needed on iPhone/iPad to play torrents)
+   - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): faster playback in the app's own player. Without a key, the **free online player** (webtor.io) plays torrents on any device, iPhone included.
    - **OpenSubtitles / SubDL** (Arabic and English subtitles)
 3. Choose your **Torrent sources** in Settings and start searching.
 
@@ -109,6 +109,7 @@ public/
 Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
 
 ### Streaming engines
+- **Free online player (default without a Debrid key):** webtor.io's embeddable player ([embed-sdk-js](https://github.com/webtor-io/embed-sdk-js), pinned 0.2.19). Webtor's servers download the torrent and stream it to any browser, iPhone Safari included, with no account. Trade-offs: it's a third-party service that sees what you play, speed depends on its free capacity, and it uses its own player UI. Arabic/English subtitles found by the app are passed to it as VTT links when you use your own relay.
 - **Debrid (primary, required on iOS):** adds the magnet, selects the right file (`fileIdx` → `SxxEyy` match → largest video), polls while uncached (progress bar), then returns a direct link. For Real-Debrid, an **HLS transcode** is requested and preferred on iOS, so MKV/HEVC releases still play in Safari.
 - **WebTorrent (desktop Chromium/Firefox):** WebRTC peers only, streamed to `<video>` via the service worker. Used automatically when no Debrid key is set.
 - Playback: native HLS on Safari, `hls.js` elsewhere, progressive HTTP for files; resume position saved per torrent.

@@ -19,6 +19,7 @@ import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtit
 import { createTmdbClient, TmdbError } from '../tmdb';
 import { ALL_INDEXERS, configFromEnv, searchTorrents, type IndexerId } from '../torrent-indexer';
 import { describeError } from '../runtime';
+import { toVtt } from '../subtitle-parser';
 import type { DebridProvider, SearchQuery } from '../types';
 
 export type Env = Record<string, string | undefined>;
@@ -203,7 +204,14 @@ async function subtitleFile(req: Request, env: Env, sp: URLSearchParams) {
   const token = sp.get('token');
   if (!token) return err('token required', 400);
   try {
-    return json({ cues: await fetchSubtitleCues(token, subtitleKeys(req, env)) }, 200, { 'Cache-Control': 'private, max-age=86400' });
+    const cues = await fetchSubtitleCues(token, subtitleKeys(req, env));
+    if (sp.get('format') === 'vtt') {
+      // For external players (webtor.io iframe): plain WebVTT, readable from any origin.
+      return new Response(toVtt(cues, 0, sp.get('rtl') === '1'), {
+        headers: { 'Content-Type': 'text/vtt; charset=utf-8', 'Cache-Control': 'public, max-age=86400', 'X-Public-Cors': '1' },
+      });
+    }
+    return json({ cues }, 200, { 'Cache-Control': 'private, max-age=86400' });
   } catch (e) {
     return err(describeError(e), 502);
   }
@@ -239,5 +247,10 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
   }
 
   for (const [k, v] of Object.entries(cors)) res.headers.set(k, v);
+  // Subtitle VTT files contain no secrets and are fetched by third-party players' own origin.
+  if (res.headers.get('X-Public-Cors')) {
+    res.headers.delete('X-Public-Cors');
+    res.headers.set('Access-Control-Allow-Origin', '*');
+  }
   return res;
 }
