@@ -73,3 +73,32 @@ describe('merge/sort/filter', () => {
     expect(textQueryFor({ title: 'Dune', year: 2021 })).toBe('Dune 2021');
   });
 });
+
+describe('YTS mirrors', async () => {
+  const { fetchFromMirrors, configFromEnv, YTS_MIRRORS } = await import('@/lib/torrent-indexer');
+  it('falls through dead mirrors and remembers the working one', async () => {
+    const calls: string[] = [];
+    const fetchJson = async (url: string) => {
+      calls.push(new URL(url).host);
+      if (url.startsWith('https://dead')) throw new Error('HTTP 530');
+      if (url.startsWith('https://html')) return '<html>parked</html>' as any;
+      return { status: 'ok', data: { movies: [] } };
+    };
+    const valid = (d: any) => d?.status === 'ok';
+    await fetchFromMirrors(['https://dead.example', 'https://html.example', 'https://good.example'], '/x', fetchJson, valid);
+    expect(calls).toEqual(['dead.example', 'html.example', 'good.example']);
+    calls.length = 0;
+    await fetchFromMirrors(['https://dead.example', 'https://html.example', 'https://good.example'], '/x', fetchJson, valid);
+    expect(calls).toEqual(['good.example']);
+  });
+  it('reports every mirror when all fail', async () => {
+    await expect(fetchFromMirrors(['https://a.example', 'https://b.example'], '/x', async () => { throw new Error('HTTP 530'); }, () => true))
+      .rejects.toThrow(/a\.example: HTTP 530; b\.example: HTTP 530/);
+  });
+  it('puts configured URLs first, then known mirrors, without duplicates', () => {
+    const urls = configFromEnv({ YTS_URL: 'https://yts.lt/, https://custom.example' }).ytsUrls;
+    expect(urls.slice(0, 2)).toEqual(['https://yts.lt', 'https://custom.example']);
+    expect(urls).toHaveLength(new Set(urls).size);
+    expect(urls).toEqual(expect.arrayContaining(YTS_MIRRORS));
+  });
+});

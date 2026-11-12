@@ -33,7 +33,8 @@ export interface IndexerConfig {
   torrentioOptions?: string;
   torznabUrl?: string;
   torznabApiKey?: string;
-  ytsUrl: string;
+  /** YTS mirrors, tried in order; the one that answers is remembered. */
+  ytsUrls: string[];
   eztvUrl: string;
   apibayUrl: string;
   timeoutMs: number;
@@ -54,7 +55,8 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     torrentioOptions: env.TORRENTIO_OPTIONS || undefined,
     torznabUrl: env.TORZNAB_URL ? trimSlash(env.TORZNAB_URL) : undefined,
     torznabApiKey: env.TORZNAB_API_KEY || undefined,
-    ytsUrl: trimSlash(env.YTS_URL || 'https://yts.mx'),
+    // YTS changes domain often (yts.mx died in 2025). Configured URL(s) first, then known mirrors.
+    ytsUrls: [...new Set([...(env.YTS_URL ?? '').split(','), ...YTS_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
     eztvUrl: trimSlash(env.EZTV_URL || 'https://eztvx.to'),
     apibayUrl: trimSlash(env.APIBAY_URL || 'https://apibay.org'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 9000),
@@ -233,6 +235,29 @@ const torznab: IndexerAdapter = {
 
 // ─── YTS (movies) ───────────────────────────────────────────────────────────
 
+export const YTS_MIRRORS = ['https://yts.bz', 'https://yts.lt', 'https://yts.gg', 'https://yts.am', 'https://yts.ag', 'https://yts.mx'];
+
+/** Mirror that answered last (per process / page session) — tried first next time. */
+let ytsPreferred: string | undefined;
+
+/** Try YTS mirrors in order until one returns valid API JSON. */
+export async function fetchFromMirrors<T>(mirrors: string[], path: string, fetchJson: (url: string) => Promise<T>, isValid: (d: T) => boolean): Promise<T> {
+  const order = ytsPreferred && mirrors.includes(ytsPreferred) ? [ytsPreferred, ...mirrors.filter((m) => m !== ytsPreferred)] : mirrors;
+  const failures: string[] = [];
+  for (const base of order) {
+    try {
+      const data = await fetchJson(base + path);
+      if (!isValid(data)) throw new Error('unexpected response');
+      ytsPreferred = base;
+      return data;
+    } catch (e) {
+      failures.push(`${new URL(base).host}: ${describeError(e)}`);
+    }
+  }
+  ytsPreferred = undefined;
+  throw new Error(`all mirrors failed (${failures.join('; ')})`);
+}
+
 interface YtsMovie {
   title_long: string;
   imdb_code: string;
@@ -244,8 +269,11 @@ const yts: IndexerAdapter = {
   supports: (q) => q.type !== 'series' && !!(q.imdbId || textQueryFor(q)),
   async search(q, { config, fetchJson }) {
     const term = q.imdbId ?? textQueryFor(q)!;
-    const data = await fetchJson<{ data?: { movies?: YtsMovie[] } }>(
-      `${config.ytsUrl}/api/v2/list_movies.json?limit=20&query_term=${encodeURIComponent(term)}`,
+    const data = await fetchFromMirrors<{ status?: string; data?: { movies?: YtsMovie[] } }>(
+      config.ytsUrls,
+      `/api/v2/list_movies.json?limit=20&query_term=${encodeURIComponent(term)}`,
+      (url) => fetchJson(url),
+      (d) => d?.status === 'ok' && typeof d.data === 'object',
     );
     const out: TorrentResult[] = [];
     for (const m of data.data?.movies ?? []) {

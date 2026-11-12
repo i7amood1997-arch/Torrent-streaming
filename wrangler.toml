@@ -15,7 +15,8 @@ workers_dev = true
 [vars]
 INDEXERS = "torrentio,torznab,yts,eztv"
 TORRENTIO_URL = "https://torrentio.strem.fun"
-YTS_URL = "https://yts.mx"
+# Comma-separated; known mirrors are tried automatically after these.
+YTS_URL = "https://yts.bz,https://yts.lt"
 EZTV_URL = "https://eztvx.to"
 APIBAY_URL = "https://apibay.org"
 OPENSUBTITLES_USER_AGENT = "StreamdeckPWA v0.1"

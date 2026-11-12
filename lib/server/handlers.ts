@@ -114,7 +114,9 @@ async function search(req: Request, env: Env, sp: URLSearchParams) {
   }
 
   try {
-    return json(await searchTorrents(query, cfg), 200, { 'Cache-Control': 'private, max-age=120' });
+    const result = await searchTorrents(query, cfg);
+    // Don't let the browser cache a result that contains source failures — retrying should really retry.
+    return json(result, 200, { 'Cache-Control': result.errors.length ? 'no-store' : 'private, max-age=120' });
   } catch (e) {
     return err(describeError(e), 400);
   }
