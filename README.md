@@ -45,8 +45,14 @@ Server-side keys go in with `npx wrangler secret put NAME`. If you store a Debri
 npm install
 npm run dev                  # UI on :3000 (direct mode, no backend)
 npm run dev:api              # optional: Worker on :8787 → set NEXT_PUBLIC_API_BASE in .env.local
-npm test                     # unit tests (parsers, indexers, subtitles, Worker handler)
+npm test                     # unit tests (parsers, indexers, subtitles, Worker handler, relays)
 ```
+
+Build-time settings for the website (optional, in `.env.local` or the Pages workflow):
+`NEXT_PUBLIC_API_BASE` sets a default relay URL (empty means direct mode), and `NEXT_PUBLIC_BASE_PATH` sets the sub-path, e.g. `/Torrent-streaming`.
+Relay secrets go in `.dev.vars` (local) or `npx wrangler secret put` (deployed).
+
+> There's deliberately no `.env.example`: the Deploy to Cloudflare form would turn its entries into required fields.
 
 On iPhone/iPad: open the site in Safari → Share → **Add to Home Screen**.
 
