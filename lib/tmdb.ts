@@ -18,7 +18,7 @@ export interface TmdbClientOptions {
   language?: string;
 }
 
-export function createTmdbClient({ apiKey = process.env.TMDB_API_KEY, language = 'en-US' }: TmdbClientOptions = {}) {
+export function createTmdbClient({ apiKey, language = 'en-US' }: TmdbClientOptions = {}) {
   if (!apiKey) throw new TmdbError('TMDB API key not configured', 401);
   const isBearer = apiKey.length > 40 && apiKey.includes('.');
 
@@ -29,7 +29,6 @@ export function createTmdbClient({ apiKey = process.env.TMDB_API_KEY, language =
     if (!isBearer) url.searchParams.set('api_key', apiKey!);
     const res = await fetch(url, {
       headers: { Accept: 'application/json', ...(isBearer ? { Authorization: `Bearer ${apiKey}` } : {}) },
-      next: { revalidate: 3600 },
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) throw new TmdbError(`TMDB ${res.status}`, res.status);

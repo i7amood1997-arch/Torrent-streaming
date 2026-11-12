@@ -21,18 +21,31 @@ export interface SubtitleSearch {
 export interface SubtitleKeys {
   openSubtitles?: string;
   subdl?: string;
+  /** OpenSubtitles requires an identifying User-Agent. */
+  userAgent?: string;
 }
 
 const OS_API = 'https://api.opensubtitles.com/api/v1';
-const OS_UA = () => process.env.OPENSUBTITLES_USER_AGENT || 'TorrentStreamingPWA v0.1';
+const DEFAULT_UA = 'TorrentStreamingPWA v0.1';
 const SUBDL_API = 'https://api.subdl.com/api/v1/subtitles';
 const SUBDL_DL = 'https://dl.subdl.com';
 
 type Token = { p: 'opensubtitles'; fileId: number; lang: string } | { p: 'subdl'; url: string; lang: string; season?: number; episode?: number };
 
-export const encodeToken = (t: Token) => Buffer.from(JSON.stringify(t)).toString('base64url');
+// base64url without Node's Buffer (runs in Workers and browsers)
+const b64urlEncode = (s: string) => {
+  let bin = '';
+  for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+const b64urlDecode = (s: string) => {
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
+};
+
+export const encodeToken = (t: Token) => b64urlEncode(JSON.stringify(t));
 export function decodeToken(s: string): Token {
-  const t = JSON.parse(Buffer.from(s, 'base64url').toString('utf8'));
+  const t = JSON.parse(b64urlDecode(s));
   if (t?.p === 'opensubtitles' && Number.isInteger(t.fileId)) return t;
   if (t?.p === 'subdl' && typeof t.url === 'string' && /^\/subtitle\/[\w.-]+\.zip$/.test(t.url)) return t;
   throw new Error('Invalid subtitle token');
@@ -45,7 +58,7 @@ const normLang = (l: string) => {
   return s.slice(0, 2);
 };
 
-async function searchOpenSubtitles(q: SubtitleSearch, key: string): Promise<SubtitleTrackInfo[]> {
+async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): Promise<SubtitleTrackInfo[]> {
   const p = new URLSearchParams({ languages: (q.langs ?? ['ar', 'en']).join(','), order_by: 'download_count' });
   const imdbNum = q.imdbId?.replace(/^tt0*/, '');
   if (q.type === 'series' && imdbNum) {
@@ -58,7 +71,7 @@ async function searchOpenSubtitles(q: SubtitleSearch, key: string): Promise<Subt
   else return [];
 
   const res = await fetch(`${OS_API}/subtitles?${p}`, {
-    headers: { 'Api-Key': key, 'User-Agent': OS_UA(), Accept: 'application/json' },
+    headers: { 'Api-Key': key, 'User-Agent': ua, Accept: 'application/json' },
     signal: AbortSignal.timeout(9000),
   });
   if (!res.ok) throw new Error(`OpenSubtitles ${res.status}`);
@@ -119,7 +132,7 @@ async function searchSubDL(q: SubtitleSearch, key: string): Promise<SubtitleTrac
 
 export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
   const jobs: [string, Promise<SubtitleTrackInfo[]>][] = [];
-  if (keys.openSubtitles) jobs.push(['opensubtitles', searchOpenSubtitles(q, keys.openSubtitles)]);
+  if (keys.openSubtitles) jobs.push(['opensubtitles', searchOpenSubtitles(q, keys.openSubtitles, keys.userAgent || DEFAULT_UA)]);
   if (keys.subdl) jobs.push(['subdl', searchSubDL(q, keys.subdl)]);
   const settled = await Promise.allSettled(jobs.map(([, p]) => p));
   const tracks: SubtitleTrackInfo[] = [];
@@ -142,7 +155,7 @@ export async function fetchSubtitleCues(tokenStr: string, keys: SubtitleKeys): P
     if (!keys.openSubtitles) throw new Error('OpenSubtitles key missing');
     const dl = await fetch(`${OS_API}/download`, {
       method: 'POST',
-      headers: { 'Api-Key': keys.openSubtitles, 'User-Agent': OS_UA(), 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: { 'Api-Key': keys.openSubtitles, 'User-Agent': keys.userAgent || DEFAULT_UA, 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ file_id: token.fileId, sub_format: 'srt' }),
       signal: AbortSignal.timeout(9000),
     });

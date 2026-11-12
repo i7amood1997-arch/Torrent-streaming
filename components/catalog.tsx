@@ -27,7 +27,7 @@ export function Catalog({ active }: { active: boolean }) {
   const [fallback, setFallback] = useState<string>();
 
   useEffect(() => {
-    if (!active || !caps) return;
+    if (!active || !caps || caps.offline) return;
     setSelected(undefined);
     setFallback(undefined);
     if (!tmdbAvailable) {

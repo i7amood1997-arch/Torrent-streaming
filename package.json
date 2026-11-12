@@ -2,11 +2,12 @@
   "name": "torrent-streaming",
   "version": "0.1.0",
   "private": true,
-  "description": "Cross-platform PWA: TMDB discovery + direct torrent indexer search, Debrid/WebTorrent playback, Arabic/English subtitles.",
+  "description": "Static PWA (GitHub Pages) + Cloudflare Worker API: TMDB discovery, direct torrent search, Debrid/WebTorrent playback, Arabic/English subtitles.",
   "scripts": {
     "dev": "next dev",
+    "dev:api": "wrangler dev --port 8787",
     "build": "next build",
-    "start": "next start",
+    "deploy:api": "wrangler deploy",
     "lint": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -27,7 +28,8 @@
     "postcss": "8.5.6",
     "tailwindcss": "3.4.19",
     "typescript": "5.9.3",
-    "vitest": "3.2.7"
+    "vitest": "3.2.7",
+    "wrangler": "^4.40.3"
   },
   "engines": {
     "node": ">=20"

@@ -1,15 +1,16 @@
 import type { Metadata, Viewport } from 'next';
+import { asset } from '@/lib/config';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: 'Streamdeck — Torrent Search & Stream',
   description: 'Search TMDB or raw torrent indexers, stream through Debrid or WebTorrent, with Arabic and English subtitles.',
   applicationName: 'Streamdeck',
-  manifest: '/manifest.webmanifest',
+  manifest: asset('/manifest.webmanifest'),
   appleWebApp: { capable: true, title: 'Streamdeck', statusBarStyle: 'black-translucent' },
   icons: {
-    icon: [{ url: '/icons/icon.svg', type: 'image/svg+xml' }, { url: '/icons/icon-192.png', sizes: '192x192' }],
-    apple: [{ url: '/icons/apple-touch-icon.png', sizes: '180x180' }],
+    icon: [{ url: asset('/icons/icon.svg'), type: 'image/svg+xml' }, { url: asset('/icons/icon-192.png'), sizes: '192x192' }],
+    apple: [{ url: asset('/icons/apple-touch-icon.png'), sizes: '180x180' }],
   },
   formatDetection: { telephone: false },
 };

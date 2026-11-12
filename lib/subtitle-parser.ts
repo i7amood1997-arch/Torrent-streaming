@@ -2,6 +2,7 @@
  * SRT / WebVTT parsing and charset handling (isomorphic — used by the server
  * subtitle proxy and by the client for user-uploaded subtitle files).
  */
+import { decodeSingleByte } from './codepages';
 import type { SubtitleCue, SubtitleTrackInfo } from './types';
 
 const TS = /(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[.,](\d{1,3})/;
@@ -62,7 +63,7 @@ export function decodeSubtitleBytes(bytes: Uint8Array, lang?: string): string {
     try {
       return new TextDecoder(fallback).decode(bytes);
     } catch {
-      return new TextDecoder('utf-8').decode(bytes);
+      return decodeSingleByte(bytes, fallback); // runtime lacks legacy encodings (Workers)
     }
   }
 }

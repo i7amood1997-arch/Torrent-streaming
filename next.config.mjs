@@ -1,22 +1,16 @@
-/** @type {import('next').NextConfig} */
+/**
+ * Static export for GitHub Pages. The API lives in a separate Cloudflare Worker
+ * (worker/index.ts); the frontend calls it via NEXT_PUBLIC_API_BASE / Settings.
+ * @type {import('next').NextConfig}
+ */
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? '').replace(/\/+$/, '');
+
 const nextConfig = {
+  output: 'export',
+  basePath: basePath || undefined,
+  trailingSlash: true,
   reactStrictMode: true,
-  images: {
-    remotePatterns: [{ protocol: 'https', hostname: 'image.tmdb.org' }],
-  },
-  async headers() {
-    return [
-      {
-        // The service worker must never be cached by the HTTP cache, and needs
-        // root scope so WebTorrent's stream URLs (/webtorrent/...) are intercepted.
-        source: '/sw.js',
-        headers: [
-          { key: 'Cache-Control', value: 'no-cache, no-store, must-revalidate' },
-          { key: 'Service-Worker-Allowed', value: '/' },
-        ],
-      },
-    ];
-  },
+  images: { unoptimized: true },
 };
 
 export default nextConfig;

@@ -10,8 +10,8 @@
  * quality, size, seeders, audio, release group). Results from all sources are
  * merged by info-hash and sorted by seeders (desc), then quality.
  *
- * SERVER ONLY: called from /app/api/search/route.ts so that indexer requests
- * are not subject to browser CORS and private Torznab keys never reach clients.
+ * SERVER ONLY: runs in the Cloudflare Worker (worker/index.ts → lib/server/handlers.ts)
+ * so indexer requests aren't subject to browser CORS and Torznab keys never reach clients.
  */
 import { XMLParser } from 'fast-xml-parser';
 import { buildMagnet, parseMagnet } from './magnet';
@@ -39,7 +39,7 @@ export interface IndexerConfig {
   resolveImdbId?: (tmdbId: number, type: 'movie' | 'series') => Promise<string | undefined>;
 }
 
-export function configFromEnv(env: Record<string, string | undefined> = process.env): IndexerConfig {
+export function configFromEnv(env: Record<string, string | undefined>): IndexerConfig {
   const enabled = (env.INDEXERS ?? 'torrentio,torznab,yts,eztv')
     .split(',')
     .map((s) => s.trim().toLowerCase())
@@ -365,7 +365,7 @@ function matchesEpisode(r: TorrentResult, q: SearchQuery): boolean {
 
 // ─── Public entry point ─────────────────────────────────────────────────────
 
-export async function searchTorrents(query: SearchQuery, config: IndexerConfig = configFromEnv()): Promise<SearchResponse> {
+export async function searchTorrents(query: SearchQuery, config: IndexerConfig): Promise<SearchResponse> {
   const started = Date.now();
   const q: SearchQuery = { ...query };
   if (!q.imdbId && q.tmdbId && config.resolveImdbId) {
@@ -378,7 +378,6 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig =
       ...init,
       headers: { 'User-Agent': UA, Accept: 'application/json, application/xml;q=0.9, */*;q=0.8', ...init?.headers },
       signal: AbortSignal.timeout(config.timeoutMs),
-      cache: 'no-store',
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res;

@@ -10,8 +10,8 @@
  * If the torrent isn't cached yet, we return { status: 'queued', progress }
  * and the client polls /api/debrid/resolve again.
  *
- * SERVER ONLY — API keys are passed per request (from the user's Settings,
- * via the `x-debrid-key` header) or fall back to environment variables.
+ * SERVER ONLY (Cloudflare Worker) — API keys are passed per request (from the user's
+ * Settings, via the `x-debrid-key` header) or fall back to Worker secrets.
  */
 import type { DebridProvider, ResolvedStream } from './types';
 
@@ -30,8 +30,8 @@ export interface ResolveInput {
   episode?: number;
 }
 
-export function envDebridKey(p: DebridProvider): string | undefined {
-  return { realdebrid: process.env.REALDEBRID_API_KEY, torbox: process.env.TORBOX_API_KEY, debridlink: process.env.DEBRIDLINK_API_KEY }[p];
+export function envDebridKey(p: DebridProvider, env: Record<string, string | undefined>): string | undefined {
+  return { realdebrid: env.REALDEBRID_API_KEY, torbox: env.TORBOX_API_KEY, debridlink: env.DEBRIDLINK_API_KEY }[p];
 }
 
 export function mimeFromName(name?: string): string | undefined {
@@ -66,7 +66,7 @@ export function pickFile<T extends FileLike>(files: T[], fileIdx?: number, seaso
 }
 
 async function http<T>(url: string, init: RequestInit & { timeout?: number } = {}): Promise<T> {
-  const res = await fetch(url, { ...init, cache: 'no-store', signal: AbortSignal.timeout(init.timeout ?? 15000) });
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(init.timeout ?? 15000) });
   const text = await res.text();
   let body: any = undefined;
   try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }

@@ -1,0 +1,33 @@
+name: Deploy API Worker (Cloudflare)
+
+on:
+  push:
+    paths:
+      - 'lib/**'
+      - 'worker/**'
+      - 'wrangler.toml'
+      - 'package-lock.json'
+      - '.github/workflows/worker.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Deploy Worker
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: npx wrangler deploy
+      - name: Skip (no Cloudflare credentials)
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::notice::Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repository secrets to auto-deploy the API Worker."

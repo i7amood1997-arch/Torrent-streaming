@@ -1,0 +1,54 @@
+name: Deploy site to GitHub Pages
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - name: Configure Pages
+        id: pages
+        # Fails with "Get Pages site failed" until Settings → Pages → Source is set to "GitHub Actions".
+        if: github.ref_name == github.event.repository.default_branch
+        uses: actions/configure-pages@v5
+      - name: Build static export
+        run: npm run build
+        env:
+          # e.g. "/Torrent-streaming" for https://<user>.github.io/Torrent-streaming/
+          NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
+          # Repository variable (Settings → Secrets and variables → Actions → Variables)
+          NEXT_PUBLIC_API_BASE: ${{ vars.API_BASE_URL }}
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref_name == github.event.repository.default_branch
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

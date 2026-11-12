@@ -1,12 +1,13 @@
-/* Streamdeck service worker.
- * 1. WebTorrent stream proxy: serves /webtorrent/<infoHash>/<file> from the
- *    in-page WebTorrent client (must be first so it can respondWith those URLs).
+/* Streamdeck service worker (works under a sub-path such as /Torrent-streaming/).
+ * 1. WebTorrent stream proxy: serves <scope>webtorrent/<infoHash>/<file> from the
+ *    in-page WebTorrent client (registered first so it can respondWith those URLs).
  * 2. App-shell caching for offline launch / fast PWA start.
  */
-importScripts('/vendor/webtorrent/sw.min.js');
+importScripts('vendor/webtorrent/sw.min.js'); // resolved relative to this script
 
-const SHELL_CACHE = 'streamdeck-shell-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/icon.svg', '/icons/icon-192.png'];
+const SCOPE = new URL(self.registration.scope).pathname; // e.g. "/Torrent-streaming/"
+const SHELL_CACHE = 'streamdeck-shell-v2';
+const SHELL = ['', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'].map((p) => SCOPE + p);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(SHELL_CACHE).then((c) => c.addAll(SHELL)).catch(() => undefined));
@@ -21,13 +22,14 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   const url = new URL(req.url);
-  if (req.method !== 'GET' || url.origin !== self.location.origin) return;
-  if (url.pathname.startsWith(self.registration.scope.replace(self.location.origin, '') + 'webtorrent/')) return; // handled above
-  if (url.pathname.startsWith('/api/')) return; // always live
+  if (req.method !== 'GET' || url.origin !== self.location.origin) return; // API Worker etc. — always live
+  if (!url.pathname.startsWith(SCOPE)) return;
+  if (url.pathname.startsWith(SCOPE + 'webtorrent/')) return; // handled by WebTorrent's listener
   if (req.headers.has('range')) return; // media
 
+  const rel = url.pathname.slice(SCOPE.length);
   // Immutable build assets: cache-first
-  if (url.pathname.startsWith('/_next/static/') || url.pathname.startsWith('/vendor/') || url.pathname.startsWith('/icons/')) {
+  if (rel.startsWith('_next/static/') || rel.startsWith('vendor/') || rel.startsWith('icons/')) {
     event.respondWith(
       caches.open(SHELL_CACHE).then(async (cache) => {
         const hit = await cache.match(req);
@@ -40,16 +42,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigations: network-first, fall back to cached shell
+  // Navigations: network-first, fall back to the cached shell
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
         .then((res) => {
           const copy = res.clone();
-          caches.open(SHELL_CACHE).then((c) => c.put('/', copy));
+          caches.open(SHELL_CACHE).then((c) => c.put(SCOPE, copy));
           return res;
         })
-        .catch(() => caches.match('/').then((r) => r || Response.error())),
+        .catch(() => caches.match(SCOPE).then((r) => r || Response.error())),
     );
   }
 });

@@ -18,6 +18,10 @@ export interface SubtitleStyle {
 }
 
 export interface Settings {
+  /** API backend (Cloudflare Worker) URL; empty = build-time default. */
+  apiBase: string;
+  /** Shared secret if the backend sets ACCESS_TOKEN. */
+  accessToken: string;
   tmdbKey: string;
   debridProvider: DebridProvider;
   debridKeys: Record<DebridProvider, string>;
@@ -50,6 +54,9 @@ export interface ServerCaps {
   subtitles: { opensubtitles: boolean; subdl: boolean };
   indexers: string[];
   clientTorznab: boolean;
+  accessToken?: boolean;
+  /** Set when the backend could not be reached or rejected us. */
+  offline?: string;
 }
 
 interface AppState {
@@ -73,6 +80,8 @@ interface AppState {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  apiBase: '',
+  accessToken: '',
   tmdbKey: '',
   debridProvider: 'realdebrid',
   debridKeys: { realdebrid: '', torbox: '', debridlink: '' },

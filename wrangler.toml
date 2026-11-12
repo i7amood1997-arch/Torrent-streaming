@@ -1,0 +1,23 @@
+# Cloudflare Worker hosting the API for the GitHub Pages frontend.
+# Deploy:  npx wrangler login && npx wrangler deploy
+# Secrets (all optional — users can also enter their own keys in the app):
+#   npx wrangler secret put TMDB_API_KEY
+#   npx wrangler secret put REALDEBRID_API_KEY | TORBOX_API_KEY | DEBRIDLINK_API_KEY
+#   npx wrangler secret put OPENSUBTITLES_API_KEY | SUBDL_API_KEY
+#   npx wrangler secret put TORZNAB_URL | TORZNAB_API_KEY
+#   npx wrangler secret put ACCESS_TOKEN   # strongly recommended if you store Debrid keys here
+name = "streamdeck-api"
+main = "worker/index.ts"
+compatibility_date = "2025-09-01"
+
+[vars]
+INDEXERS = "torrentio,torznab,yts,eztv"
+TORRENTIO_URL = "https://torrentio.strem.fun"
+YTS_URL = "https://yts.mx"
+EZTV_URL = "https://eztvx.to"
+APIBAY_URL = "https://apibay.org"
+OPENSUBTITLES_USER_AGENT = "StreamdeckPWA v0.1"
+# Comma-separated origins allowed to call this API, e.g. "https://<user>.github.io".
+# Use "*" to allow any site (keys sent by the browser are still the user's own).
+ALLOWED_ORIGINS = "https://i7amood1997-arch.github.io,http://localhost:3000"
+ALLOW_CLIENT_TORZNAB = "false"

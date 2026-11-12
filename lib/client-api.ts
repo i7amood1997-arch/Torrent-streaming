@@ -1,10 +1,23 @@
 'use client';
-import { useApp } from './store';
+import { DEFAULT_API_BASE } from './config';
+import { useApp, type ServerCaps } from './store';
 import type { ResolvedStream, SearchResponse, SubtitleCue, SubtitleTrackInfo, TmdbDetails, TmdbEpisode, TmdbItem, TorrentResult } from './types';
+
+/** Backend base URL: Settings override → build-time default (may be '' = not configured). */
+export function apiBase(): string {
+  return (useApp.getState().settings.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
+}
+
+function endpoint(path: string): string {
+  const base = apiBase();
+  if (!base) throw new Error('No API backend configured — add your Worker URL in Settings.');
+  return base + path;
+}
 
 function headers(): Record<string, string> {
   const s = useApp.getState().settings;
   const h: Record<string, string> = {};
+  if (s.accessToken) h['x-access-token'] = s.accessToken;
   if (s.tmdbKey) h['x-tmdb-key'] = s.tmdbKey;
   const dk = s.debridKeys[s.debridProvider];
   if (dk) h['x-debrid-key'] = dk;
@@ -20,7 +33,7 @@ function headers(): Record<string, string> {
 async function get<T>(path: string, params: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
-  const res = await fetch(`${path}?${qs}`, { headers: headers(), signal });
+  const res = await fetch(`${endpoint(path)}?${qs}`, { headers: headers(), signal });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
   return body as T;
@@ -41,7 +54,7 @@ export const api = {
 
   async resolveDebrid(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<ResolvedStream> {
     const s = useApp.getState().settings;
-    const res = await fetch('/api/debrid/resolve', {
+    const res = await fetch(endpoint('/api/debrid/resolve'), {
       method: 'POST',
       headers: { ...headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: s.debridProvider, magnet: r.magnet, fileIdx: r.fileIdx, ...ctx }),
@@ -52,8 +65,20 @@ export const api = {
     return body as ResolvedStream;
   },
 
+  /** Probe the backend. On failure, caps get an `offline` reason so the UI can explain instead of hanging. */
   async loadCaps() {
-    const res = await fetch('/api/config');
-    if (res.ok) useApp.getState().setCaps(await res.json());
+    const offline = (reason: string): ServerCaps => ({
+      tmdb: false, debrid: { realdebrid: false, torbox: false, debridlink: false },
+      subtitles: { opensubtitles: false, subdl: false }, indexers: [], clientTorznab: false, offline: reason,
+    });
+    const set = useApp.getState().setCaps;
+    if (!apiBase()) return set(offline('No API backend configured yet.'));
+    try {
+      const res = await fetch(endpoint('/api/config'), { headers: headers(), signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return set(offline(`Backend responded with HTTP ${res.status}.`));
+      set(await res.json());
+    } catch (e) {
+      set(offline(`Can't reach the backend at ${apiBase()} (${(e as Error).message}).`));
+    }
   },
 };

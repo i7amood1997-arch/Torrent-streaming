@@ -7,9 +7,10 @@
  * Only peers that speak WebRTC (WebTorrent desktop, other browsers, hybrid
  * clients) are reachable — plain TCP/UDP BitTorrent swarms are not.
  */
+import { asset, BASE_PATH } from './config';
 import { pickFileForPlayback } from './webtorrent-pick';
 
-const VENDOR = '/vendor/webtorrent/webtorrent.min.js';
+const VENDOR = asset('/vendor/webtorrent/webtorrent.min.js');
 
 export interface WebTorrentStats {
   progress: number; // 0..1
@@ -32,7 +33,7 @@ async function getClient(): Promise<any> {
     const mod = await import(/* webpackIgnore: true */ VENDOR as string);
     const WebTorrent = mod.default;
     const client = new WebTorrent();
-    const reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+    const reg = await navigator.serviceWorker.register(asset('/sw.js'), { scope: `${BASE_PATH}/` });
     await navigator.serviceWorker.ready;
     if (!navigator.serviceWorker.controller) {
       // First install: wait until the SW claims this page.

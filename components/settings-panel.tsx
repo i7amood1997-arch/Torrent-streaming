@@ -3,6 +3,8 @@
  * Settings: API keys (stored only in this browser's localStorage and sent per
  * request to this app's own API routes), engine preference, indexer info.
  */
+import { api } from '@/lib/client-api';
+import { DEFAULT_API_BASE } from '@/lib/config';
 import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
@@ -34,6 +36,23 @@ export function SettingsPanel() {
   return (
     <div className="mx-auto max-w-2xl space-y-6 pb-8">
       <h2 className="text-lg font-semibold text-white">Settings</h2>
+
+      <section className="card space-y-4 p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-semibold text-white">API backend</h3>
+          <span className={`rounded px-2 py-0.5 text-[11px] font-semibold ${!caps ? 'bg-ink-700 text-ink-400' : caps.offline ? 'bg-red-500/15 text-red-300' : 'bg-hd/15 text-hd'}`}>
+            {!caps ? 'checking…' : caps.offline ? 'not connected' : 'connected'}
+          </span>
+        </div>
+        {caps?.offline && <p className="text-xs text-red-300/90">{caps.offline}</p>}
+        <Field label="Worker URL" hint={<>The Cloudflare Worker from this repo (<code>npx wrangler deploy</code>).{DEFAULT_API_BASE && <> Leave empty to use the default: <code className="break-all">{DEFAULT_API_BASE}</code></>}</>}>
+          <input className="input font-mono text-xs" inputMode="url" placeholder={DEFAULT_API_BASE || 'https://streamdeck-api.<account>.workers.dev'} value={settings.apiBase} onChange={(e) => updateSettings({ apiBase: e.target.value.trim() })} />
+        </Field>
+        <Field label="Access token" hint={caps?.accessToken ? 'This backend requires a token.' : 'Only needed if the Worker sets ACCESS_TOKEN.'}>
+          <input {...secret} value={settings.accessToken} onChange={(e) => updateSettings({ accessToken: e.target.value.trim() })} />
+        </Field>
+        <button type="button" className="btn-ghost border border-ink-600" onClick={() => api.loadCaps()}>Test connection</button>
+      </section>
 
       <section className="card space-y-4 p-4">
         <h3 className="font-semibold text-white">Streaming engine</h3>

@@ -7,7 +7,7 @@
  *
  * All views stay mounted (hidden via CSS) so search state and playback survive tab switches.
  */
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Catalog } from '@/components/catalog';
 import { IconFilm, IconList, IconPlay, IconSettings, IconTv } from '@/components/icons';
 import { SEARCH_INPUT_ID, SearchBar } from '@/components/search-bar';
@@ -15,6 +15,7 @@ import { SettingsPanel } from '@/components/settings-panel';
 import { TorrentSearch } from '@/components/torrent-search';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { api } from '@/lib/client-api';
+import { asset, BASE_PATH } from '@/lib/config';
 import { formatBytes } from '@/lib/release-parser';
 import { useApp, type View } from '@/lib/store';
 
@@ -26,15 +27,22 @@ const NAV: { id: View; label: string; icon: typeof IconFilm; mobileOnly?: boolea
 ];
 
 export default function Home() {
-  const { view, listView, setView, setMode, mode, submittedQuery, nowPlaying } = useApp();
+  const { view, listView, setView, setMode, mode, submittedQuery, nowPlaying, caps } = useApp();
+  const apiBaseSetting = useApp((s) => s.settings.apiBase);
+  const accessToken = useApp((s) => s.settings.accessToken);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
-    useApp.persist.rehydrate();
-    api.loadCaps();
+    Promise.resolve(useApp.persist.rehydrate()).then(() => setHydrated(true));
     if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-      navigator.serviceWorker.register('/sw.js', { scope: '/' }).catch(() => undefined);
+      navigator.serviceWorker.register(asset('/sw.js'), { scope: `${BASE_PATH}/` }).catch(() => undefined);
     }
   }, []);
+
+  // (Re)probe the backend once settings are loaded and whenever its URL / token changes.
+  useEffect(() => {
+    if (hydrated) api.loadCaps();
+  }, [hydrated, apiBaseSetting, accessToken]);
 
   // ⌘/Ctrl+K → Direct Torrent Search
   useEffect(() => {
@@ -62,7 +70,7 @@ export default function Home() {
       <aside className="hidden w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900/60 p-4 xl:flex">
         <div className="mb-6 flex items-center gap-2 px-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/icons/icon.svg" alt="" className="h-8 w-8" />
+          <img src={asset('/icons/icon.svg')} alt="" className="h-8 w-8" />
           <span className="text-lg font-bold tracking-tight text-white">Streamdeck</span>
         </div>
         <nav className="space-y-1">
@@ -98,6 +106,14 @@ export default function Home() {
         </header>
 
         <div className="flex-1 overflow-y-auto px-4 pb-[calc(5rem+env(safe-area-inset-bottom))] pt-4 scrollbar-thin md:pb-6">
+          {caps?.offline && listView !== 'settings' && (
+            <div className="card mb-4 flex flex-wrap items-center gap-3 border-accent/40 bg-accent/5 p-3 text-sm">
+              <p className="min-w-0 flex-1 text-ink-200">
+                <b className="text-accent">Backend not connected.</b> {caps.offline} Search, Debrid and subtitles need the API Worker. Magnet links still play on desktop via WebTorrent.
+              </p>
+              <button className="btn-primary" onClick={() => setView('settings')}>Set up</button>
+            </div>
+          )}
           <div className={shown('discover')}><Catalog active={listView === 'discover'} /></div>
           <div className={shown('search')}>
             {mode === 'torrent' && submittedQuery ? (
