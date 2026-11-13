@@ -41,21 +41,31 @@ export async function fetchJsonWithRelays<T>(
       if (!(e instanceof TypeError) && !(e instanceof DOMException)) throw e; // real HTTP/parse error → don't relay
     }
   }
-  const order = pref != null ? [pref, ...relays.keys()].filter((v, i, a) => a.indexOf(v) === i) : [...relays.keys()];
-  const failures: string[] = [];
-  for (const i of order) {
-    try {
-      const res = await fetch(relays[i].wrap(url), { signal: AbortSignal.timeout(opts.timeoutMs) });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as T;
-      preferred.set(host, i);
-      return data;
-    } catch (e) {
-      failures.push(`${relays[i].name}: ${e instanceof Error ? e.message : String(e)}`);
-    }
+  const attempt = async (i: number, signal: AbortSignal): Promise<T> => {
+    const res = await fetch(relays[i].wrap(url), { signal: AbortSignal.any ? AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs)]) : signal });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = (await res.json()) as T;
+    preferred.set(host, i);
+    return data;
+  };
+  const failures: string[] = new Array(relays.length);
+  // The relay that worked last time first; if it fails, all the others at once.
+  if (pref != null) {
+    try { return await attempt(pref, AbortSignal.timeout(opts.timeoutMs)); } catch (e) { failures[pref] = `${relays[pref].name}: ${e instanceof Error ? e.message : String(e)}`; }
   }
-  preferred.delete(host);
-  throw new RelayError(`unreachable directly and through public relays (${failures.join('; ')})`);
+  const ctl = new AbortController();
+  const others = [...relays.keys()].filter((i) => i !== pref);
+  try {
+    const data = await Promise.any(others.map((i) => attempt(i, ctl.signal).catch((e) => {
+      failures[i] = `${relays[i].name}: ${e instanceof Error ? e.message : String(e)}`;
+      throw e;
+    })));
+    ctl.abort(); // the slower ones aren't needed
+    return data;
+  } catch {
+    preferred.delete(host);
+    throw new RelayError(`unreachable directly and through public relays (${failures.filter(Boolean).join('; ')})`);
+  }
 }
 
 export class RelayError extends Error {}

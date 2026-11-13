@@ -65,7 +65,7 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     knabenUrl: trimSlash(env.KNABEN_URL || 'https://api.knaben.org'),
     torrentsCsvUrl: trimSlash(env.TORRENTS_CSV_URL || 'https://torrents-csv.com'),
     nyaaUrl: trimSlash(env.NYAA_URL || 'https://nyaa.si'),
-    timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 9000),
+    timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 6500),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
 }
@@ -92,6 +92,29 @@ function trimSlash(s: string) {
 }
 
 /** Free-text query to use for indexers that cannot search by id. */
+/**
+ * All text queries worth running. For a single episode, the season pack too:
+ * packs usually have far more seeders, and the right episode is picked from the
+ * pack's file list at play time.
+ */
+export function textQueriesFor(q: SearchQuery): string[] {
+  const main = textQueryFor(q);
+  if (!main) return [];
+  if (!q.q?.trim() && q.title && q.type === 'series' && q.season != null && q.episode != null) {
+    return [main, `${q.title} S${String(q.season).padStart(2, '0')}`];
+  }
+  return [main];
+}
+
+/** Run a text search for every query and concatenate the results (one failing query is tolerated). */
+async function eachQuery(q: SearchQuery, run: (term: string) => Promise<TorrentResult[]>): Promise<TorrentResult[]> {
+  const terms = textQueriesFor(q);
+  const settled = await Promise.allSettled(terms.map(run));
+  const ok = settled.flatMap((s) => (s.status === 'fulfilled' ? [s.value] : []));
+  if (!ok.length && settled[0]?.status === 'rejected') throw settled[0].reason;
+  return ok.flat();
+}
+
 export function textQueryFor(q: SearchQuery): string | undefined {
   if (q.q?.trim()) return q.q.trim();
   if (!q.title) return undefined;
@@ -341,10 +364,10 @@ const eztv: IndexerAdapter = {
 const apibay: IndexerAdapter = {
   id: 'apibay',
   supports: (q) => !!textQueryFor(q),
-  async search(q, { config, fetchJson }) {
+  search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
     // cat 200 = Video
     const data = await fetchJson<{ id: string; name: string; info_hash: string; seeders: string; leechers: string; size: string; added: string; imdb?: string }[]>(
-      `${config.apibayUrl}/q.php?cat=200&q=${encodeURIComponent(textQueryFor(q)!)}`,
+      `${config.apibayUrl}/q.php?cat=200&q=${encodeURIComponent(term)}`,
     );
     return data
       .filter((t) => t.id !== '0' && /^[a-f0-9]{40}$/i.test(t.info_hash))
@@ -361,7 +384,7 @@ const apibay: IndexerAdapter = {
           publishedAt: t.added ? new Date(Number(t.added) * 1000).toISOString() : undefined,
         }),
       );
-  },
+  }),
 };
 
 // ─── Knaben (meta-search across many public trackers) ──────────────────────
@@ -371,12 +394,12 @@ interface KnabenHit { title?: string; hash?: string; magnetUrl?: string; bytes?:
 const knaben: IndexerAdapter = {
   id: 'knaben',
   supports: (q) => !!textQueryFor(q),
-  async search(q, { config, fetchJson }) {
+  search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
     const data = await fetchJson<{ hits?: KnabenHit[] }>(`${config.knabenUrl}/v1`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        search_type: '100%', search_field: 'title', query: textQueryFor(q), order_by: 'seeders', order_direction: 'desc',
+        search_type: '100%', search_field: 'title', query: term, order_by: 'seeders', order_direction: 'desc',
         // 2000000 movies, 3000000 TV, 6000000 anime
         categories: q.type === 'movie' ? [2000000, 6000000] : q.type === 'series' ? [3000000, 6000000] : [2000000, 3000000, 6000000],
         from: 0, size: 100, hide_unsafe: true, hide_xxx: true,
@@ -398,7 +421,7 @@ const knaben: IndexerAdapter = {
         publishedAt: h.date,
       })];
     });
-  },
+  }),
 };
 
 // ─── Torrents-CSV (open DHT-crawled index) ──────────────────────────────────
@@ -406,9 +429,9 @@ const knaben: IndexerAdapter = {
 const torrentscsv: IndexerAdapter = {
   id: 'torrentscsv',
   supports: (q) => !!textQueryFor(q),
-  async search(q, { config, fetchJson }) {
+  search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
     const data = await fetchJson<{ torrents?: { infohash: string; name: string; size_bytes: number; seeders: number; leechers: number; created_unix?: number }[] }>(
-      `${config.torrentsCsvUrl}/service/search?size=50&q=${encodeURIComponent(textQueryFor(q)!)}`,
+      `${config.torrentsCsvUrl}/service/search?size=50&q=${encodeURIComponent(term)}`,
     );
     return (data.torrents ?? [])
       .filter((t) => /^[a-f0-9]{40}$/i.test(t.infohash) && /\b(2160p|1080p|720p|480p|x26[45]|hevc|bluray|web|hdtv|dvdrip)\b/i.test(t.name)) // index covers all file types: keep video releases
@@ -424,7 +447,7 @@ const torrentscsv: IndexerAdapter = {
           publishedAt: t.created_unix ? new Date(t.created_unix * 1000).toISOString() : undefined,
         }),
       );
-  },
+  }),
 };
 
 // ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────

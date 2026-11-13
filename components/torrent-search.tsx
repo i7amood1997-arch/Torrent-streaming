@@ -10,7 +10,7 @@
  * size, with a filter drawer on phones and an inline bar on iPad/desktop.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { api } from '@/lib/client-api';
+import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
 import { applyFilters, countByQuality, DEFAULT_FILTERS, type ResultFilters, type SortKey } from '@/lib/result-filters';
 import { useApp } from '@/lib/store';
@@ -45,6 +45,9 @@ export const QUALITY_STYLES: Record<QualityTier, string> = {
   Unknown: 'border-ink-600 bg-ink-800 text-ink-400',
 };
 
+const SOURCE_NAMES: Record<string, string> = { torrentio: 'Torrentio', knaben: 'Knaben', yts: 'YTS', eztv: 'EZTV', nyaa: 'Nyaa', apibay: 'Pirate Bay', torrentscsv: 'Torrents-CSV', torznab: 'Jackett/Prowlarr' };
+const sourceName = (ix: string) => SOURCE_NAMES[ix] ?? ix;
+
 export function QualityBadge({ q }: { q: QualityTier }) {
   return <span className={`pill shrink-0 ${QUALITY_STYLES[q]}`}>{q === 'Unknown' ? '?' : q}</span>;
 }
@@ -64,6 +67,8 @@ export function TorrentSearch({ query, context, header }: Props) {
   const [loading, setLoading] = useState(false);
   const [fatal, setFatal] = useState<string>();
   const [took, setTook] = useState<number>();
+  const [pending, setPending] = useState<string[]>([]);
+  const [skipped, setSkipped] = useState<string[]>([]);
   const [filters, setFilters] = useState<ResultFilters>(DEFAULT_FILTERS);
   const [drawer, setDrawer] = useState(false);
 
@@ -74,16 +79,23 @@ export function TorrentSearch({ query, context, header }: Props) {
     setLoading(true);
     setFatal(undefined);
     setResults([]);
-    api
-      .search(
-        query
-          ? { q: query }
-          : { imdb: context?.imdbId, tmdb: context?.tmdbId, type: context?.type, season: context?.season, episode: context?.episode, title: context?.title, year: context?.year },
-        ac.signal,
-      )
-      .then((r) => { setResults(r.results); setErrors(r.errors); setTook(r.tookMs); })
-      .catch((e) => { if (e.name !== 'AbortError') setFatal(e.message); })
-      .finally(() => { if (!ac.signal.aborted) setLoading(false); });
+    setErrors([]);
+    setTook(undefined);
+    setPending([]);
+    // Results appear source by source as they arrive.
+    searchProgressive(
+      query
+        ? { q: query }
+        : { imdb: context?.imdbId, tmdb: context?.tmdbId, type: context?.type, season: context?.season, episode: context?.episode, title: context?.title, year: context?.year },
+      (s) => {
+        setResults(s.results);
+        setErrors(s.errors);
+        setPending(s.pending);
+        setSkipped(s.skipped);
+        if (s.done) { setTook(s.tookMs); setLoading(false); }
+      },
+      ac.signal,
+    ).catch((e) => { if (e.name !== 'AbortError') { setFatal(e.message); setLoading(false); } });
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -159,8 +171,11 @@ export function TorrentSearch({ query, context, header }: Props) {
 
       {/* Status line */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-400">
-        {loading ? <span className="animate-pulse">Searching indexers…</span> : took != null && <span>{visible.length} of {results.length} streams · {took} ms</span>}
-        {errors.map((e) => <span key={e.indexer} className="text-red-400/80" title={e.message}>⚠ {e.indexer}: {e.message}</span>)}
+        {results.length > 0 && <span>{visible.length} of {results.length} streams{took != null ? ` · ${(took / 1000).toFixed(1)} s` : ''}</span>}
+        {loading && <span className="animate-pulse">Still searching: {pending.map(sourceName).join(', ') || '…'}</span>}
+        {!loading && !results.length && took != null && <span>No streams · {(took / 1000).toFixed(1)} s</span>}
+        {skipped.length > 0 && <span title="These failed every way a few minutes ago; they'll be tried again shortly.">Skipped for now: {skipped.map(sourceName).join(', ')}</span>}
+        {errors.map((e) => <span key={e.indexer} className="text-red-400/80" title={e.message}>⚠ {sourceName(e.indexer)}: {e.message.length > 80 ? e.message.slice(0, 80) + '…' : e.message}</span>)}
       </div>
       {fatal && <div className="card border-red-500/40 p-4 text-sm text-red-300">{fatal}</div>}
 

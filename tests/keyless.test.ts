@@ -145,3 +145,24 @@ describe('rate limits', () => {
     expect(res.errors).toEqual([]);
   });
 });
+
+describe('season packs', async () => {
+  const { textQueriesFor } = await import('@/lib/torrent-indexer');
+  it('searches the episode and its season pack', () => {
+    expect(textQueriesFor({ title: 'Game of Thrones', type: 'series', season: 8, episode: 1 })).toEqual(['Game of Thrones S08E01', 'Game of Thrones S08']);
+    expect(textQueriesFor({ q: 'raw text' })).toEqual(['raw text']);
+    expect(textQueriesFor({ title: 'Dune', type: 'movie', year: 2021 })).toEqual(['Dune 2021']);
+  });
+  it('keeps season packs and drops other episodes', async () => {
+    const hits = [
+      { title: 'Show.S08E01.1080p.WEB-DL-A', hash: 'a'.repeat(40), seeders: 10 },
+      { title: 'Show.S08.COMPLETE.1080p.WEB-DL-B', hash: 'b'.repeat(40), seeders: 900 },
+      { title: 'Show.S08E02.1080p.WEB-DL-C', hash: 'c'.repeat(40), seeders: 50 },
+    ];
+    const queries: string[] = [];
+    stubFetch({ 'api.knaben.org/v1': (_u, init) => { queries.push(JSON.parse(String(init?.body)).query); return { hits }; } });
+    const res = await searchTorrents({ title: 'Show', type: 'series', season: 8, episode: 1 }, configFromEnv({ INDEXERS: 'knaben' }));
+    expect(queries.sort()).toEqual(['Show S08', 'Show S08E01']);
+    expect(res.results.map((r) => r.title)).toEqual(['Show.S08.COMPLETE.1080p.WEB-DL-B', 'Show.S08E01.1080p.WEB-DL-A']);
+  });
+});
