@@ -15,14 +15,20 @@ import { parseInfo, type TorrentFile, type TorrentInfo } from './bencode';
 import { announce, type PeerAddr } from './tracker';
 import { BLOCK, Peer, type Connect, type PeerHandler } from './wire';
 
-const MAX_SOCKETS = 6; // Cloudflare: simultaneous outgoing connections
-const MAX_PEERS = 5; // leave one slot for tracker announces
-const PIPELINE = 48; // outstanding block requests per peer (~768 KB)
-const READAHEAD = 16 << 20; // bytes fetched ahead of each reader
+const MAX_PEERS = 40; // established + connecting
+const MAX_CONNECTING = 5; // Cloudflare allows ~6 connections in their opening phase at once
+const MAX_TRACKERS_INFLIGHT = 3;
+const PIPELINE_MIN = 16; // outstanding block requests per peer (16 KB each)…
+const PIPELINE_START = 32;
+const PIPELINE_MAX = 192; // …scaled to each peer's measured speed (~1.5 s of data in flight)
+const READAHEAD = 32 << 20; // bytes fetched ahead of each reader
 const ACTIVE_MAX = 32 << 20; // bytes of partially downloaded pieces
-const CACHE_MAX = 32 << 20; // bytes of verified pieces kept for readers
+const CACHE_MAX = 24 << 20; // bytes of verified pieces kept beyond what readers still need
 const REQUEST_BUDGET = 40; // connections/fetches allowed per incoming request (Workers free: 50)
-const STALE_MS = 10_000;
+const STALE_MS = 8_000;
+const HEAD_STALE_MS = 2_500; // the piece a reader is waiting on is re-requested quickly
+const CHOKED_GIVE_UP_MS = 20_000; // peers that never let us download are replaced
+const REANNOUNCE_MS = 45_000;
 const PEER_IDLE_MS = 25_000;
 const READER_STALL_MS = 60_000;
 const IDLE_SLEEP_MS = 120_000;
@@ -110,6 +116,7 @@ export class TorrentSession implements PeerHandler {
   private trackersOk = 0;
   private trackersFailed = 0;
   private lastAnnounce = 0;
+  private lastPrune = 0;
   private lastTrackerError?: string;
   private lastPeerError?: string;
 
@@ -253,6 +260,10 @@ export class TorrentSession implements PeerHandler {
     const now = Date.now();
     this.downSpeed = this.downSpeed * 0.6 + this.speedBytes * 0.4;
     this.speedBytes = 0;
+    for (const p of this.peers) {
+      p.rate = p.rate * 0.6 + (p.downloaded - p.lastDownloaded) * 0.4;
+      p.lastDownloaded = p.downloaded;
+    }
 
     if (!this.readers.size && now - this.lastActive > IDLE_SLEEP_MS) { this.sleep(); return; }
 
@@ -263,7 +274,7 @@ export class TorrentSession implements PeerHandler {
     const heads = this.headPieces();
     for (const ap of this.active.values()) {
       if (ap.verifying) continue;
-      const limit = heads.has(ap.index) ? STALE_MS / 2 : STALE_MS;
+      const limit = heads.has(ap.index) ? HEAD_STALE_MS : STALE_MS;
       for (let b = 0; b < ap.nBlocks; b++) {
         if (ap.state[b] === 1 && now - ap.reqAt[b] > limit) {
           const owner = ap.owner[b];
@@ -275,16 +286,28 @@ export class TorrentSession implements PeerHandler {
     }
 
     const wanting = this.info && this.wanted().length > 0;
+    const spare = this.candidates.length > 0;
     for (const p of [...this.peers]) {
       if (!p.handshook) continue;
       if (p.stale >= 24) { p.close('too slow'); continue; }
-      if (wanting && now - Math.max(p.lastData, p.createdAt) > PEER_IDLE_MS && this.candidates.length) { p.close('idle'); continue; }
+      if (wanting && spare && p.choked && now - p.handshakeAt > CHOKED_GIVE_UP_MS) { p.close('kept us choked'); continue; }
+      if (wanting && spare && now - Math.max(p.lastData, p.createdAt) > PEER_IDLE_MS) { p.close('idle'); continue; }
       if (now - p.lastKeepAlive > 60_000) { p.lastKeepAlive = now; p.keepAlive(); }
     }
 
-    // Running low on peers → ask the trackers again (at most every 30 s).
-    if (!this.candidates.length && this.peers.size < 3 && !this.trackerQueue.length && !this.trackersInFlight && now - this.lastAnnounce > 30_000) {
-      this.seen = new Set([...this.peers].map((p) => p.key));
+    // Near the peer limit: every 10 s replace the slowest peer, so the set keeps improving.
+    if (wanting && spare && this.peers.size >= MAX_PEERS - 2 && now - this.lastPrune > 10_000) {
+      this.lastPrune = now;
+      const settled = [...this.peers].filter((p) => p.handshook && now - p.handshakeAt > 30_000);
+      const best = Math.max(0, ...settled.map((p) => p.rate));
+      const slowest = settled.sort((a, b) => a.rate - b.rate)[0];
+      if (slowest && slowest.rate < Math.max(8 * 1024, best * 0.1)) slowest.close('slowest peer replaced');
+    }
+
+    // Keep the candidate list topped up from the trackers.
+    const established = [...this.peers].filter((p) => p.handshook).length;
+    if (this.candidates.length < 30 && established < MAX_PEERS / 2 && !this.trackerQueue.length && !this.trackersInFlight && now - this.lastAnnounce > REANNOUNCE_MS) {
+      if (!this.candidates.length && established < 3) this.seen = new Set([...this.peers].map((p) => p.key)); // retry old addresses too
       this.queueAnnounce();
     }
     this.pump();
@@ -300,14 +323,11 @@ export class TorrentSession implements PeerHandler {
   /** Open connections while slots and budget allow: peers first, then tracker announces. */
   private pump() {
     if (this.destroyed || !this.timer) return;
-    // `peers` includes connections still being opened.
-    const sockets = () => this.peers.size + this.trackersInFlight;
-    while (this.budget > 0 && this.candidates.length && this.peers.size < MAX_PEERS && sockets() < MAX_SOCKETS) {
+    // `peers` includes connections still being opened; only a few may be opening at once.
+    while (this.budget > 0 && this.candidates.length && this.peers.size < MAX_PEERS && this.connecting + this.trackersInFlight < MAX_CONNECTING) {
       this.connectPeer(this.candidates.pop()!);
     }
-    while (this.budget > 0 && this.trackerQueue.length && sockets() < MAX_SOCKETS && this.candidates.length < 100) {
-      // With enough peers already, announce one tracker at a time.
-      if (this.peers.size >= 2 && this.trackersInFlight >= 1) break;
+    while (this.budget > 0 && this.trackerQueue.length && this.trackersInFlight < MAX_TRACKERS_INFLIGHT && this.candidates.length < 200) {
       this.announceTo(this.trackerQueue.shift()!);
     }
   }
@@ -351,6 +371,7 @@ export class TorrentSession implements PeerHandler {
 
   handshake(p: Peer) {
     if ((p as any)._connecting) { (p as any)._connecting = false; this.connecting--; }
+    p.handshakeAt = Date.now();
     if (this.info) p.interested();
     this.pump();
   }
@@ -439,7 +460,7 @@ export class TorrentSession implements PeerHandler {
       }
     }
     // Refill this peer's pipeline in batches rather than per block.
-    if (p.inflight.size <= PIPELINE / 2) this.schedule();
+    if (p.inflight.size <= this.pipeline(p) / 2) this.schedule();
   }
 
   // ── scheduling ────────────────────────────────────────────────────────────
@@ -447,6 +468,12 @@ export class TorrentSession implements PeerHandler {
   private pieceLen(index: number): number {
     const info = this.info!;
     return index === info.numPieces - 1 ? info.length - index * info.pieceLength : info.pieceLength;
+  }
+
+  /** Requests to keep in flight for a peer: about 1.5 s of its measured speed. */
+  private pipeline(p: Peer): number {
+    if (!p.rate) return PIPELINE_START;
+    return Math.max(PIPELINE_MIN, Math.min(PIPELINE_MAX, Math.ceil((p.rate * 1.5) / BLOCK)));
   }
 
   /** First piece each reader is waiting for. */
@@ -480,9 +507,10 @@ export class TorrentSession implements PeerHandler {
     if (!wanted.length) return;
     const heads = this.headPieces();
     const now = Date.now();
-    for (const p of this.peers) {
+    // Fastest peers first: they get the blocks the reader needs soonest.
+    for (const p of [...this.peers].sort((a, b) => b.rate - a.rate)) {
       if (!p.handshook || p.choked || p.closed) continue;
-      let free = PIPELINE - p.inflight.size;
+      let free = this.pipeline(p) - p.inflight.size;
       if (free <= 0) continue;
       const reqs: [number, number, number][] = [];
       outer: for (const idx of wanted) {

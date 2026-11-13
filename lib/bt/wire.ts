@@ -52,6 +52,10 @@ export class Peer {
   readonly createdAt = Date.now();
   lastData = Date.now();
   lastKeepAlive = Date.now();
+  handshakeAt = 0;
+  /** Smoothed download rate in bytes/s (updated by the session every second). */
+  rate = 0;
+  lastDownloaded = 0;
   private bitfield?: Uint8Array;
   private chunks: Uint8Array[] = [];
   private off = 0;
