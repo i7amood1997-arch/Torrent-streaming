@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -38,6 +38,7 @@ export interface IndexerConfig {
   /** EZTV mirrors, tried in order; the one that answers is remembered. */
   eztvUrls: string[];
   animetoshoUrl: string;
+  archiveUrl: string;
   mediafusionUrl: string;
   /** Extra Stremio add-ons (manifest URLs) whose torrent streams are included. */
   stremioAddons: string[];
@@ -67,6 +68,7 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     ytsUrls: [...new Set([...(env.YTS_URL ?? '').split(','), ...YTS_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
     eztvUrls: [...new Set([...(env.EZTV_URL ?? '').split(','), ...EZTV_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
     animetoshoUrl: trimSlash(env.ANIMETOSHO_URL || 'https://feed.animetosho.net'),
+    archiveUrl: trimSlash(env.ARCHIVE_URL || 'https://archive.org'),
     mediafusionUrl: trimSlash(env.MEDIAFUSION_URL || 'https://mediafusion.elfhosted.com'),
     stremioAddons: parseAddonList(env.STREMIO_ADDONS),
     apibayUrl: trimSlash(env.APIBAY_URL || 'https://apibay.org'),
@@ -163,7 +165,58 @@ interface StremioStream {
   description?: string;
   infoHash?: string;
   fileIdx?: number;
-  behaviorHints?: { filename?: string; bingeGroup?: string; videoSize?: number };
+  /** Direct HTTP stream (debrid-backed add-ons, HTTP sources). */
+  url?: string;
+  behaviorHints?: {
+    filename?: string;
+    bingeGroup?: string;
+    videoSize?: number;
+    notWebReady?: boolean;
+    proxyHeaders?: { request?: Record<string, string> };
+  };
+}
+
+/** Short stable id for a URL (direct results have no info-hash). */
+function urlId(url: string): string {
+  let h = 5381;
+  for (let i = 0; i < url.length; i++) h = ((h << 5) + h + url.charCodeAt(i)) >>> 0;
+  return `url:${h.toString(16)}:${url.length}`;
+}
+
+/** A direct-link result. */
+export function makeDirectResult(p: { title: string; url: string; fileName?: string; sizeBytes?: number; indexer: string; tracker?: string; headers?: Record<string, string>; notWebReady?: boolean; imdbId?: string; quality?: TorrentResult['quality'] }): TorrentResult {
+  const parsed = parseRelease(p.fileName || p.title);
+  if (parsed.quality === 'Unknown' && p.fileName) {
+    const fromTitle = parseRelease(p.title);
+    parsed.quality = fromTitle.quality;
+    parsed.resolution = fromTitle.resolution;
+  }
+  if (p.quality && parsed.quality === 'Unknown') parsed.quality = p.quality;
+  const container = parsed.container ?? p.url.split('?')[0].match(/\.(mp4|m4v|mov|mkv|webm|avi|m3u8)$/i)?.[1].toLowerCase();
+  const { quality, ...rest } = p;
+  void quality;
+  return { ...parsed, ...rest, container, id: urlId(p.url), infoHash: '', magnet: '', seeders: 0, leechers: 0 };
+}
+
+/** Direct (HTTP) streams in a Stremio response. */
+function parseStremioDirect(s: StremioStream, label: string, imdbId?: string): TorrentResult | null {
+  if (!s.url || !/^https?:\/\//i.test(s.url) || s.infoHash) return null;
+  const text = [s.title ?? s.description ?? '', s.name ?? ''].join('\n');
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  const title = s.behaviorHints?.filename ?? lines.find((l) => /\b(2160p|1080p|720p|480p|web|bluray|x26[45]|hevc)\b/i.test(l)) ?? lines[0] ?? s.url;
+  const host = (() => { try { return new URL(s.url!).host; } catch { return undefined; } })();
+  const headers = s.behaviorHints?.proxyHeaders?.request;
+  return makeDirectResult({
+    title,
+    url: s.url,
+    fileName: s.behaviorHints?.filename,
+    sizeBytes: s.behaviorHints?.videoSize ?? parseSize(text.match(/💾\s*([\d.,]+\s*[KMGT]?i?B)/i)?.[1]),
+    indexer: label,
+    tracker: s.name?.split('\n')[0]?.trim() || host,
+    headers: headers && Object.keys(headers).length ? headers : undefined,
+    notWebReady: s.behaviorHints?.notWebReady,
+    imdbId,
+  });
 }
 
 /**
@@ -201,6 +254,8 @@ async function stremioStreams(base: string, q: SearchQuery, fetchJson: Ctx['fetc
   const id = kind === 'series' && q.season != null ? `${q.imdbId}:${q.season}:${q.episode ?? 1}` : q.imdbId!;
   const data = await fetchJson<{ streams?: StremioStream[] }>(`${base}/stream/${kind}/${id}.json`);
   return (data.streams ?? []).flatMap((s) => {
+    const direct = parseStremioDirect(s, label, q.imdbId);
+    if (direct) return [direct];
     const r = parseTorrentioStream(s);
     if (!r) return [];
     r.indexer = label;
@@ -547,7 +602,62 @@ const animetosho: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons };
+// ─── Internet Archive (free, legal direct links: public-domain and openly licensed films) ─
+
+interface IaFile { name: string; format?: string; size?: string; height?: string; length?: string; source?: string }
+
+/** "01:32:10", "5530.2" → seconds */
+const iaSeconds = (len?: string) => {
+  if (!len) return undefined;
+  if (len.includes(':')) return len.split(':').reduce((t, x) => t * 60 + Number(x), 0);
+  return Number(len) || undefined;
+};
+
+/** Best browser-playable video file of an item: MP4/H.264, highest resolution, not a trailer. */
+export function pickArchiveFile(files: IaFile[]): IaFile | undefined {
+  const videos = files.filter((f) => /\.(mp4|m4v)$/i.test(f.name) && !/(trailer|sample|preview)/i.test(f.name) && (iaSeconds(f.length) ?? 9999) >= 600);
+  return videos.sort((a, b) => (Number(b.height) || 0) - (Number(a.height) || 0) || (Number(b.size) || 0) - (Number(a.size) || 0))[0];
+}
+
+const archive: IndexerAdapter = {
+  id: 'archive',
+  supports: (q) => q.type !== 'series' && !!(q.q?.trim() || q.title),
+  async search(q, { config, fetchJson }) {
+    const text = (q.q?.trim() || q.title!).replace(/["()]/g, ' ').trim();
+    const parts = [`title:(${text})`, 'mediatype:(movies)'];
+    if (q.year && !q.q) parts.push(`year:[${q.year - 1} TO ${q.year + 1}]`);
+    const query = q.imdbId && !q.q ? `(external-identifier:"urn:imdb:${q.imdbId}" OR (${parts.join(' AND ')}))` : parts.join(' AND ');
+    const search = await fetchJson<{ response?: { docs?: { identifier: string; title?: string; year?: string | number }[] } }>(
+      `${config.archiveUrl}/advancedsearch.php?q=${encodeURIComponent(query)}&fl[]=identifier&fl[]=title&fl[]=year&sort[]=downloads+desc&rows=6&output=json`,
+    );
+    const docs = search.response?.docs ?? [];
+    const items = await Promise.allSettled(
+      docs.slice(0, 5).map((d) => fetchJson<{ files?: IaFile[]; metadata?: { title?: string; year?: string } }>(`${config.archiveUrl}/metadata/${encodeURIComponent(d.identifier)}`).then((m) => ({ d, m }))),
+    );
+    return items.flatMap((it) => {
+      if (it.status !== 'fulfilled') return [];
+      const { d, m } = it.value;
+      const file = pickArchiveFile(m.files ?? []);
+      if (!file) return [];
+      const height = Number(file.height) || 0;
+      const year = m.metadata?.year ?? d.year;
+      const quality = height >= 1500 ? '4K' : height >= 1000 ? '1080p' : height >= 700 ? '720p' : height ? 'SD' : undefined;
+      const url = `${config.archiveUrl}/download/${encodeURIComponent(d.identifier)}/${file.name.split('/').map(encodeURIComponent).join('/')}`;
+      return [makeDirectResult({
+        title: `${m.metadata?.title ?? d.title ?? d.identifier}${year ? ` (${String(year).slice(0, 4)})` : ''}${height ? ` ${height}p` : ''}`,
+        url,
+        fileName: file.name.split('/').pop(),
+        sizeBytes: Number(file.size) || undefined,
+        indexer: 'archive',
+        tracker: 'Internet Archive',
+        imdbId: q.imdbId,
+        quality,
+      })];
+    });
+  },
+};
+
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
@@ -555,10 +665,11 @@ const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, e
 export function mergeResults(results: TorrentResult[]): TorrentResult[] {
   const byHash = new Map<string, TorrentResult>();
   for (const r of results) {
-    const prev = byHash.get(r.infoHash);
-    if (!prev) { byHash.set(r.infoHash, r); continue; }
+    const key = r.infoHash || r.id; // direct links have no info-hash
+    const prev = byHash.get(key);
+    if (!prev) { byHash.set(key, r); continue; }
     const trackers = new Set([prev.tracker, r.tracker].flatMap((t) => (t ? t.split(', ') : [])));
-    byHash.set(r.infoHash, {
+    byHash.set(key, {
       ...prev,
       // keep the file-targeted entry (Torrentio packs) when available
       fileIdx: prev.fileIdx ?? r.fileIdx,

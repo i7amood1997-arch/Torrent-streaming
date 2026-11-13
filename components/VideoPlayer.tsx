@@ -133,7 +133,28 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
     (async () => {
       if (engine === 'direct') {
-        setSource({ url: req.url!, engine: 'direct', fileName: req.url!.split('/').pop()?.split('?')[0] });
+        const link = req.url!;
+        const fileName = req.result?.fileName ?? decodeURIComponent(link.split('?')[0].split('/').pop() ?? '');
+        const headers = req.result?.headers;
+        const viaRelay = api.proxyUrl(link, headers);
+        const ext = (req.result?.container ?? fileName.split('.').pop() ?? '').toLowerCase();
+        const hls = isHlsUrl(link) || ext === 'm3u8';
+        const mkv = ext === 'mkv' || (ext === 'webm' && isIOS());
+        if (headers && !viaRelay) throw new Error('This link needs your own relay to play (Settings → Advanced: own backend).');
+        if (mkv && !canPlayMkv()) {
+          // The converter reads the file itself, which most hosts only allow through the relay (CORS).
+          if (!mkvRemuxSupported()) throw new Error('Playing MKV files on iPhone/iPad needs iOS 17.1 or later.');
+          setSource({ url: viaRelay ?? link, engine: 'direct', fileName, mime: 'video/x-matroska', remux: true });
+          return;
+        }
+        // Try the link as-is first (fastest); fall back to the relay if the host refuses.
+        setSource({
+          url: headers ? viaRelay! : link,
+          alt: headers ? undefined : viaRelay,
+          engine: 'direct',
+          fileName,
+          mime: hls ? 'application/vnd.apple.mpegurl' : undefined,
+        });
         return;
       }
       if (engine !== 'debrid' && engine !== 'cloud' && engine !== 'webtorrent' && engine !== 'webtor') throw new Error(engine);
@@ -314,9 +335,10 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         }
         // The browser claimed it could open this MKV but couldn't: convert it instead.
         const isMkv = /\.(mkv|webm)$/i.test(source?.fileName ?? '') || source?.mime === 'video/x-matroska';
-        if (source && isMkv && !source.remux && source.engine === 'cloud' && mkvRemuxSupported()) {
+        if (source && isMkv && !source.remux && (source.engine === 'cloud' || source.engine === 'direct') && mkvRemuxSupported()) {
           setStatus('Converting MKV for this browser…');
-          setSource({ ...source, remux: true });
+          const viaRelay = source.engine === 'direct' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined;
+          setSource({ ...source, url: viaRelay ?? source.url, remux: true });
           return;
         }
         setError(
@@ -662,7 +684,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-white">{req.title}{req.season != null ? ` · S${String(req.season).padStart(2, '0')}E${String(req.episode ?? '').padStart(2, '0')}` : ''}</p>
             <p className="truncate text-[11px] text-white/60">
-              {source?.engine === 'cloud' ? (source.remux ? 'your relay · MKV converted' : 'your relay') : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
+              {source?.engine === 'cloud' ? (source.remux ? 'your relay · MKV converted' : 'your relay') : source?.engine === 'direct' ? `direct link${source.url.includes('/api/proxy') ? ' via your relay' : ''}${source.remux ? ' · MKV converted' : ''}` : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
               {source?.engine === 'cloud' && cloudStats && ` · ${cloudStats.peers} peer${cloudStats.peers === 1 ? '' : 's'} · ↓ ${formatBytes(cloudStats.downSpeed)}/s`}
               {wtStats && ` · ${wtStats.numPeers} peers · ↓ ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%`}
             </p>

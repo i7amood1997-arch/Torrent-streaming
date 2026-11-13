@@ -108,6 +108,7 @@ public/
 | mediafusion | ✅ | — | public MediaFusion instance (Stremio protocol); may return nothing if the instance hides torrents from anonymous users |
 | addons    | ✅ | — | the user's own Stremio add-on manifest URLs (Settings), https only; disable on the relay with `ALLOW_CLIENT_ADDONS=false` |
 | animetosho | — | ✅ | anime via its public Torznab feed |
+| archive   | ✅ | ✅ | Internet Archive: direct MP4 links to free, legal films (movies only) |
 | nyaa      | — | ✅ | anime (RSS) |
 | torrentscsv | — | ✅ | open DHT-crawled index |
 | torrentio | ✅ | — | Stremio add-on protocol; gives per-file `fileIdx` for season packs |
@@ -117,6 +118,12 @@ public/
 | apibay    | — | ✅ | The Pirate Bay API |
 
 Site addresses and query formats are checked against [Prowlarr's maintained definitions](https://github.com/Prowlarr/Indexers); YTS and EZTV fall back across their known mirrors. Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
+
+### Direct links (no seeders)
+Direct HTTP links appear in their own **Direct links** section above torrents. They start immediately and don't depend on seeders.
+- **Sources:** the Internet Archive (free, legal: public-domain and openly licensed films), plus any `url` streams from Stremio add-ons — MediaFusion, and your own add-ons in Settings (e.g. AIOStreams/Comet/MediaFusion configured with a Debrid account, or add-ons whose sources are web links).
+- **Playback:** MP4/HLS links play straight from the host. If the host refuses (hotlink protection, CORS), needs request headers (Stremio `proxyHeaders`), or the file is MKV on a browser without MKV support, the link plays through the relay's `/api/proxy`. The proxy supports Range requests (seeking), rewrites HLS playlists so segments and keys also go through it, forwards only `Referer`/`Origin`/`User-Agent`, and accepts the access token as `?t=`.
+- **Not supported:** pirate "watch online" sites. They obfuscate and encrypt their links specifically to block other players.
 
 ### Streaming engines
 - **Built-in streaming through your relay (free, plays in the app):** the Cloudflare Worker runs its own download-only BitTorrent client (`lib/bt/`, `worker/stream-do.ts`). One Durable Object per torrent connects to peers over Cloudflare's outbound TCP sockets, fetches the file list from the magnet, downloads pieces in playback order (each SHA-1 verified), and serves the file as a normal HTTP video with Range support. Nothing is stored; pieces stay in memory only while being watched. It's the default when you have a relay and no Debrid key.

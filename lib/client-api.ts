@@ -21,7 +21,7 @@ export function apiBase(): string {
  * user's own Settings choose which ones run. Keys still come from request headers.
  */
 export const directEnv = (): Record<string, string> => ({
-  INDEXERS: 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons',
+  INDEXERS: 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons,archive',
   ALLOW_CLIENT_TORZNAB: 'true',
   USE_PUBLIC_RELAYS: String(useApp.getState().settings.publicRelays),
 });
@@ -97,6 +97,22 @@ export const api = {
   streamUrl(path: string): string {
     const t = useApp.getState().settings.accessToken;
     return apiBase() + path + (t ? `?t=${encodeURIComponent(t)}` : '');
+  },
+  /** A direct link played through the relay (CORS, required headers, MKV conversion). Undefined without a relay. */
+  proxyUrl(url: string, requestHeaders?: Record<string, string>): string | undefined {
+    const base = apiBase();
+    if (!base) return undefined;
+    const u = new URL(base + '/api/proxy');
+    u.searchParams.set('url', url);
+    if (requestHeaders && Object.keys(requestHeaders).length) {
+      const json = JSON.stringify(requestHeaders);
+      let bin = '';
+      for (const b of new TextEncoder().encode(json)) bin += String.fromCharCode(b);
+      u.searchParams.set('h', btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
+    }
+    const t = useApp.getState().settings.accessToken;
+    if (t) u.searchParams.set('t', t);
+    return u.toString();
   },
 
   async resolveDebrid(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<ResolvedStream> {

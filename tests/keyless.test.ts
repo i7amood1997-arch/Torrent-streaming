@@ -222,7 +222,10 @@ describe('source fixes (checked against Prowlarr definitions)', async () => {
     expect(cfg.stremioAddons).toEqual(['https://my-addon.example/abc']);
     const res = await searchTorrents({ imdbId: 'tt1392170', type: 'movie' }, cfg);
     expect(res.errors).toEqual([]);
-    expect(res.results.map((r) => [r.indexer, r.seeders, r.fileIdx]).sort()).toEqual([['addons', 77, 3], ['mediafusion', 77, 3]]);
+    const torrents = res.results.filter((r) => !r.url);
+    expect(torrents.map((r) => [r.indexer, r.seeders, r.fileIdx]).sort()).toEqual([['addons', 77, 3], ['mediafusion', 77, 3]]);
+    // Streams with a plain URL become direct-link results.
+    expect(res.results.filter((r) => r.url).map((r) => [r.indexer, r.url, r.infoHash])).toEqual([['mediafusion', 'https://x/y', '']]);
     expect(calls).toHaveLength(2);
   });
 
@@ -232,5 +235,73 @@ describe('source fixes (checked against Prowlarr definitions)', async () => {
     const res = await handleApi(new Request('https://relay.example/api/search?imdb=tt1392170&type=movie&indexers=addons', { headers: { 'x-stremio-addons': 'https://a.example/x/manifest.json' } }), { INDEXERS: 'addons' });
     expect(res.status).toBe(200);
     expect(calls).toEqual(['https://a.example/x/stream/movie/tt1392170.json']);
+  });
+});
+
+describe('direct links', async () => {
+  const { makeDirectResult, mergeResults, pickArchiveFile } = await import('@/lib/torrent-indexer');
+  const { applyFilters, DEFAULT_FILTERS } = await import('@/lib/result-filters');
+
+  it('Stremio url streams keep required headers and quality', async () => {
+    stubFetch({
+      'addon.example/stream/movie/tt0063350.json': () => ({ streams: [
+        { name: 'MyAddon\n1080p', title: 'Night.of.the.Living.Dead.1968.1080p.BluRay.x264.mkv\n💾 4.2 GB', url: 'https://cdn.example/v.mkv',
+          behaviorHints: { notWebReady: true, proxyHeaders: { request: { Referer: 'https://site.example/' } } } },
+      ] }),
+    });
+    const res = await searchTorrents({ imdbId: 'tt0063350', type: 'movie' }, configFromEnv({ INDEXERS: 'addons', STREMIO_ADDONS: 'https://addon.example/manifest.json' }));
+    expect(res.results[0]).toMatchObject({ url: 'https://cdn.example/v.mkv', quality: '1080p', container: 'mkv', notWebReady: true, headers: { Referer: 'https://site.example/' }, tracker: 'MyAddon' });
+    expect(res.results[0].sizeBytes).toBe(Math.round(4.2 * 1024 ** 3));
+  });
+
+  it('direct results are never merged together and ignore the seeders filter', () => {
+    const a = makeDirectResult({ title: 'Film 1080p', url: 'https://a.example/1.mp4', indexer: 'archive' });
+    const b = makeDirectResult({ title: 'Film 720p', url: 'https://a.example/2.mp4', indexer: 'archive' });
+    expect(mergeResults([a, b])).toHaveLength(2);
+    expect(applyFilters([a], { ...DEFAULT_FILTERS, minSeeders: 50 })).toHaveLength(1);
+  });
+
+  it('Internet Archive: finds the film and picks the best full-length MP4', async () => {
+    expect(pickArchiveFile([
+      { name: 'film_512kb.mp4', height: '240', size: '3', length: '5600' },
+      { name: 'film.mp4', height: '480', size: '9', length: '01:35:10' },
+      { name: 'trailer.mp4', height: '1080', size: '1', length: '120' },
+      { name: 'film.ogv', height: '480' },
+    ])?.name).toBe('film.mp4');
+    let searchUrl = '';
+    stubFetch({
+      'archive.org/advancedsearch.php': (u) => { searchUrl = decodeURIComponent(u); return { response: { docs: [{ identifier: 'night_of_the_living_dead', title: 'Night of the Living Dead', year: '1968' }] } }; },
+      'archive.org/metadata/night_of_the_living_dead': () => ({ metadata: { title: 'Night of the Living Dead', year: '1968' }, files: [{ name: 'NOTLD.mp4', height: '480', size: '734003200', length: '5760' }] }),
+    });
+    const res = await searchTorrents({ title: 'Night of the Living Dead', year: 1968, imdbId: 'tt0063350', type: 'movie' }, configFromEnv({ INDEXERS: 'archive' }));
+    expect(searchUrl).toContain('external-identifier:"urn:imdb:tt0063350"');
+    expect(searchUrl).toContain('year:[1967 TO 1969]');
+    expect(res.results[0]).toMatchObject({ url: 'https://archive.org/download/night_of_the_living_dead/NOTLD.mp4', tracker: 'Internet Archive', quality: 'SD', container: 'mp4' });
+  });
+
+  it('relay proxy: passes Range and allowed headers only, needs the token, rewrites HLS', async () => {
+    const seen: { url: string; headers: Record<string, string> }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      seen.push({ url, headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+      if (url.endsWith('.m3u8')) return new Response('#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI="key.bin"\nseg1.ts\nhttps://other.example/seg2.ts\n', { headers: { 'content-type': 'application/vnd.apple.mpegurl' } });
+      return new Response('abcd', { status: 206, headers: { 'content-type': 'video/mp4', 'content-range': 'bytes 0-3/100', 'content-length': '4', 'set-cookie': 'x=1' } });
+    }));
+    const h = btoa(JSON.stringify({ Referer: 'https://site.example/', Cookie: 'secret', 'X-Evil': '1' })).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+    const env = { ACCESS_TOKEN: 'tok' };
+    const denied = await handleApi(new Request(`https://relay.example/api/proxy?url=${encodeURIComponent('https://cdn.example/v.mp4')}`), env);
+    expect(denied.status).toBe(401);
+    const res = await handleApi(new Request(`https://relay.example/api/proxy?url=${encodeURIComponent('https://cdn.example/v.mp4')}&h=${h}&t=tok`, { headers: { Range: 'bytes=0-3' } }), env);
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe('bytes 0-3/100');
+    expect(res.headers.get('set-cookie')).toBeNull();
+    expect(seen[0].headers).toEqual({ range: 'bytes=0-3', referer: 'https://site.example/' });
+    const pl = await handleApi(new Request(`https://relay.example/api/proxy?url=${encodeURIComponent('https://cdn.example/hls/index.m3u8')}&t=tok`), env);
+    const text = await pl.text();
+    expect(text).toContain(`URI="https://relay.example/api/proxy?url=${encodeURIComponent('https://cdn.example/hls/key.bin')}&t=tok"`);
+    expect(text).toContain(`https://relay.example/api/proxy?url=${encodeURIComponent('https://cdn.example/hls/seg1.ts')}&t=tok`);
+    expect(text).toContain(`url=${encodeURIComponent('https://other.example/seg2.ts')}`);
+    const bad = await handleApi(new Request(`https://relay.example/api/proxy?url=${encodeURIComponent('file:///etc/passwd')}&t=tok`), env);
+    expect(bad.status).toBe(400);
   });
 });

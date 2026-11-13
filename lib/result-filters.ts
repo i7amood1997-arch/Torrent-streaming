@@ -22,7 +22,7 @@ export function applyFilters(results: TorrentResult[], f: ResultFilters): Torren
   const filtered = results.filter(
     (r) =>
       (!f.qualities.length || f.qualities.includes(r.quality)) &&
-      r.seeders >= f.minSeeders &&
+      (!!r.url || r.seeders >= f.minSeeders) && // direct links have no seeders
       (!f.hdrOnly || r.hdr.length > 0) &&
       (!f.hideCam || r.source !== 'CAM') &&
       (!maxBytes || !r.sizeBytes || r.sizeBytes <= maxBytes) &&

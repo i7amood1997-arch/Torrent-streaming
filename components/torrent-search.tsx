@@ -9,7 +9,7 @@
  * Live client-side filtering by quality tier, minimum seeders, HDR, text and
  * size, with a filter drawer on phones and an inline bar on iPad/desktop.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
 import { applyFilters, countByQuality, DEFAULT_FILTERS, type ResultFilters, type SortKey } from '@/lib/result-filters';
@@ -45,7 +45,7 @@ export const QUALITY_STYLES: Record<QualityTier, string> = {
   Unknown: 'border-ink-600 bg-ink-800 text-ink-400',
 };
 
-const SOURCE_NAMES: Record<string, string> = { animetosho: 'AnimeTosho', mediafusion: 'MediaFusion', addons: 'Your add-ons', torrentio: 'Torrentio', knaben: 'Knaben', yts: 'YTS', eztv: 'EZTV', nyaa: 'Nyaa', apibay: 'Pirate Bay', torrentscsv: 'Torrents-CSV', torznab: 'Jackett/Prowlarr' };
+const SOURCE_NAMES: Record<string, string> = { archive: 'Internet Archive', animetosho: 'AnimeTosho', mediafusion: 'MediaFusion', addons: 'Your add-ons', torrentio: 'Torrentio', knaben: 'Knaben', yts: 'YTS', eztv: 'EZTV', nyaa: 'Nyaa', apibay: 'Pirate Bay', torrentscsv: 'Torrents-CSV', torznab: 'Jackett/Prowlarr' };
 const sourceName = (ix: string) => SOURCE_NAMES[ix] ?? ix;
 
 export function QualityBadge({ q }: { q: QualityTier }) {
@@ -107,7 +107,7 @@ export function TorrentSearch({ query, context, header }: Props) {
     set({ qualities: filters.qualities.includes(q) ? filters.qualities.filter((x) => x !== q) : [...filters.qualities, q] });
 
   const onPlay = (r: TorrentResult) =>
-    play({ kind: 'torrent', result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode });
+    play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode });
 
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
@@ -188,8 +188,17 @@ export function TorrentSearch({ query, context, header }: Props) {
         // One row component; layout adapts to the *pane* width via a container query (.results in globals.css),
         // so it works in the narrow iPad/desktop list pane as well as full-width.
         <ul className="results grid grid-cols-[minmax(0,1fr)] gap-2">
-          {visible.map((r) => (
-            <li key={r.id} className={`result-row card p-3 ${r.id === playingId ? 'border-accent/60 bg-accent/5' : 'hover:border-ink-600'}`}>
+          {visible.some((r) => r.url) && (
+            <li className="flex items-center gap-2 px-1 pt-1 text-xs font-semibold uppercase tracking-wide text-hd">
+              Direct links <span className="font-normal normal-case text-ink-400">· start instantly, no seeders needed</span>
+            </li>
+          )}
+          {[...visible.filter((r) => r.url), ...visible.filter((r) => !r.url)].map((r, i, all) => (
+            <Fragment key={r.id}>
+            {!r.url && i > 0 && all[i - 1].url && (
+              <li className="px-1 pt-3 text-xs font-semibold uppercase tracking-wide text-ink-400">Torrents</li>
+            )}
+            <li className={`result-row card p-3 ${r.id === playingId ? 'border-accent/60 bg-accent/5' : 'hover:border-ink-600'}`}>
               <div className="rr-main min-w-0">
                 <div className="mb-1.5 flex min-w-0 items-center gap-2">
                   <QualityBadge q={r.quality} />
@@ -200,11 +209,18 @@ export function TorrentSearch({ query, context, header }: Props) {
               </div>
               <div className="rr-stats text-xs tabular-nums">
                 <span className="rr-size text-ink-200">{formatBytes(r.sizeBytes)}</span>
-                <span className={`inline-flex items-center gap-0.5 ${seedColor(r.seeders)}`} title="Seeders"><IconSeed size={12} />{r.seeders}</span>
-                <span className="inline-flex items-center gap-0.5 text-ink-400" title="Leechers"><IconLeech size={12} />{r.leechers}</span>
+                {r.url ? (
+                  <span className="text-hd" title="Direct link: no seeders involved">Direct</span>
+                ) : (
+                  <>
+                    <span className={`inline-flex items-center gap-0.5 ${seedColor(r.seeders)}`} title="Seeders"><IconSeed size={12} />{r.seeders}</span>
+                    <span className="inline-flex items-center gap-0.5 text-ink-400" title="Leechers"><IconLeech size={12} />{r.leechers}</span>
+                  </>
+                )}
               </div>
               <div className="rr-actions"><RowActions r={r} onPlay={onPlay} /></div>
             </li>
+            </Fragment>
           ))}
         </ul>
       )}
@@ -267,14 +283,14 @@ function ResultTitle({ r }: { r: TorrentResult }) {
 function RowActions({ r, onPlay }: { r: TorrentResult; onPlay: (r: TorrentResult) => void }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
-    try { await navigator.clipboard.writeText(r.magnet); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { /* denied */ }
+    try { await navigator.clipboard.writeText(r.url ?? r.magnet); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { /* denied */ }
   };
   return (
     <div className="flex shrink-0 items-center gap-1">
       <button className="btn-primary px-3" onClick={() => onPlay(r)} aria-label={`Play ${r.title}`}>
         <IconPlay size={14} /> <span className="rr-play-label">Play</span>
       </button>
-      <button className="btn-ghost px-2 text-ink-400" onClick={copy} aria-label="Copy magnet link" title="Copy magnet">
+      <button className="btn-ghost px-2 text-ink-400" onClick={copy} aria-label={r.url ? "Copy link" : "Copy magnet link"} title={r.url ? "Copy link" : "Copy magnet"}>
         {copied ? <span className="text-xs text-hd">✓</span> : <IconCopy size={14} />}
       </button>
     </div>

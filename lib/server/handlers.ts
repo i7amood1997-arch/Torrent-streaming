@@ -35,6 +35,7 @@ const ALLOWED_HEADERS = [
   'x-torznab-url',
   'x-torznab-key',
   'x-stremio-addons',
+  'range',
 ].join(', ');
 
 function corsHeaders(req: Request, env: Env): Record<string, string> {
@@ -46,6 +47,7 @@ function corsHeaders(req: Request, env: Env): Record<string, string> {
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': ALLOWED_HEADERS,
     'Access-Control-Max-Age': '86400',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges, Content-Type',
     Vary: 'Origin',
   };
 }
@@ -228,6 +230,78 @@ async function subtitleFile(req: Request, env: Env, sp: URLSearchParams) {
   }
 }
 
+// ─── Direct-link playback proxy ─────────────────────────────────────────────
+
+/** Request headers a host may require (from Stremio `proxyHeaders`). Nothing else is forwarded. */
+const PROXY_REQUEST_HEADERS = ['referer', 'origin', 'user-agent'];
+const PASS_RESPONSE_HEADERS = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'last-modified', 'etag'];
+
+const b64urlJson = {
+  enc: (v: unknown) => btoa(unescape(encodeURIComponent(JSON.stringify(v)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (s: string) => JSON.parse(decodeURIComponent(escape(atob(s.replace(/-/g, '+').replace(/_/g, '/'))))),
+};
+
+/** URL of this proxy for `target`, keeping the same headers/token (used to rewrite HLS playlists). */
+function proxied(self: URL, target: string): string {
+  const u = new URL('/api/proxy', self.origin);
+  u.searchParams.set('url', target);
+  for (const k of ['h', 't']) { const v = self.searchParams.get(k); if (v) u.searchParams.set(k, v); }
+  return u.toString();
+}
+
+/** Point every URI in an HLS playlist (segments, keys, variant playlists) back through the proxy. */
+export function rewritePlaylist(body: string, base: string, self: URL): string {
+  const abs = (u: string) => { try { return new URL(u, base).toString(); } catch { return u; } };
+  return body
+    .split('\n')
+    .map((line) => {
+      const t = line.trim();
+      if (!t) return line;
+      if (t.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (_m, u) => `URI="${proxied(self, abs(u))}"`);
+      return proxied(self, abs(t));
+    })
+    .join('\n');
+}
+
+/**
+ * GET /api/proxy?url=<http(s) URL>[&h=<base64url JSON headers>][&t=<token>]
+ * Streams a direct video link with Range support, adding headers the host needs
+ * and CORS so the app (and its MKV converter) can read it.
+ */
+async function proxy(req: Request, self: URL): Promise<Response> {
+  const target = self.searchParams.get('url') ?? '';
+  let parsed: URL;
+  try { parsed = new URL(target); } catch { return err('Invalid url', 400); }
+  if (!/^https?:$/.test(parsed.protocol)) return err('Only http(s) links can be played', 400);
+  const headers: Record<string, string> = {};
+  const h = self.searchParams.get('h');
+  if (h) {
+    try {
+      for (const [k, v] of Object.entries(b64urlJson.dec(h) as Record<string, string>)) {
+        if (PROXY_REQUEST_HEADERS.includes(k.toLowerCase()) && typeof v === 'string') headers[k] = v;
+      }
+    } catch { return err('Invalid headers', 400); }
+  }
+  const range = req.headers.get('range');
+  if (range) headers.Range = range;
+  const up = await fetch(parsed.toString(), { method: req.method === 'HEAD' ? 'HEAD' : 'GET', headers, redirect: 'follow' });
+  const type = up.headers.get('content-type') ?? '';
+  if (/mpegurl/i.test(type) || /\.m3u8($|\?)/i.test(parsed.pathname)) {
+    const text = await up.text();
+    return new Response(rewritePlaylist(text, up.url || parsed.toString(), self), {
+      status: up.status,
+      headers: { 'Content-Type': 'application/vnd.apple.mpegurl', 'Cache-Control': 'no-store' },
+    });
+  }
+  const out = new Headers();
+  for (const k of PASS_RESPONSE_HEADERS) { const v = up.headers.get(k); if (v) out.set(k, v); }
+  if (!out.has('accept-ranges') && up.status === 206) out.set('accept-ranges', 'bytes');
+  out.set('Cache-Control', 'no-store');
+  return new Response(req.method === 'HEAD' ? null : up.body, { status: up.status, headers: out });
+}
+
+export const encodeProxyHeaders = b64urlJson.enc;
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 export async function handleApi(req: Request, env: Env): Promise<Response> {
@@ -239,7 +313,9 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
   let res: Response;
 
   // Optional shared secret: protects server-side keys (e.g. your Debrid account) from strangers.
-  if (env.ACCESS_TOKEN && path !== '/api/config' && path !== '' && req.headers.get('x-access-token') !== env.ACCESS_TOKEN) {
+  // <video> and media fetches can't send custom headers, so the token may also come as ?t=.
+  const token = req.headers.get('x-access-token') ?? url.searchParams.get('t');
+  if (env.ACCESS_TOKEN && path !== '/api/config' && path !== '' && token !== env.ACCESS_TOKEN) {
     res = err('Access token required — enter it in the app Settings.', 401);
   } else {
     try {
@@ -251,6 +327,7 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
       else if (path === '/api/debrid/resolve' && req.method === 'POST') res = await debridResolve(req, env);
       else if (path === '/api/subtitles' && get) res = await subtitles(req, env, url.searchParams);
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
+      else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
       else res = err('Not found', 404);
     } catch (e) {
       res = err(describeError(e) || 'Internal error', 500);

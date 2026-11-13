@@ -41,6 +41,12 @@ export interface TorrentResult extends ParsedRelease {
   publishedAt?: string;
   /** IMDB id when the indexer knows it (lets subtitles work for raw search results). */
   imdbId?: string;
+  /** Direct (HTTP) link instead of a torrent: no seeders involved. infoHash/magnet are empty. */
+  url?: string;
+  /** Request headers the host requires (Stremio `proxyHeaders`); such links play through the relay. */
+  headers?: Record<string, string>;
+  /** The add-on says browsers can't play this link as-is (e.g. MKV, or needs headers). */
+  notWebReady?: boolean;
 }
 
 export interface IndexerError {

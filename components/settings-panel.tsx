@@ -18,6 +18,7 @@ const SOURCES = [
   { id: 'eztv', name: 'EZTV', help: 'TV episodes (Catalog mode).' },
   { id: 'nyaa', name: 'Nyaa', help: 'Anime.' },
   { id: 'animetosho', name: 'AnimeTosho', help: 'Anime from Nyaa, TokyoTosho and AniDex, with seeders.' },
+  { id: 'archive', name: 'Internet Archive (direct)', help: 'Free, legal films (public domain and openly licensed), streamed directly — no seeders.' },
   { id: 'mediafusion', name: 'MediaFusion', help: 'Big aggregator (Prowlarr, Zilean, Torrentio…). Its public server may hide torrents from free users.' },
   { id: 'apibay', name: 'The Pirate Bay API', help: 'Text search of all video.' },
   { id: 'torrentscsv', name: 'Torrents-CSV', help: 'Open index built from the DHT network.' },
@@ -111,7 +112,7 @@ export function SettingsPanel() {
             );
           })}
         </div>
-        <Field label="Your own Stremio add-ons (optional)" hint="One manifest link per line, e.g. a configured AIOStreams, Comet, TorrentClaw or MediaFusion. Results with torrent links are added to every Catalog search.">
+        <Field label="Your own Stremio add-ons (optional)" hint="One manifest link per line, e.g. a configured AIOStreams, Comet, TorrentClaw or MediaFusion. Their torrent results and direct links (e.g. from a Debrid account set up in the add-on) are added to every Catalog search.">
           <textarea className="input min-h-[72px] font-mono text-xs" spellCheck={false} placeholder="https://…/manifest.json" value={settings.stremioAddons}
             onChange={(e) => updateSettings({ stremioAddons: e.target.value })} />
         </Field>

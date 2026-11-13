@@ -22,7 +22,7 @@ tag = "v1"
 new_sqlite_classes = ["TorrentStream"]
 
 [vars]
-INDEXERS = "torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons"
+INDEXERS = "torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons,archive"
 TORRENTIO_URL = "https://torrentio.strem.fun"
 # Comma-separated; known mirrors are tried automatically after these.
 YTS_URL = "https://yts.gg"
