@@ -144,6 +144,10 @@ Direct HTTP links appear in their own **Direct links** section above torrents. T
 
 ### Subtitles
 - Searched by IMDB id with season/episode through the keyless OpenSubtitles feed (the Stremio add-on); with an OpenSubtitles or SubDL key, results are also ranked by similarity to the playing release name. The best **Arabic** and **English** tracks load automatically. For raw search results without an IMDB id, the title is identified through the catalog first.
+- **Automatic sync**, in three layers:
+  1. **Exact file match.** The playing file's OpenSubtitles hash (size plus first/last 64 KiB, read with two Range requests, `lib/subtitle-hash.ts`) is sent with the search, so subtitles made for that exact release rank first.
+  2. **Subtitles inside the video** (MKV text tracks) are preferred when present; they can't drift. MKV converted in the page also gets its 0.5 s timeline shift applied to downloaded subtitles.
+  3. **Listening to the audio** (`lib/audio-tap.ts`, `lib/autosync.ts`). While the video plays, speech-band (300–3000 Hz) loudness is sampled 10× per second. Every 15 s the subtitles are cross-correlated against it over ±20 s shifts and the common frame-rate conversions (25↔23.976, 24↔23.976, 25↔24). A result is applied when it's unambiguous and two checks in a row agree; after that it keeps being refined within ±3 s. It needs about a minute of dialogue. Moving the delay slider switches it off for that language; it can also be turned off in the subtitle panel. Audio is only analysed when the browser lets the page read it (in-page MKV conversion, same-origin, or CORS-enabled links), so it never mutes a stream.
 - Arabic is decoded from Windows-1256 when not UTF-8, and rendered `dir="rtl"` with Cairo/Tajawal.
 - Dual-language display, per-language **sync offset** (±10 s slider, ±100 ms buttons, `[`/`]` keys), size, background opacity, colour and vertical position, plus local `.srt`/`.vtt` upload.
 - iPhone system fullscreen can't show HTML overlays, so the cues (with the offset applied) are also exposed as native `<track>`s that switch on in fullscreen.

@@ -19,6 +19,11 @@ export interface SubtitleSearch {
   releaseName?: string;
   query?: string;
   langs?: string[];
+  /** OpenSubtitles hash + size of the playing file: subtitles timed for this exact file. */
+  videoHash?: string;
+  videoSize?: number;
+  /** File name of the playing video (helps the feed rank releases). */
+  fileName?: string;
 }
 
 export interface SubtitleKeys {
@@ -82,6 +87,7 @@ async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): 
   else if (q.tmdbId) p.set(q.type === 'series' ? 'parent_tmdb_id' : 'tmdb_id', String(q.tmdbId));
   else if (q.query || q.releaseName) p.set('query', (q.query || q.releaseName)!);
   else return [];
+  if (q.videoHash) p.set('moviehash', q.videoHash);
 
   const res = await fetch(`${OS_API}/subtitles?${p}`, {
     headers: { 'Api-Key': key, ...serverOnlyHeaders({ 'User-Agent': ua }), Accept: 'application/json' },
@@ -103,7 +109,9 @@ async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): 
       releaseName,
       downloads: a.download_count,
       hearingImpaired: a.hearing_impaired,
-      score: releaseSimilarity(releaseName, q.releaseName),
+      hashMatch: !!a.moviehash_match,
+      // Hash matches were timed against this exact file: rank them above everything else.
+      score: a.moviehash_match ? 1 : releaseSimilarity(releaseName, q.releaseName),
       token: encodeToken({ p: 'opensubtitles', fileId: file.file_id, lang }),
     }];
   });
@@ -149,9 +157,15 @@ async function searchStremio(q: SubtitleSearch): Promise<SubtitleTrackInfo[]> {
   if (!q.imdbId) return [];
   const series = q.type === 'series' && q.season != null && q.episode != null;
   const id = series ? `${q.imdbId}:${q.season}:${q.episode}` : q.imdbId;
-  const res = await fetch(`${STREMIO_SUBS}/subtitles/${series ? 'series' : 'movie'}/${id}.json`, { signal: AbortSignal.timeout(9000) });
+  // Stremio "extra" args: with the file's hash the feed puts subtitles made for this exact release first.
+  const extra = [
+    q.videoHash && /^[0-9a-f]{16}$/.test(q.videoHash) ? `videoHash=${q.videoHash}` : '',
+    q.videoSize ? `videoSize=${q.videoSize}` : '',
+    q.fileName ? `filename=${encodeURIComponent(q.fileName)}` : '',
+  ].filter(Boolean).join('&');
+  const res = await fetch(`${STREMIO_SUBS}/subtitles/${series ? 'series' : 'movie'}/${id}${extra ? `/${extra}` : ''}.json`, { signal: AbortSignal.timeout(9000) });
   if (!res.ok) throw new Error(`OpenSubtitles feed ${res.status}`);
-  const data = (await res.json()) as { subtitles?: { id?: string; url?: string; lang?: string }[] };
+  const data = (await res.json()) as { subtitles?: { id?: string; url?: string; lang?: string; movieReleaseName?: string; subtitleFileName?: string }[] };
   const wanted = q.langs ?? ['ar', 'en'];
   const perLang: Record<string, number> = {};
   const out: SubtitleTrackInfo[] = [];
@@ -160,14 +174,17 @@ async function searchStremio(q: SubtitleSearch): Promise<SubtitleTrackInfo[]> {
     if (!lang || !wanted.includes(lang) || !s.url || !isStremioUrl(s.url)) continue;
     const n = (perLang[lang] = (perLang[lang] ?? 0) + 1);
     if (n > 8) continue; // the feed is ordered best-first; a handful per language is plenty
+    const releaseName = s.movieReleaseName || s.subtitleFileName || `OpenSubtitles #${n}`;
+    const similarity = releaseSimilarity(releaseName, q.fileName || q.releaseName);
     out.push({
       id: `st-${s.id ?? `${lang}${n}`}`,
       provider: 'opensubtitles',
       lang,
-      label: `${lang.toUpperCase()} · OpenSubtitles #${n}`,
-      releaseName: `OpenSubtitles #${n}`,
-      // No release names in this feed: keep the feed's own order via a tiny descending score.
-      score: 0.01 / n,
+      label: `${lang.toUpperCase()} · ${releaseName}`,
+      releaseName,
+      // With a hash the feed's order is the best signal (exact-release matches first);
+      // otherwise rank by how closely the subtitle's release name matches the playing file.
+      score: q.videoHash ? 0.95 - 0.02 * (n - 1) + similarity * 0.01 : similarity + 0.01 / n,
       token: encodeToken({ p: 'stremio', url: s.url, lang }),
     });
   }

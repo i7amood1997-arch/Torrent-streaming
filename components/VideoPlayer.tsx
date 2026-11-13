@@ -17,13 +17,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type Hls from 'hls.js';
 import { api, apiBase, type StreamStats } from '@/lib/client-api';
 import { MkvMsePlayer, mkvRemuxSupported } from '@/lib/mkv/player';
+import { TIMELINE_OFFSET_MS } from '@/lib/mkv/remux';
+import { agrees, alignSubtitles, confident, type Alignment } from '@/lib/autosync';
+import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
+import { hashRemoteVideo } from '@/lib/subtitle-hash';
 import { canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
 import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
 import { IconBack, IconCC, IconExpand, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
-import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles } from './subtitles';
+import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles, type Lang, type PlayingFile } from './subtitles';
 
 
 type Engine = 'debrid' | 'cloud' | 'webtorrent' | 'webtor' | 'direct';
@@ -37,6 +41,8 @@ interface Source {
   alt?: string; // alternative (e.g. HLS transcode) if the primary fails
   /** MKV the browser can't open itself: repackage to MP4 on the fly (lib/mkv). */
   remux?: boolean;
+  /** false after the host refused a CORS load: play without it (no audio analysis for auto-sync). */
+  cors?: boolean;
 }
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -98,7 +104,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [flash, setFlash] = useState<{ side: 'left' | 'right' | 'center'; label: string; key: number }>();
   const [scrub, setScrub] = useState<number>();
 
-  const subs = useSubtitles(req, source?.fileName);
+  const [videoKey, setVideoKey] = useState(0);
+  const [playingFile, setPlayingFile] = useState<PlayingFile>({ ready: false });
+  const subs = useSubtitles(req, playingFile);
   subsRef.current = subs;
   const resumeId = req?.result?.id ?? req?.url;
 
@@ -246,6 +254,67 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     };
   }, [req?.nonce, engineOverride]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Exact-release subtitles: hash the playing file (two small range reads) ─────
+  const hashKey = source ? `${req?.nonce}|${source.url.split('?')[0]}` : '';
+  useEffect(() => {
+    if (!source) { setPlayingFile({ ready: false }); return; }
+    const name = source.fileName;
+    const hlsOnly = isHlsUrl(source.url, source.mime) && (!source.alt || isHlsUrl(source.alt));
+    if (source.engine === 'webtor' || hlsOnly) { setPlayingFile({ name, ready: true }); return; }
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 7000); // don't hold subtitles back for long
+    const urls = [isHlsUrl(source.url, source.mime) ? undefined : source.url, source.alt && !isHlsUrl(source.alt) ? source.alt : undefined,
+      source.engine !== 'cloud' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined];
+    hashRemoteVideo(urls, ac.signal)
+      .then((h) => setPlayingFile({ name, hash: h?.hash, size: h?.size, ready: true }))
+      .catch(() => setPlayingFile({ name, ready: true }))
+      .finally(() => clearTimeout(timer));
+    setPlayingFile({ name, ready: false });
+    return () => { clearTimeout(timer); ac.abort(); };
+  }, [hashKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The MKV converter shifts the media timeline; downloaded subtitles need the same shift.
+  useEffect(() => { subs.setBaseShift(source?.remux ? TIMELINE_OFFSET_MS : 0); }, [source?.remux]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Automatic subtitle sync from the soundtrack ───────────────────────────
+  const tapRef = useRef<AudioTap | null>(null);
+  const [syncListening, setSyncListening] = useState(false);
+  useEffect(() => {
+    if (!videoEl) return;
+    const tap = new AudioTap(videoEl);
+    tapRef.current = tap;
+    tap.start();
+    return () => { tap.stop(); if (tapRef.current === tap) tapRef.current = null; };
+  }, [videoEl]);
+  useEffect(() => { tapRef.current?.reset(); }, [req?.nonce]);
+
+  const syncState = useRef<Partial<Record<Lang, { track: string; last?: Alignment; applied?: Alignment }>>>({});
+  useEffect(() => {
+    if (!settings.subtitle.autoSync) return;
+    const t = setInterval(() => {
+      const tap = tapRef.current;
+      setSyncListening(!!tap?.active);
+      if (!tap?.active) return;
+      for (const lang of LANGS) {
+        const tr = subs.loaded[lang];
+        if (!tr?.cues.length || tr.info.provider === 'embedded' || subs.manual.has(lang)) continue;
+        const st = syncState.current[lang]?.track === tr.info.id ? syncState.current[lang]! : (syncState.current[lang] = { track: tr.info.id });
+        const base = subs.baseShiftMs;
+        const center = (base + subs.offsets[lang]) / 1000;
+        const a = alignSubtitles(tap.samples, tr.cues, { center: st.applied ? center : base / 1000, range: st.applied ? 3 : 20 });
+        if (!confident(a)) continue;
+        // Apply when two consecutive estimates agree; later, only move if a new estimate is stable and differs.
+        if (st.last && agrees(a!, st.last) && (!st.applied || !agrees(a!, st.applied))) {
+          st.applied = a;
+          subs.applyAutoSync(lang, a!.offset * 1000 - base, a!.scale);
+        }
+        st.last = a;
+      }
+    }, 15000);
+    return () => clearInterval(t);
+  }, [settings.subtitle.autoSync, subs]);
+  useEffect(() => { syncState.current = {}; }, [req?.nonce]);
+
   // ── Cloud streaming keep-alive: each ping refills the relay's connection budget and reports speed ──
   const cloudHash = source?.engine === 'cloud' ? req?.result?.infoHash : undefined;
   useEffect(() => {
@@ -293,6 +362,10 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         hls.attachMedia(video);
         hlsRef.current = hls;
       } else {
+        // Load with CORS when possible so auto-sync can analyse the audio; hosts that refuse
+        // get a plain retry (see the error handler).
+        if (source.cors === false) video.removeAttribute('crossorigin');
+        else video.crossOrigin = 'anonymous';
         video.src = source.url;
       }
       setPhase('ready');
@@ -336,6 +409,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       on('error', () => {
         const code = v.error?.code;
         if (!v.currentSrc && !hlsRef.current) return;
+        // Maybe the host just refused the CORS load: retry plainly (the sound must never depend on auto-sync).
+        if (source && source.cors !== false && !source.remux && !hlsRef.current && v.crossOrigin === 'anonymous' && !v.currentSrc.startsWith('blob:')) {
+          if (isTapped(v)) setVideoKey((k) => k + 1); // a fresh element: the old one's audio is routed through Web Audio
+          setSource({ ...source, cors: false });
+          return;
+        }
         if (source?.alt && v.currentSrc !== source.alt) {
           setStatus('Primary stream failed, trying alternate…');
           setSource({ ...source, url: source.alt, alt: undefined, mime: isHlsUrl(source.alt) ? 'application/vnd.apple.mpegurl' : undefined });
@@ -395,10 +474,11 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const out: { lang: string; url: string }[] = [];
     for (const lang of LANGS) {
       const t = subs.loaded[lang];
-      if (t?.cues.length) out.push({ lang, url: URL.createObjectURL(new Blob([toVtt(t.cues, subs.offsets[lang] / 1000, lang === 'ar')], { type: 'text/vtt' })) });
+      const { shiftMs, scale } = subs.timing(lang);
+      if (t?.cues.length) out.push({ lang, url: URL.createObjectURL(new Blob([toVtt(t.cues, shiftMs / 1000, lang === 'ar', scale)], { type: 'text/vtt' })) });
     }
     return out;
-  }, [subs.loaded, subs.offsets]);
+  }, [subs.loaded, subs.timing]);
   useEffect(() => () => nativeTracks.forEach((t) => URL.revokeObjectURL(t.url)), [nativeTracks]);
 
   useEffect(() => {
@@ -422,6 +502,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
     if (!v || !source) return;
+    unlockAudio(); // user gesture: lets auto-sync listen to the audio
     if (v.paused) v.play().catch(() => undefined); else v.pause();
   }, [source]);
   const seekBy = useCallback((d: number) => {
@@ -605,6 +686,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       style={{ touchAction: 'pan-y' }}
     >
       <video
+        key={videoKey}
         ref={(el) => { (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; setVideoEl(el); }}
         className="absolute inset-0 h-full w-full"
         playsInline
@@ -737,7 +819,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       {panel && (
         <div className="absolute inset-0 z-20 bg-ink-950/95 backdrop-blur md:inset-y-0 md:left-auto md:w-96 md:border-l md:border-ink-700"
           onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
-          <SubtitlePanel subs={subs} onClose={() => setPanel(false)} hidden={subsHidden} onHiddenChange={setSubsHidden} />
+          <SubtitlePanel subs={subs} onClose={() => setPanel(false)} hidden={subsHidden} onHiddenChange={setSubsHidden} listening={syncListening} />
         </div>
       )}
     </div>

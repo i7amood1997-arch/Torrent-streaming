@@ -23,15 +23,40 @@ export interface LoadedTrack {
   cues: SubtitleCue[];
 }
 
+/** The playing file, for exact-release subtitle matching. `ready` once hashing finished (or was skipped). */
+export interface PlayingFile {
+  name?: string;
+  hash?: string;
+  size?: number;
+  ready: boolean;
+}
+
+export interface AutoSyncInfo {
+  offsetMs: number;
+  scale: number;
+}
+
 export interface SubtitleState {
   tracks: SubtitleTrackInfo[];
   loaded: Partial<Record<Lang, LoadedTrack | null>>;
   offsets: Record<Lang, number>; // ms, positive = show later
+  /** Speed factor per language (frame-rate conversions): media time = cue time × scale + shift. */
+  scales: Record<Lang, number>;
+  /** Shift applied to downloaded (not embedded) subtitles, e.g. the MKV converter's timeline offset. */
+  baseShiftMs: number;
+  setBaseShift: (ms: number) => void;
+  /** Languages the user synced by hand (auto-sync leaves them alone). */
+  manual: Set<Lang>;
+  /** Last automatic correction per language. */
+  autoSynced: Partial<Record<Lang, AutoSyncInfo>>;
+  applyAutoSync: (lang: Lang, offsetMs: number, scale: number) => void;
   loading: boolean;
   errors: string[];
   select: (lang: Lang, track: SubtitleTrackInfo | null) => void;
   loadFile: (file: File, lang: Lang) => Promise<void>;
   setOffset: (lang: Lang, ms: number) => void;
+  /** Effective timing for a language's loaded track. */
+  timing: (lang: Lang) => { shiftMs: number; scale: number };
   /** Add a cue from a subtitle track embedded in the video file (MKV). */
   addEmbedded: (lang: string, label: string, cue: SubtitleCue) => void;
 }
@@ -44,10 +69,15 @@ export function appLang(code: string): Lang | undefined {
   return undefined;
 }
 
-export function useSubtitles(req: PlayRequest | undefined, releaseName: string | undefined): SubtitleState {
+export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): SubtitleState {
+  const releaseName = file.name;
   const [tracks, setTracks] = useState<SubtitleTrackInfo[]>([]);
   const [loaded, setLoaded] = useState<SubtitleState['loaded']>({});
   const [offsets, setOffsets] = useState<Record<Lang, number>>({ ar: 0, en: 0 });
+  const [scales, setScales] = useState<Record<Lang, number>>({ ar: 1, en: 1 });
+  const [baseShiftMs, setBaseShift] = useState(0);
+  const [manual, setManual] = useState<Set<Lang>>(new Set());
+  const [autoSynced, setAutoSynced] = useState<Partial<Record<Lang, AutoSyncInfo>>>({});
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
@@ -69,29 +99,39 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
     }
   }, []);
 
-  // Auto-search when a new item starts playing (and once the real file name is known).
+  // Reset everything when a new item starts playing.
   useEffect(() => {
     abortRef.current?.abort();
-    setTracks([]); setLoaded({}); setErrors([]); setOffsets({ ar: 0, en: 0 });
+    setTracks([]); setLoaded({}); setErrors([]); setOffsets({ ar: 0, en: 0 }); setScales({ ar: 1, en: 1 });
+    setManual(new Set()); setAutoSynced({});
     embeddedRef.current = {};
     userPickedRef.current = new Set();
     clearTimeout(flushTimer.current);
-    if (!req) return;
+  }, [req?.nonce]);
+
+  // Search once the playing file is known (and hashed, for exact-release matches).
+  useEffect(() => {
+    if (!req || !file.ready) return;
+    abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     setLoading(true);
     api
-      .subtitles({ imdb: req.imdbId, tmdb: req.tmdbId, type: req.type, season: req.season, episode: req.episode, release: releaseName ?? req.result?.title, q: req.imdbId || req.tmdbId ? undefined : req.title, langs: 'ar,en' }, ac.signal)
+      .subtitles({ imdb: req.imdbId, tmdb: req.tmdbId, type: req.type, season: req.season, episode: req.episode, release: releaseName ?? req.result?.title, q: req.imdbId || req.tmdbId ? undefined : req.title, langs: 'ar,en', hash: file.hash, size: file.size, file: file.name }, ac.signal)
       .then(({ tracks, errors }) => {
-        setTracks(tracks);
+        setTracks((prev) => [...prev.filter((t) => t.provider === 'embedded' || t.provider === 'local'), ...tracks]);
         setErrors(errors.map((e) => `${e.provider}: ${e.message}`));
         const best = autoSelectTracks(tracks, LANGS);
-        for (const lang of LANGS) { const t = best[lang]; if (t) loadCues(lang, t, ac.signal); }
+        for (const lang of LANGS) {
+          const t = best[lang];
+          // Embedded subtitles (exact timing) and the user's own choice win over downloads.
+          if (t && !userPickedRef.current.has(lang) && !embeddedRef.current[lang]) loadCues(lang, t, ac.signal);
+        }
       })
       .catch((e) => { if (e.name !== 'AbortError') setErrors([e.message]); })
       .finally(() => { if (!ac.signal.aborted) setLoading(false); });
     return () => ac.abort();
-  }, [req?.nonce, releaseName, loadCues]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [req?.nonce, file.ready, file.hash, releaseName, loadCues]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const select = useCallback((lang: Lang, t: SubtitleTrackInfo | null) => {
     userPickedRef.current.add(lang);
@@ -144,9 +184,34 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
     setLoaded((l) => ({ ...l, [lang]: { info, cues } }));
   }, [releaseName]);
 
-  const setOffset = useCallback((lang: Lang, ms: number) => setOffsets((o) => ({ ...o, [lang]: Math.max(-30000, Math.min(30000, Math.round(ms))) })), []);
+  /** Manual sync: also stops auto-sync for this language. */
+  const setOffset = useCallback((lang: Lang, ms: number) => {
+    setManual((m) => (m.has(lang) ? m : new Set(m).add(lang)));
+    setOffsets((o) => ({ ...o, [lang]: Math.max(-30000, Math.min(30000, Math.round(ms))) }));
+  }, []);
 
-  return { tracks, loaded, offsets, loading, errors, select, loadFile, setOffset, addEmbedded };
+  const applyAutoSync = useCallback((lang: Lang, offsetMs: number, scale: number) => {
+    setOffsets((o) => ({ ...o, [lang]: Math.round(offsetMs) }));
+    setScales((s) => ({ ...s, [lang]: scale }));
+    setAutoSynced((a) => ({ ...a, [lang]: { offsetMs: Math.round(offsetMs), scale } }));
+  }, []);
+
+  // A different track has different timing: drop the previous automatic correction.
+  const trackIds = LANGS.map((l) => loaded[l]?.info.id ?? '').join('|');
+  useEffect(() => {
+    setAutoSynced((a) => {
+      const next = { ...a };
+      for (const lang of LANGS) if (a[lang] && loaded[lang]?.info.provider === 'embedded') delete next[lang];
+      return next;
+    });
+  }, [trackIds]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const timing = useCallback((lang: Lang) => {
+    const embedded = loaded[lang]?.info.provider === 'embedded';
+    return { shiftMs: (embedded ? 0 : baseShiftMs) + offsets[lang], scale: embedded ? 1 : scales[lang] };
+  }, [loaded, baseShiftMs, offsets, scales]);
+
+  return { tracks, loaded, offsets, scales, baseShiftMs, setBaseShift, manual, autoSynced, applyAutoSync, timing, loading, errors, select, loadFile, setOffset, addEmbedded };
 }
 
 // ─── Overlay renderer ───────────────────────────────────────────────────────
@@ -168,7 +233,8 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
       for (const lang of style.dual ? [secondary, primary] : [primary]) {
         const tr = subs.loaded[lang];
         if (!tr?.cues.length) continue;
-        const cues = activeCues(tr.cues, t - subs.offsets[lang] / 1000);
+        const { shiftMs, scale } = subs.timing(lang);
+        const cues = activeCues(tr.cues, (t - shiftMs / 1000) / scale);
         if (cues.length) out.push({ lang, text: cues.map((c) => c.text).join('\n') });
       }
       // Single-language fallback: if the primary language has no track loaded, show whatever is loaded.
@@ -178,7 +244,7 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [video, subs.loaded, subs.offsets, style.dual, primary, secondary]);
+  }, [video, subs, style.dual, primary, secondary]);
 
   return (
     <div
@@ -206,9 +272,27 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
 
 // ─── Settings / sync panel ──────────────────────────────────────────────────
 
+function SyncStatus({ subs, lang, enabled, listening }: { subs: SubtitleState; lang: Lang; enabled: boolean; listening: boolean }) {
+  const info = subs.loaded[lang]?.info;
+  const auto = subs.autoSynced[lang];
+  let text: string;
+  let tone = 'text-ink-400';
+  if (info?.provider === 'embedded') { text = 'From the video file: always in sync.'; tone = 'text-hd'; }
+  else if (subs.manual.has(lang)) text = 'Synced by hand.';
+  else if (auto) {
+    const s = auto.offsetMs / 1000;
+    text = `Auto-synced to the audio (${s > 0 ? '+' : ''}${s.toFixed(1)} s${auto.scale !== 1 ? ', frame rate corrected' : ''}).`;
+    tone = 'text-hd';
+  } else if (info?.hashMatch) { text = 'Made for this exact file: in sync.'; tone = 'text-hd'; }
+  else if (!enabled) text = 'Auto-sync is off.';
+  else if (listening) text = 'Listening to the dialogue to check the timing (about a minute)…';
+  else text = 'Auto-sync starts once the video plays with sound (not available for every stream).';
+  return <p className={`text-xs ${tone}`}>{text}</p>;
+}
+
 const COLORS = ['#ffffff', '#ffe066', '#9be9a8', '#8bd3ff', '#ffb3c7'];
 
-export function SubtitlePanel({ subs, onClose, hidden, onHiddenChange }: { subs: SubtitleState; onClose: () => void; hidden: boolean; onHiddenChange: (h: boolean) => void }) {
+export function SubtitlePanel({ subs, onClose, hidden, onHiddenChange, listening }: { subs: SubtitleState; onClose: () => void; hidden: boolean; onHiddenChange: (h: boolean) => void; listening?: boolean }) {
   const style = useApp((s) => s.settings.subtitle);
   const update = useApp((s) => s.updateSubtitleStyle);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -242,6 +326,7 @@ export function SubtitlePanel({ subs, onClose, hidden, onHiddenChange }: { subs:
               ))}
             </select>
             {cur && !cur.cues.length && <p className="animate-pulse text-xs text-ink-400">Downloading…</p>}
+            {cur && cur.cues.length > 0 && <SyncStatus subs={subs} lang={lang} enabled={style.autoSync} listening={!!listening} />}
             <div>
               <div className="flex items-center justify-between">
                 <span className="label mb-0">Sync delay</span>
@@ -279,6 +364,10 @@ export function SubtitlePanel({ subs, onClose, hidden, onHiddenChange }: { subs:
           </div>
           <label className="ml-auto flex items-center gap-2 text-xs"><input type="checkbox" checked={style.dual} onChange={(e) => update({ dual: e.target.checked })} /> Dual (AR + EN)</label>
         </div>
+        <label className="flex items-start gap-2 text-xs">
+          <input type="checkbox" className="mt-0.5" checked={style.autoSync} onChange={(e) => update({ autoSync: e.target.checked })} />
+          <span><span className="text-ink-200">Auto-sync to the audio</span><span className="block text-ink-400">Listens to the dialogue and lines subtitles up with it, including frame-rate differences. Moving the delay slider takes over by hand.</span></span>
+        </label>
         <label className="flex items-center gap-3"><span className="label mb-0 w-24">Size</span><input type="range" min={0.6} max={2} step={0.05} value={style.scale} onChange={(e) => update({ scale: +e.target.value })} className="flex-1" /><span className="w-10 text-right tabular-nums">{Math.round(style.scale * 100)}%</span></label>
         <label className="flex items-center gap-3"><span className="label mb-0 w-24">Background</span><input type="range" min={0} max={1} step={0.05} value={style.bgOpacity} onChange={(e) => update({ bgOpacity: +e.target.value })} className="flex-1" /><span className="w-10 text-right tabular-nums">{Math.round(style.bgOpacity * 100)}%</span></label>
         <label className="flex items-center gap-3"><span className="label mb-0 w-24">Position</span><input type="range" min={2} max={40} step={1} value={style.position} onChange={(e) => update({ position: +e.target.value })} className="flex-1" /><span className="w-10 text-right tabular-nums">{style.position}%</span></label>

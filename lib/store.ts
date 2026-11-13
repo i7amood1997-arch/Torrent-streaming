@@ -1,5 +1,6 @@
 'use client';
 import { create } from 'zustand';
+import { unlockAudio } from './audio-tap';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { DebridProvider, MediaType, TorrentResult } from './types';
 
@@ -15,6 +16,8 @@ export interface SubtitleStyle {
   position: number; // % from bottom, 4–40
   primaryLang: 'ar' | 'en';
   dual: boolean; // render secondary language too
+  /** Sync downloaded subtitles to the soundtrack automatically. */
+  autoSync: boolean;
 }
 
 export interface Settings {
@@ -103,7 +106,7 @@ export const DEFAULT_SETTINGS: Settings = {
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
-  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true },
+  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true },
 };
 
 export const useApp = create<AppState>()(
@@ -123,7 +126,10 @@ export const useApp = create<AppState>()(
         const v = get().mode === 'torrent' ? 'search' : 'discover';
         set({ query, submittedQuery: query, view: v, listView: v });
       },
-      play: (r) => set({ nowPlaying: { ...r, nonce: Date.now() }, view: 'player' }),
+      play: (r) => {
+        unlockAudio(); // called from a tap: lets subtitle auto-sync listen to the audio later
+        set({ nowPlaying: { ...r, nonce: Date.now() }, view: 'player' });
+      },
       updateSettings: (p) => set({ settings: { ...get().settings, ...p } }),
       updateSubtitleStyle: (p) => set({ settings: { ...get().settings, subtitle: { ...get().settings.subtitle, ...p } } }),
       setCaps: (caps) => set({ caps }),

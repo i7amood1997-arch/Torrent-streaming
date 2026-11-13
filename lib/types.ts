@@ -105,6 +105,8 @@ export interface SubtitleTrackInfo {
   releaseName?: string;
   downloads?: number;
   hearingImpaired?: boolean;
+  /** Matched by file hash: timed for this exact video file. */
+  hashMatch?: boolean;
   /** 0..1 similarity to the playing release name, used for auto-selection. */
   score?: number;
   /** Opaque token passed back to /api/subtitles/file. */

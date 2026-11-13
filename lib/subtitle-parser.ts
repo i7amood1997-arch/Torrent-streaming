@@ -134,11 +134,11 @@ const vttTime = (s: number) => {
 };
 
 /** Serialise cues to WebVTT (used for native <track> in iOS fullscreen). Offset in seconds. */
-export function toVtt(cues: SubtitleCue[], offset = 0, rtl = false): string {
+export function toVtt(cues: SubtitleCue[], offset = 0, rtl = false, scale = 1): string {
   const lines = ['WEBVTT', ''];
   for (const c of cues) {
-    const start = c.start + offset;
-    const end = c.end + offset;
+    const start = c.start * scale + offset;
+    const end = c.end * scale + offset;
     if (end <= 0) continue;
     lines.push(`${vttTime(start)} --> ${vttTime(end)}${rtl ? ' align:center' : ''}`);
     // U+202B RLE … U+202C PDF keeps punctuation on the correct side in native renderers
