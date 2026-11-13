@@ -214,14 +214,14 @@ export function TorrentSearch({ query, context, header }: Props) {
   );
 }
 
-/** File type, when known. MP4 plays on iPhone via the relay; MKV needs Debrid or the online player there. */
+/** File type, when known. MP4 plays everywhere; MKV is converted on the fly on iPhone (lib/mkv). */
 function ContainerBadge({ r }: { r: TorrentResult }) {
   const c = r.container ?? r.fileName?.split('.').pop()?.toLowerCase();
   if (!c || !['mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm'].includes(c)) return null;
   const easy = ['mp4', 'm4v', 'mov'].includes(c);
   return (
     <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${easy ? 'bg-hd/15 text-hd' : 'bg-ink-700 text-ink-400'}`}
-      title={easy ? 'Plays on every device, including iPhone' : 'iPhone Safari cannot play this format directly'}>
+      title={easy ? 'Plays on every device, including iPhone' : c === 'mkv' ? 'Converted on the fly on iPhone/iPad (iOS 17.1+); some codecs (10-bit H.264, DTS) still need another release' : 'iPhone Safari cannot play this format'}>
       {c}
     </span>
   );

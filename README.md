@@ -11,7 +11,7 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 1. Open the link. On iPhone/iPad, tap Share → **Add to Home Screen** to use it like an app.
 2. Nothing is required. The catalog (Cinemeta) and Arabic/English subtitles (OpenSubtitles feed) work without keys. Optional keys in **Settings**:
    - **TMDB** (alternative catalog with more metadata): themoviedb.org → Settings → API
-   - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): fastest, and handles every file format. Without a key, your own relay streams torrents into the app for free (MP4 releases on iPhone), with webtor.io as a fallback.
+   - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): fastest, and handles every file format. Without a key, your own relay streams torrents into the app for free (MKV is converted on the fly on iPhone), with webtor.io as a fallback.
    - **OpenSubtitles / SubDL** (adds release-matched subtitle results)
 3. Choose your **Torrent sources** in Settings and start searching.
 
@@ -65,6 +65,7 @@ lib/server/handlers.ts        Fetch-API router, runs in the browser (direct mode
 worker/index.ts               optional Cloudflare Worker entry
 lib/cinemeta.ts               keyless catalog (Cinemeta): search, trending, seasons, title → IMDB id
 lib/runtime.ts                browser-vs-server differences (CORS-safe headers, error messages)
+lib/mkv/                      MKV → fragmented MP4 converter: demuxer (ebml), codec mapping, fMP4 writer, remuxer, MSE player
 lib/bt/                       BitTorrent client for the Worker: bencode, HTTP trackers, wire protocol, streaming session
 worker/stream-do.ts           Durable Object serving /api/stream/* (torrent → HTTP video)
 app/
@@ -116,7 +117,11 @@ Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNA
 
 ### Streaming engines
 - **Built-in streaming through your relay (free, plays in the app):** the Cloudflare Worker runs its own download-only BitTorrent client (`lib/bt/`, `worker/stream-do.ts`). One Durable Object per torrent connects to peers over Cloudflare's outbound TCP sockets, fetches the file list from the magnet, downloads pieces in playback order (each SHA-1 verified), and serves the file as a normal HTTP video with Range support. Nothing is stored; pieces stay in memory only while being watched. It's the default when you have a relay and no Debrid key.
-  - Limits that come from Cloudflare Workers: no UDP (so peers come from HTTP trackers and peer exchange, not DHT), about six outbound connections at a time, and no transcoding. On iPhone only MP4/M4V/MOV releases play (YTS releases are MP4); MKV needs Debrid or the free online player.
+  - Limits that come from Cloudflare Workers: no UDP (so peers come from HTTP trackers and peer exchange, not DHT), about six outbound connections at a time, and no transcoding on the relay.
+- **MKV on iPhone/iPad (and other browsers without MKV support):** converted in the page as it streams (`lib/mkv/`). A Matroska demuxer reads the file through Range requests; video and audio are repackaged, without re-encoding, into fragmented MP4 and fed to ManagedMediaSource (iOS 17.1+) or MediaSource. Seeking uses the file's Cues index. Embedded text subtitles (SRT/ASS, common in anime) are extracted into the app's subtitle display.
+  - Plays: H.264 (8-bit), HEVC, AV1 on devices that decode it, VP9; AAC, AC-3, E-AC-3 (DDP), Opus, MP3.
+  - Doesn't play (the app says so and suggests another release): 10-bit H.264 ("Hi10P"), DTS, TrueHD, FLAC-only audio, encrypted tracks.
+  - Set `localStorage.mkvDebug = '1'` to log converter decisions to the console.
   - Verified locally against WebTorrent 3 + bittorrent-tracker in Cloudflare's runtime (`wrangler dev`), with a real video played and seeked in the app. Behaviour against public swarms and the free plan's CPU limits is unverified.
 - **Free online player (default without a Debrid key):** the app opens [webtor.io](https://webtor.io) with the chosen magnet (`https://webtor.io/ext/magnet?url=<magnet>`, the route webtor's browser extension uses). Webtor's servers download the torrent and stream it to any browser, iPhone Safari included, with no account. They also convert MKV to HLS and can search OpenSubtitles. Trade-offs: it's a third-party service that sees what you play, the free plan streams at up to 5 Mbit/s (fine for 1080p, too slow for 4K), and it uses its own player.
   - It opens as a separate page rather than embedded: webtor's iframe embed fails on iPhone Safari with "CSRF token mismatch", because Safari blocks third-party cookies inside iframes.

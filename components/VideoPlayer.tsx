@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type Hls from 'hls.js';
 import { api, apiBase, type StreamStats } from '@/lib/client-api';
+import { MkvMsePlayer, mkvRemuxSupported } from '@/lib/mkv/player';
 import { canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
@@ -34,6 +35,8 @@ interface Source {
   fileName?: string;
   mime?: string;
   alt?: string; // alternative (e.g. HLS transcode) if the primary fails
+  /** MKV the browser can't open itself: repackage to MP4 on the fly (lib/mkv). */
+  remux?: boolean;
 }
 
 const sleep = (ms: number, signal: AbortSignal) =>
@@ -69,6 +72,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const wtRef = useRef<WebTorrentSession | null>(null);
+  const mkvRef = useRef<MkvMsePlayer | null>(null);
+  const subsRef = useRef<ReturnType<typeof useSubtitles> | null>(null);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [status, setStatus] = useState('');
@@ -94,6 +99,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [scrub, setScrub] = useState<number>();
 
   const subs = useSubtitles(req, source?.fileName);
+  subsRef.current = subs;
   const resumeId = req?.result?.id ?? req?.url;
 
   // ── Engine selection & resolution ─────────────────────────────────────────
@@ -141,12 +147,17 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           if (res.status === 'error') throw new Error(res.message);
           if (res.status === 'ready') {
             const ext = res.fileName.split('.').pop()?.toLowerCase() ?? '';
-            const playable = ['mp4', 'm4v', 'mov'].includes(ext) || (ext === 'mkv' && canPlayMkv()) || (ext === 'webm' && !isIOS());
-            if (!playable) {
-              throw new Error(`This release is a .${ext} file, which ${isIOS() ? 'iPhone/iPad Safari' : 'this browser'} can’t play directly. Pick an MP4 release (YTS results are MP4) or use the free online player.`);
+            const native = ['mp4', 'm4v', 'mov'].includes(ext) || (ext === 'mkv' && canPlayMkv()) || (ext === 'webm' && !isIOS());
+            const remux = !native && (ext === 'mkv' || ext === 'webm') && mkvRemuxSupported();
+            if (!native && !remux) {
+              throw new Error(
+                ext === 'mkv' || ext === 'webm'
+                  ? 'Playing MKV files on iPhone/iPad needs iOS 17.1 or later. Update iOS, pick an MP4 release (YTS results are MP4), or use the free online player.'
+                  : `This release is a .${ext} file, which this browser can’t play. Pick an MP4 or MKV release, or use the free online player.`,
+              );
             }
             setCloudStats(res.stats);
-            setSource({ url: api.streamUrl(res.path), engine, fileName: res.fileName, mime: res.mime });
+            setSource({ url: api.streamUrl(res.path), engine, fileName: res.fileName, mime: res.mime, remux });
             return;
           }
           const s = res.stats;
@@ -223,13 +234,25 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const video = videoRef.current;
     hlsRef.current?.destroy();
     hlsRef.current = null;
+    mkvRef.current?.destroy();
+    mkvRef.current = null;
     if (!video || !source || source.engine === 'webtor') {
       if (video) { video.removeAttribute('src'); video.load(); }
       return;
     }
     let cancelled = false;
     (async () => {
-      if (isHlsUrl(source.url, source.mime) && !video.canPlayType('application/vnd.apple.mpegurl')) {
+      if (source.remux) {
+        const player = new MkvMsePlayer(video, source.url, {
+          audioLanguages: ['en', 'ar', 'ja'],
+          onError: (m) => { setError(m); setPhase('error'); },
+          onSubtitle: (lang, label, cue) => subsRef.current?.addEmbedded(lang, label, cue),
+          onTracks: (t) => setStatus(`Converting MKV · ${t.video}${t.audio ? ` + ${t.audio}` : ''}`),
+        });
+        mkvRef.current = player;
+        await player.start();
+        if (cancelled) return;
+      } else if (isHlsUrl(source.url, source.mime) && !video.canPlayType('application/vnd.apple.mpegurl')) {
         const { default: HlsCtor } = await import('hls.js');
         if (cancelled) return;
         if (!HlsCtor.isSupported()) throw new Error('HLS is not supported in this browser.');
@@ -249,7 +272,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     return () => { cancelled = true; };
   }, [source]);
 
-  useEffect(() => () => { hlsRef.current?.destroy(); wtRef.current?.destroy(); }, []);
+  useEffect(() => () => { hlsRef.current?.destroy(); wtRef.current?.destroy(); mkvRef.current?.destroy(); }, []);
 
   // ── Media element events ──────────────────────────────────────────────────
   useEffect(() => {
@@ -287,6 +310,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         if (source?.alt && v.currentSrc !== source.alt) {
           setStatus('Primary stream failed, trying alternate…');
           setSource({ ...source, url: source.alt, alt: undefined, mime: isHlsUrl(source.alt) ? 'application/vnd.apple.mpegurl' : undefined });
+          return;
+        }
+        // The browser claimed it could open this MKV but couldn't: convert it instead.
+        const isMkv = /\.(mkv|webm)$/i.test(source?.fileName ?? '') || source?.mime === 'video/x-matroska';
+        if (source && isMkv && !source.remux && source.engine === 'cloud' && mkvRemuxSupported()) {
+          setStatus('Converting MKV for this browser…');
+          setSource({ ...source, remux: true });
           return;
         }
         setError(
@@ -632,7 +662,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-white">{req.title}{req.season != null ? ` · S${String(req.season).padStart(2, '0')}E${String(req.episode ?? '').padStart(2, '0')}` : ''}</p>
             <p className="truncate text-[11px] text-white/60">
-              {source?.engine === 'cloud' ? 'your relay' : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
+              {source?.engine === 'cloud' ? (source.remux ? 'your relay · MKV converted' : 'your relay') : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
               {source?.engine === 'cloud' && cloudStats && ` · ${cloudStats.peers} peer${cloudStats.peers === 1 ? '' : 's'} · ↓ ${formatBytes(cloudStats.downSpeed)}/s`}
               {wtStats && ` · ${wtStats.numPeers} peers · ↓ ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%`}
             </p>

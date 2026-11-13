@@ -52,7 +52,7 @@ export function SettingsPanel() {
 
       <section className="card space-y-4 p-4">
         <h3 className="font-semibold text-white">Streaming engine</h3>
-        <Field label="Engine" hint="Free: your own relay downloads the torrent and plays it here in the app (MP4 releases on iPhone). A paid Debrid key is faster and handles every format.">
+        <Field label="Engine" hint="Free: your own relay downloads the torrent and plays it here in the app (MKV is converted on the fly on iPhone). A paid Debrid key is faster and handles every format.">
           <select className="input" value={settings.engine} onChange={(e) => updateSettings({ engine: e.target.value as EnginePref })}>
             <option value="auto">Auto (Debrid key → your relay → free online player)</option>
             <option value="cloud" disabled={!caps?.stream}>Built-in streaming (your relay, free, plays in the app)</option>

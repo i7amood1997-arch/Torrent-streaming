@@ -32,6 +32,16 @@ export interface SubtitleState {
   select: (lang: Lang, track: SubtitleTrackInfo | null) => void;
   loadFile: (file: File, lang: Lang) => Promise<void>;
   setOffset: (lang: Lang, ms: number) => void;
+  /** Add a cue from a subtitle track embedded in the video file (MKV). */
+  addEmbedded: (lang: string, label: string, cue: SubtitleCue) => void;
+}
+
+/** ISO 639-2 / IETF code → the app's 'ar' | 'en', or undefined for other languages. */
+export function appLang(code: string): Lang | undefined {
+  const c = code.toLowerCase();
+  if (c === 'ara' || c === 'ar' || c.startsWith('ar-')) return 'ar';
+  if (c === 'eng' || c === 'en' || c.startsWith('en-')) return 'en';
+  return undefined;
 }
 
 export function useSubtitles(req: PlayRequest | undefined, releaseName: string | undefined): SubtitleState {
@@ -41,6 +51,11 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  /** Embedded (in-file) subtitle cues per language, filled while the file streams. */
+  const embeddedRef = useRef<Partial<Record<Lang, { info: SubtitleTrackInfo; cues: SubtitleCue[]; dirty: boolean }>>>({});
+  /** Languages the user picked by hand: auto-selection must not override them. */
+  const userPickedRef = useRef(new Set<Lang>());
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const loadCues = useCallback(async (lang: Lang, info: SubtitleTrackInfo, signal?: AbortSignal) => {
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
@@ -58,6 +73,9 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
   useEffect(() => {
     abortRef.current?.abort();
     setTracks([]); setLoaded({}); setErrors([]); setOffsets({ ar: 0, en: 0 });
+    embeddedRef.current = {};
+    userPickedRef.current = new Set();
+    clearTimeout(flushTimer.current);
     if (!req) return;
     const ac = new AbortController();
     abortRef.current = ac;
@@ -76,9 +94,47 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
   }, [req?.nonce, releaseName, loadCues]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const select = useCallback((lang: Lang, t: SubtitleTrackInfo | null) => {
+    userPickedRef.current.add(lang);
+    const emb = embeddedRef.current[lang];
     if (!t) setLoaded((l) => ({ ...l, [lang]: null }));
+    else if (t.provider === 'embedded' && emb) setLoaded((l) => ({ ...l, [lang]: { info: emb.info, cues: [...emb.cues] } }));
     else loadCues(lang, t);
   }, [loadCues]);
+
+  // Embedded subtitles are timed for this exact release, so they win over downloaded ones
+  // unless the user chose a track themselves. Cues arrive one by one; publish them in batches.
+  const flushEmbedded = useCallback(() => {
+    for (const lang of LANGS) {
+      const e = embeddedRef.current[lang];
+      if (!e?.dirty) continue;
+      e.dirty = false;
+      const cues = [...e.cues];
+      setTracks((ts) => (ts.some((t) => t.id === e.info.id) ? ts : [e.info, ...ts]));
+      setLoaded((l) => {
+        const cur = l[lang];
+        if (cur?.info.id === e.info.id) return { ...l, [lang]: { info: e.info, cues } };
+        if (userPickedRef.current.has(lang) || cur?.info.provider === 'local') return l;
+        return { ...l, [lang]: { info: e.info, cues } };
+      });
+    }
+  }, []);
+
+  const addEmbedded = useCallback((code: string, label: string, cue: SubtitleCue) => {
+    const lang = appLang(code);
+    if (!lang) return;
+    let e = embeddedRef.current[lang];
+    if (!e) {
+      const info: SubtitleTrackInfo = { id: `embedded-${lang}`, provider: 'embedded', lang, label: `${lang.toUpperCase()} · In the video file`, releaseName: label ? `In the file: ${label}` : 'In the video file', token: '', score: 1 };
+      e = embeddedRef.current[lang] = { info, cues: [], dirty: true };
+    }
+    // Keep sorted (cues arrive in order, except after a seek) and skip duplicates.
+    const list = e.cues;
+    let i = list.length;
+    while (i > 0 && list[i - 1].start > cue.start) i--;
+    if (!(i > 0 && list[i - 1].start === cue.start && list[i - 1].text === cue.text)) list.splice(i, 0, cue);
+    e.dirty = true;
+    if (!flushTimer.current) flushTimer.current = setTimeout(() => { flushTimer.current = undefined; flushEmbedded(); }, 800);
+  }, [flushEmbedded]);
 
   const loadFile = useCallback(async (file: File, lang: Lang) => {
     const bytes = new Uint8Array(await file.arrayBuffer());
@@ -90,7 +146,7 @@ export function useSubtitles(req: PlayRequest | undefined, releaseName: string |
 
   const setOffset = useCallback((lang: Lang, ms: number) => setOffsets((o) => ({ ...o, [lang]: Math.max(-30000, Math.min(30000, Math.round(ms))) })), []);
 
-  return { tracks, loaded, offsets, loading, errors, select, loadFile, setOffset };
+  return { tracks, loaded, offsets, loading, errors, select, loadFile, setOffset, addEmbedded };
 }
 
 // ─── Overlay renderer ───────────────────────────────────────────────────────

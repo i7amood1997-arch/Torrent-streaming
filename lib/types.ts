@@ -93,7 +93,7 @@ export interface SubtitleCue {
 
 export interface SubtitleTrackInfo {
   id: string;
-  provider: 'opensubtitles' | 'subdl' | 'local';
+  provider: 'opensubtitles' | 'subdl' | 'local' | 'embedded';
   lang: 'ar' | 'en' | string;
   label: string;
   releaseName?: string;
