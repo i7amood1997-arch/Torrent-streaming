@@ -65,7 +65,7 @@ export default function Home() {
   const r = nowPlaying?.result;
 
   return (
-    <div className="relative flex h-[var(--app-h,100dvh)] overflow-hidden pl-safe-l pr-safe-r">
+    <div className="fixed inset-0 flex overflow-hidden pl-safe-l pr-safe-r">
       {/* Desktop sidebar */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900/60 p-4 xl:flex">
         <div className="mb-6 flex items-center gap-2 px-2">

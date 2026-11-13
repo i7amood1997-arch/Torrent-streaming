@@ -227,7 +227,7 @@ export function TorrentSearch({ query, context, header }: Props) {
 
       {/* Mobile filter drawer */}
       {drawer && (
-        <div className="fixed inset-x-0 top-0 z-50 h-[var(--app-h,100dvh)] md:hidden" role="dialog" aria-modal="true" aria-label="Torrent filters">
+        <div className="fixed inset-0 z-50 md:hidden" role="dialog" aria-modal="true" aria-label="Torrent filters">
           <button className="absolute inset-0 bg-black/60" onClick={() => setDrawer(false)} aria-label="Close filters" />
           <div className="absolute inset-x-0 bottom-0 max-h-[85vh] overflow-y-auto rounded-t-2xl border-t border-ink-600 bg-ink-900 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
             <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-ink-600" />

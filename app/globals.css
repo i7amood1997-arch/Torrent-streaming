@@ -12,8 +12,7 @@
 
 html,
 body {
-  /* --app-h is set by an early script (see app/layout.tsx); dvh is the fallback. */
-  height: var(--app-h, 100dvh);
+  height: 100%;
   @apply bg-ink-950 text-ink-200 antialiased;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
@@ -30,6 +29,19 @@ textarea {
   select,
   textarea {
     font-size: inherit;
+  }
+}
+
+/*
+ * iOS home-screen (standalone) mode: viewport units and 100% can come out one status bar short,
+ * leaving a strip at the bottom. The status bar is opaque (statusBarStyle 'black', see layout.tsx)
+ * so the app starts below it, and the shell is pinned to the screen edges (position: fixed; inset: 0).
+ */
+@media (display-mode: standalone) {
+  html,
+  body {
+    height: 100lvh;
+    overflow: hidden;
   }
 }
 
