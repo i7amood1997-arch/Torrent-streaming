@@ -88,7 +88,8 @@ components/
   torrent-search.tsx          Direct Torrent Search UI: quality pills with counts, seeders slider,
                               HDR/CAM/text/sort filters, mobile filter drawer, Play / copy magnet
   VideoPlayer.tsx             engine orchestration, hls.js, custom controls, gestures, keybinds
-  subtitles.tsx               useSubtitles hook, RTL overlay, sync/style panel
+  subtitles.tsx               useSubtitles hook (search, translate, generated cues), RTL overlay, settings panel
+  ui.tsx                      switch, segmented control, grouped list sections
   catalog.tsx, search-bar.tsx, settings-panel.tsx, icons.tsx
 public/
   sw.js                       app-shell cache + WebTorrent stream proxy (sub-path aware)
@@ -148,6 +149,9 @@ Direct HTTP links appear in their own **Direct links** section above torrents. T
   1. **Exact file match.** The playing file's OpenSubtitles hash (size plus first/last 64 KiB, read with two Range requests, `lib/subtitle-hash.ts`) is sent with the search, so subtitles made for that exact release rank first.
   2. **Subtitles inside the video** (MKV text tracks) are preferred when present; they can't drift. MKV converted in the page also gets its 0.5 s timeline shift applied to downloaded subtitles.
   3. **Listening to the audio** (`lib/audio-tap.ts`, `lib/autosync.ts`). While the video plays, speech-band (300–3000 Hz) loudness is sampled 10× per second. Every 15 s the subtitles are cross-correlated against it over ±20 s shifts and the common frame-rate conversions (25↔23.976, 24↔23.976, 25↔24). A result is applied when it's unambiguous and two checks in a row agree; after that it keeps being refined within ±3 s. It needs about a minute of dialogue. Moving the delay slider switches it off for that language; it can also be turned off in the subtitle panel. Audio is only analysed when the browser lets the page read it (in-page MKV conversion, same-origin, or CORS-enabled links), so it never mutes a stream.
+- **When Arabic or English is missing:**
+  - **Translation** (`lib/translate.ts`): the search also returns a few subtitles in other languages; the best one (English first, then exact-file matches, then languages that translate well) is machine-translated with Google Translate's free web endpoint, straight from the browser (with the relay as a fallback). The first minutes appear while the rest is translated; timing comes from the original, and auto-sync applies. Any other-language track can also be picked under "Translate from another language".
+  - **Speech recognition** (`lib/speech/`): when no subtitles exist in any language, the app reads the audio a minute at a time, a few minutes ahead of the playhead, with Range requests (MP4: only the audio samples, from the `moov` sample table; MKV: the clusters for that minute, via Cues). The compressed frames are repackaged without decoding (AAC→ADTS, AC-3/E-AC-3/DTS/MP3 as-is, FLAC with its header, Opus/Vorbis→Ogg, PCM→WAV) and sent to `/api/transcribe` on your relay, which runs Workers AI `@cf/openai/whisper-large-v3-turbo` (free daily allowance of about 3½ hours of audio). Segments become ≤ 2-line, ≤ 6 s cues using word timings, and are translated into Arabic/English when the speech is another language. Needs the relay redeployed with the `[ai]` binding in `wrangler.toml`.
 - Arabic is decoded from Windows-1256 when not UTF-8, and rendered `dir="rtl"` with Cairo/Tajawal.
 - Dual-language display, per-language **sync offset** (±10 s slider, ±100 ms buttons, `[`/`]` keys), size, background opacity, colour and vertical position, plus local `.srt`/`.vtt` upload.
 - iPhone system fullscreen can't show HTML overlays, so the cues (with the offset applied) are also exposed as native `<track>`s that switch on in fullscreen.

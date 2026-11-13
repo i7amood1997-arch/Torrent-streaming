@@ -71,6 +71,7 @@ export function TorrentSearch({ query, context, header }: Props) {
   const [skipped, setSkipped] = useState<string[]>([]);
   const [filters, setFilters] = useState<ResultFilters>(DEFAULT_FILTERS);
   const [drawer, setDrawer] = useState(false);
+  const [showProblems, setShowProblems] = useState(false);
 
   const key = JSON.stringify({ query, context });
   useEffect(() => {
@@ -112,15 +113,15 @@ export function TorrentSearch({ query, context, header }: Props) {
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
   const qualityPills = (
-    <div className="flex flex-wrap gap-2" role="group" aria-label="Quality">
-      <button className={`pill ${filters.qualities.length === 0 ? 'border-accent bg-accent-soft text-accent' : 'border-ink-600 text-ink-400'}`} onClick={() => set({ qualities: [] })}>
+    <div className="flex gap-2 md:flex-wrap" role="group" aria-label="Quality">
+      <button className={`pill shrink-0 ${filters.qualities.length === 0 ? 'border-accent bg-accent-soft text-accent' : 'border-ink-600 text-ink-400'}`} onClick={() => set({ qualities: [] })}>
         All <span className="opacity-70">{results.length}</span>
       </button>
       {TIERS.map((q) => {
         const on = filters.qualities.includes(q);
         return (
           <button key={q} aria-pressed={on} disabled={!counts[q]} onClick={() => toggleTier(q)}
-            className={`pill disabled:opacity-30 ${on ? QUALITY_STYLES[q] : 'border-ink-600 text-ink-400 hover:text-ink-200'}`}>
+            className={`pill shrink-0 disabled:opacity-30 ${on ? QUALITY_STYLES[q] : 'border-ink-600 text-ink-400 hover:text-ink-200'}`}>
             {qualityLabel(q)} <span className="opacity-70">{counts[q]}</span>
           </button>
         );
@@ -162,21 +163,30 @@ export function TorrentSearch({ query, context, header }: Props) {
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex-1 overflow-x-auto scrollbar-thin">{qualityPills}</div>
-        <button className="btn-ghost relative shrink-0 border border-ink-600 md:hidden" onClick={() => setDrawer(true)} aria-label="Open filters">
-          <IconFilter size={16} /> Filters
+        <button className="btn-ghost relative shrink-0 bg-ink-800 md:hidden" onClick={() => setDrawer(true)} aria-label="Open filters">
+          <IconFilter size={16} />
           {activeFilterCount > 0 && <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-accent text-[10px] font-bold text-ink-950">{activeFilterCount}</span>}
         </button>
       </div>
-      <div className="hidden md:block card p-3">{filterControls}</div>
+      <div className="hidden rounded-2xl bg-ink-900 p-3 ring-1 ring-ink-700/70 md:block">{filterControls}</div>
 
       {/* Status line */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-400">
-        {results.length > 0 && <span>{visible.length} of {results.length} streams{took != null ? ` · ${(took / 1000).toFixed(1)} s` : ''}</span>}
-        {loading && <span className="animate-pulse">Still searching: {pending.map(sourceName).join(', ') || '…'}</span>}
+        {results.length > 0 && <span>{visible.length === results.length ? `${results.length} streams` : `${visible.length} of ${results.length} streams`}{took != null ? ` · ${(took / 1000).toFixed(1)} s` : ''}</span>}
+        {loading && <span className="animate-pulse">Searching {pending.map(sourceName).join(', ') || '…'}</span>}
         {!loading && !results.length && took != null && <span>No streams · {(took / 1000).toFixed(1)} s</span>}
-        {skipped.length > 0 && <span title="These failed every way a few minutes ago; they'll be tried again shortly.">Skipped for now: {skipped.map(sourceName).join(', ')}</span>}
-        {errors.map((e) => <span key={e.indexer} className="text-red-400/80" title={e.message}>⚠ {sourceName(e.indexer)}: {e.message.length > 80 ? e.message.slice(0, 80) + '…' : e.message}</span>)}
+        {(errors.length > 0 || skipped.length > 0) && (
+          <button className="underline decoration-ink-600 underline-offset-2 hover:text-ink-200" onClick={() => setShowProblems((v) => !v)} aria-expanded={showProblems}>
+            {errors.length + skipped.length} source{errors.length + skipped.length === 1 ? '' : 's'} didn’t answer
+          </button>
+        )}
       </div>
+      {showProblems && (
+        <ul className="space-y-1 rounded-xl bg-ink-900 p-3 text-xs text-ink-400 ring-1 ring-ink-700/70">
+          {errors.map((e) => <li key={e.indexer}><b className="text-ink-200">{sourceName(e.indexer)}</b>: {e.message}</li>)}
+          {skipped.length > 0 && <li><b className="text-ink-200">{skipped.map(sourceName).join(', ')}</b>: failed a few minutes ago, skipped for now.</li>}
+        </ul>
+      )}
       {fatal && <div className="card border-red-500/40 p-4 text-sm text-red-300">{fatal}</div>}
 
       {/* Results — table on desktop, cards elsewhere */}
@@ -198,12 +208,12 @@ export function TorrentSearch({ query, context, header }: Props) {
             {!r.url && i > 0 && all[i - 1].url && (
               <li className="px-1 pt-3 text-xs font-semibold uppercase tracking-wide text-ink-400">Torrents</li>
             )}
-            <li className={`result-row card p-3 ${r.id === playingId ? 'border-accent/60 bg-accent/5' : 'hover:border-ink-600'}`}>
+            <li className={`result-row rounded-2xl p-3 ring-1 transition ${r.id === playingId ? 'bg-accent/5 ring-accent/60' : 'bg-ink-900 ring-ink-700/70 hover:ring-ink-600'}`}>
               <div className="rr-main min-w-0">
                 <div className="mb-1.5 flex min-w-0 items-center gap-2">
                   <QualityBadge q={r.quality} />
                   <ContainerBadge r={r} />
-                  <span className="truncate text-xs text-ink-400">{r.tracker ?? r.indexer}</span>
+                  <span className="truncate text-xs text-ink-400">{r.tracker ?? sourceName(r.indexer)}</span>
                 </div>
                 <ResultTitle r={r} />
               </div>
@@ -268,9 +278,8 @@ function ResultTitle({ r }: { r: TorrentResult }) {
   ].filter(Boolean) as string[];
   return (
     <div className="min-w-0">
-      <p className="truncate font-medium text-ink-200" title={r.title}>{r.title}</p>
-      {r.fileName && <p className="truncate text-xs text-ink-400" title={r.fileName}>{r.fileName}</p>}
-      <div className="mt-1 flex flex-wrap gap-1">
+      <p className="line-clamp-2 break-all text-[13px] font-medium leading-snug text-ink-200" title={r.title}>{r.title.replace(/[._]/g, (c) => `${c}\u200b`)}</p>
+      <div className="mt-1.5 flex flex-wrap gap-1">
         {tags.map((t) => (
           <span key={t} className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${t === 'DV' || t.startsWith('HDR') ? 'bg-uhd/20 text-uhd' : 'bg-ink-700 text-ink-200'}`}>{t}</span>
         ))}
@@ -287,8 +296,8 @@ function RowActions({ r, onPlay }: { r: TorrentResult; onPlay: (r: TorrentResult
   };
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <button className="btn-primary px-3" onClick={() => onPlay(r)} aria-label={`Play ${r.title}`}>
-        <IconPlay size={14} /> <span className="rr-play-label">Play</span>
+      <button className="rr-play btn-primary h-11 w-11 rounded-full p-0" onClick={() => onPlay(r)} aria-label={`Play ${r.title}`}>
+        <IconPlay size={16} /> <span className="rr-play-label">Play</span>
       </button>
       <button className="btn-ghost px-2 text-ink-400" onClick={copy} aria-label={r.url ? "Copy link" : "Copy magnet link"} title={r.url ? "Copy link" : "Copy magnet"}>
         {copied ? <span className="text-xs text-hd">✓</span> : <IconCopy size={14} />}

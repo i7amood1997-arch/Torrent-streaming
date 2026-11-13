@@ -17,6 +17,10 @@ workers_dev = true
 name = "STREAM"
 class_name = "TorrentStream"
 
+# Workers AI (free daily allowance): speech recognition for titles without subtitles.
+[ai]
+binding = "AI"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TorrentStream"]

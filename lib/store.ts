@@ -18,6 +18,10 @@ export interface SubtitleStyle {
   dual: boolean; // render secondary language too
   /** Sync downloaded subtitles to the soundtrack automatically. */
   autoSync: boolean;
+  /** Translate a subtitle from another language when Arabic or English is missing. */
+  autoTranslate: boolean;
+  /** No subtitles at all: generate them from the speech (needs the relay). */
+  autoGenerate: boolean;
 }
 
 export interface Settings {
@@ -66,6 +70,8 @@ export interface ServerCaps {
   accessToken?: boolean;
   /** Backend can stream torrents itself (built-in cloud streaming). */
   stream?: boolean;
+  /** Relay can turn speech into subtitles (Workers AI). */
+  ai?: boolean;
   /** True when running without a backend (API code runs in the browser). */
   direct?: boolean;
   /** Set when a configured backend could not be reached or rejected us. */
@@ -106,7 +112,7 @@ export const DEFAULT_SETTINGS: Settings = {
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
-  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true },
+  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true, autoTranslate: true, autoGenerate: true },
 };
 
 export const useApp = create<AppState>()(

@@ -26,8 +26,10 @@ import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
 import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
-import { IconBack, IconCC, IconExpand, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
-import { LANGS, SubtitleOverlay, SubtitlePanel, useSubtitles, type Lang, type PlayingFile } from './subtitles';
+import { openAudioSource } from '@/lib/speech/audio-source';
+import { SubtitleGenerator, type GeneratorStatus } from '@/lib/speech/generate';
+import { IconBack, IconBack10, IconCC, IconCopy, IconExpand, IconFwd10, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
+import { LANGS, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
 
 
 type Engine = 'debrid' | 'cloud' | 'webtorrent' | 'webtor' | 'direct';
@@ -60,6 +62,19 @@ const fmtTime = (s: number) => {
 };
 
 const resumeKey = (id: string) => `resume:${id}`;
+
+/** Links to the playing file that page code can read with Range requests (direct, alternate, relay copy). */
+function readableUrls(source: Source): string[] | undefined {
+  if (source.engine === 'webtor' || source.engine === 'webtorrent') return undefined;
+  const urls = [
+    isHlsUrl(source.url, source.mime) ? undefined : source.url,
+    source.alt && !isHlsUrl(source.alt) ? source.alt : undefined,
+    source.engine !== 'cloud' && !source.url.includes('/api/proxy') && !isHlsUrl(source.url, source.mime) ? api.proxyUrl(source.url) : undefined,
+  ].filter((u): u is string => !!u);
+  return urls.length ? [...new Set(urls)] : undefined;
+}
+
+const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link' };
 
 /**
  * webtor.io opens a magnet as a top-level page via /ext/magnet?url=… (the route its
@@ -263,9 +278,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     if (source.engine === 'webtor' || hlsOnly) { setPlayingFile({ name, ready: true }); return; }
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 7000); // don't hold subtitles back for long
-    const urls = [isHlsUrl(source.url, source.mime) ? undefined : source.url, source.alt && !isHlsUrl(source.alt) ? source.alt : undefined,
-      source.engine !== 'cloud' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined];
-    hashRemoteVideo(urls, ac.signal)
+    hashRemoteVideo(readableUrls(source) ?? [], ac.signal)
       .then((h) => setPlayingFile({ name, hash: h?.hash, size: h?.size, ready: true }))
       .catch(() => setPlayingFile({ name, ready: true }))
       .finally(() => clearTimeout(timer));
@@ -297,7 +310,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       if (!tap?.active) return;
       for (const lang of LANGS) {
         const tr = subs.loaded[lang];
-        if (!tr?.cues.length || tr.info.provider === 'embedded' || subs.manual.has(lang)) continue;
+        if (!tr?.cues.length || tr.info.provider === 'embedded' || tr.info.provider === 'generated' || subs.manual.has(lang)) continue;
         const st = syncState.current[lang]?.track === tr.info.id ? syncState.current[lang]! : (syncState.current[lang] = { track: tr.info.id });
         const base = subs.baseShiftMs;
         const center = (base + subs.offsets[lang]) / 1000;
@@ -314,6 +327,35 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(t);
   }, [settings.subtitle.autoSync, subs]);
   useEffect(() => { syncState.current = {}; }, [req?.nonce]);
+
+  // ── Subtitles from speech (no subtitles anywhere, or asked for) ───────────
+  const genRef = useRef<SubtitleGenerator | null>(null);
+  const [genStatus, setGenStatus] = useState<GeneratorStatus>();
+  const [genWanted, setGenWanted] = useState(false);
+  useEffect(() => { setGenWanted(false); setGenStatus(undefined); }, [req?.nonce]);
+  const genUrls = source ? readableUrls(source) : undefined;
+  const genReason = !caps?.ai
+    ? apiBase() ? 'Your relay needs one update for this: open it in Cloudflare → Deployments and redeploy the latest version.' : 'This needs your own relay (Settings → Relay).'
+    : source && !genUrls ? 'Not available for this kind of stream.' : undefined;
+  const noSubs = subs.searched && !subs.tracks.some((t) => t.provider !== 'generated');
+  const runGen = !genReason && !!source && phase === 'ready' && (genWanted || (settings.subtitle.autoGenerate && noSubs));
+  const genKey = `${req?.nonce}|${source?.url ?? ''}`;
+  useEffect(() => {
+    if (!runGen || !genUrls) return;
+    const ac = new AbortController();
+    let gen: SubtitleGenerator | undefined;
+    setGenStatus({ state: 'working', readyUntil: 0 });
+    openAudioSource(genUrls, ac.signal)
+      .then((src) => {
+        if (ac.signal.aborted) return;
+        gen = new SubtitleGenerator(src, (a, o, sig) => api.transcribe(a, o, sig), (lang, cues) => subsRef.current?.addGenerated(lang, cues), setGenStatus);
+        genRef.current = gen;
+        gen.setTime(videoRef.current?.currentTime ?? 0);
+      })
+      .catch((e) => { if (e.name !== 'AbortError') setGenStatus({ state: 'error', message: e.message }); });
+    return () => { ac.abort(); gen?.stop(); genRef.current = null; };
+  }, [runGen, genKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const generate: GenerateControl = { available: !genReason, reason: genReason, status: genStatus, running: runGen, start: () => setGenWanted(true) };
 
   // ── Cloud streaming keep-alive: each ping refills the relay's connection budget and reports speed ──
   const cloudHash = source?.engine === 'cloud' ? req?.result?.infoHash : undefined;
@@ -400,6 +442,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       }),
       on('timeupdate', () => {
         setTime(v.currentTime);
+        genRef.current?.setTime(v.currentTime);
         if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
         if (resumeId && Math.abs(v.currentTime - lastSave) > 5) {
           lastSave = v.currentTime;
@@ -672,156 +715,230 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
   const showSubs = !subsHidden && LANGS.some((l) => subs.loaded[l]?.cues.length);
   const shownTime = scrub ?? time;
+  const pad = (n?: number) => String(n ?? '').padStart(2, '0');
+  const epTag = req?.season != null ? `S${pad(req.season)}E${pad(req.episode)}` : '';
+  const engineName = !source ? undefined
+    : source.engine === 'debrid' ? PROVIDER_NAMES[settings.debridProvider] ?? 'Debrid'
+    : source.engine === 'cloud' ? 'Your relay (torrent)'
+    : source.engine === 'direct' ? (source.url.includes('/api/proxy') ? 'Direct link, through your relay' : 'Direct link')
+    : source.engine === 'webtorrent' ? 'WebTorrent' : 'webtor.io';
+  const liveStats = source?.engine === 'cloud' && cloudStats
+    ? `${cloudStats.peers} peer${cloudStats.peers === 1 ? '' : 's'} · ${formatBytes(cloudStats.downSpeed)}/s`
+    : wtStats ? `${wtStats.numPeers} peers · ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%` : undefined;
+
+  const alternatives = req?.kind === 'torrent' ? [
+    caps?.stream && source?.engine !== 'cloud' && engineOverride !== 'cloud' && { label: 'Stream through your relay', engine: 'cloud' as Engine },
+    hasDebrid(settings, caps) && source?.engine !== 'debrid' && engineOverride !== 'debrid' && { label: `Use ${PROVIDER_NAMES[settings.debridProvider] ?? 'Debrid'}`, engine: 'debrid' as Engine },
+    supportsWebTorrent() && source?.engine !== 'webtorrent' && { label: 'Try WebTorrent', engine: 'webtorrent' as Engine },
+    engineOverride !== 'webtor' && { label: 'Free online player (webtor.io)', engine: 'webtor' as Engine },
+  ].filter(Boolean) as { label: string; engine: Engine }[] : [];
+
+  const onCC = () => {
+    if (fullscreen) { setPanel((p) => !p); return; }
+    setSubsHidden((h) => { showFlash('center', h ? 'Subtitles on' : 'Subtitles off'); return !h; });
+  };
 
   return (
-    <div
-      ref={containerRef}
-      className="player relative aspect-video w-full select-none overflow-hidden bg-black md:rounded-xl [&:fullscreen]:aspect-auto [&:fullscreen]:rounded-none"
-      data-controls={controls && phase === 'ready'}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={() => { gesture.current = null; setScrub(undefined); }}
-      onMouseLeave={() => playing && setControls(false)}
-      style={{ touchAction: 'pan-y' }}
-    >
-      <video
-        key={videoKey}
-        ref={(el) => { (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; setVideoEl(el); }}
-        className="absolute inset-0 h-full w-full"
-        playsInline
-        preload="auto"
-        webkit-playsinline="true"
-        x-webkit-airplay="allow"
+    <div className="player-shell" data-active={!!req}>
+      <div
+        ref={containerRef}
+        className="player relative aspect-video w-full select-none overflow-hidden bg-black md:rounded-2xl [&:fullscreen]:aspect-auto [&:fullscreen]:rounded-none"
+        data-controls={controls && phase === 'ready'}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={() => { gesture.current = null; setScrub(undefined); }}
+        onMouseLeave={() => playing && setControls(false)}
+        style={{ touchAction: 'pan-y' }}
       >
-        {nativeTracks.map((t) => (
-          <track key={t.url} kind="subtitles" srcLang={t.lang} label={t.lang === 'ar' ? 'العربية' : 'English'} src={t.url} />
-        ))}
-      </video>
+        <video
+          key={videoKey}
+          ref={(el) => { (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = el; setVideoEl(el); }}
+          className="absolute inset-0 h-full w-full"
+          playsInline
+          preload="auto"
+          webkit-playsinline="true"
+          x-webkit-airplay="allow"
+        >
+          {nativeTracks.map((t) => (
+            <track key={t.url} kind="subtitles" srcLang={t.lang} label={t.lang === 'ar' ? 'العربية' : 'English'} src={t.url} />
+          ))}
+        </video>
 
-      {showSubs && <SubtitleOverlay video={videoEl} subs={subs} />}
+        {showSubs && <SubtitleOverlay video={videoEl} subs={subs} />}
 
-      {/* Idle / resolving / error overlays */}
-      {phase !== 'ready' && (
-        <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-gradient-to-b from-ink-900 to-black px-6 pb-4 pt-16 text-center" onPointerUp={(e) => e.stopPropagation()}>
-          {phase === 'idle' && (
-            <div className="max-w-sm space-y-2 text-ink-400">
-              <IconPlay size={40} className="mx-auto text-ink-600" />
-              <p className="text-sm">Pick a stream or paste a magnet link to start playing.</p>
-              <p className="hidden text-xs md:block"><kbd>⌘/Ctrl K</kbd> search torrents · <kbd>Space</kbd> pause · <kbd>F</kbd> fullscreen</p>
-            </div>
-          )}
-          {phase === 'resolving' && (
-            <div className="w-full max-w-xs space-y-3">
-              <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-ink-600 border-t-accent" />
-              <p className="text-sm text-ink-200">{status}</p>
-              {progress != null && (
-                <div className="h-1.5 overflow-hidden rounded-full bg-ink-700"><div className="h-full bg-accent transition-all" style={{ width: `${progress}%` }} /></div>
-              )}
-            </div>
-          )}
-          {phase === 'error' && (
-            <div className="max-w-md space-y-3">
-              <p className="text-sm text-red-300">{error}</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {req?.kind === 'torrent' && caps?.stream && source?.engine !== 'cloud' && engineOverride !== 'cloud' && (
-                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('cloud')}>Stream via your relay</button>
-                )}
-                {req?.kind === 'torrent' && engineOverride !== 'webtor' && (
-                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('webtor')}>Try free online player</button>
-                )}
-                {req?.kind === 'torrent' && supportsWebTorrent() && source?.engine !== 'webtorrent' && (
-                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('webtorrent')}>Try WebTorrent</button>
-                )}
-                {req?.kind === 'torrent' && hasDebrid(settings, caps) && engineOverride === 'webtorrent' && (
-                  <button className="btn-ghost border border-ink-600" onClick={() => setEngineOverride('debrid')}>Use Debrid</button>
-                )}
-                {onBack && <button className="btn-ghost border border-ink-600" onClick={onBack}>Back to results</button>}
+        {/* Idle / resolving / error */}
+        {phase !== 'ready' && (
+          <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-gradient-to-b from-ink-900 to-black px-6 pb-4 pt-12 text-center" onPointerUp={(e) => e.stopPropagation()}>
+            {phase === 'idle' && (
+              <div className="max-w-sm space-y-2 text-ink-400">
+                <IconPlay size={36} className="mx-auto text-ink-600" />
+                <p className="text-sm">Pick something to watch and it plays here.</p>
+                <p className="hidden text-xs md:block"><kbd>⌘/Ctrl K</kbd> search torrents · <kbd>Space</kbd> pause · <kbd>F</kbd> fullscreen</p>
               </div>
+            )}
+            {phase === 'resolving' && (
+              <div className="w-full max-w-xs space-y-3">
+                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-ink-600 border-t-accent" />
+                <p className="text-sm text-ink-200">{status}</p>
+                {progress != null && (
+                  <div className="h-1.5 overflow-hidden rounded-full bg-ink-700"><div className="h-full bg-accent transition-all" style={{ width: `${progress}%` }} /></div>
+                )}
+              </div>
+            )}
+            {phase === 'error' && (
+              <div className="max-w-md space-y-3">
+                <p className="text-sm text-red-300">{error}</p>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {alternatives.slice(0, 2).map((a) => <button key={a.engine} className="btn-ghost bg-white/10" onClick={() => setEngineOverride(a.engine)}>{a.label}</button>)}
+                  {onBack && <button className="btn-ghost bg-white/10 md:hidden" onClick={onBack}>Back</button>}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {phase === 'ready' && waiting && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center">
+            <div className="h-12 w-12 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+          </div>
+        )}
+
+        {/* Centre controls: touch = back 10 / play / forward 10; mouse = play when paused */}
+        {phase === 'ready' && !waiting && (
+          <div className={`absolute inset-0 hidden items-center justify-center gap-10 bg-black/25 transition-opacity [@media(pointer:coarse)]:flex ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+            <button className="grid h-12 w-12 place-items-center rounded-full bg-black/40 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(-10); poke(); }} aria-label="Back 10 seconds"><IconBack10 size={24} /></button>
+            <button className="grid h-16 w-16 place-items-center rounded-full bg-black/50 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); togglePlay(); poke(); }} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={30} /> : <IconPlay size={30} />}</button>
+            <button className="grid h-12 w-12 place-items-center rounded-full bg-black/40 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(10); poke(); }} aria-label="Forward 10 seconds"><IconFwd10 size={24} /></button>
+          </div>
+        )}
+        {phase === 'ready' && !playing && !waiting && (
+          <button className="absolute left-1/2 top-1/2 hidden h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white backdrop-blur [@media(pointer:fine)]:grid" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
+            <IconPlay size={28} />
+          </button>
+        )}
+
+        {flash && (
+          <div key={flash.key} className={`pointer-events-none absolute top-1/2 -translate-y-1/2 ${flash.side === 'left' ? 'left-[12%]' : flash.side === 'right' ? 'right-[12%]' : 'left-1/2 -translate-x-1/2'}`}>
+            <div className="animate-ripple whitespace-nowrap rounded-full bg-black/60 px-4 py-2.5 text-sm font-semibold text-white">{flash.label}</div>
+          </div>
+        )}
+
+        {scrub != null && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg bg-black/70 px-4 py-2 text-lg font-semibold tabular-nums text-white">
+            {fmtTime(scrub)} / {fmtTime(duration)}
+          </div>
+        )}
+
+        {/* Top bar: back (phone) · title in fullscreen */}
+        {req && (
+          <div className={`absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pb-6 pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity ${controls || phase !== 'ready' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            onPointerUp={(e) => e.stopPropagation()}>
+            {onBack && <button className="player-back grid h-9 w-9 place-items-center rounded-full text-white md:hidden" onClick={onBack} aria-label="Back"><IconBack size={22} /></button>}
+            <p className="player-title hidden min-w-0 flex-1 truncate px-1 text-sm font-semibold text-white">{req.title}{epTag ? ` · ${epTag}` : ''}</p>
+          </div>
+        )}
+
+        {/* Bottom controls */}
+        {phase === 'ready' && (
+          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-6 transition-opacity ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+            onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); poke(); }}>
+            <div className="flex items-center gap-1 text-white">
+              <button className="btn-ghost hidden p-2 text-white [@media(pointer:fine)]:inline-flex" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={20} /> : <IconPlay size={20} />}</button>
+              <span className="px-1 text-xs tabular-nums text-white/90">{fmtTime(shownTime)} <span className="text-white/50">/ {fmtTime(duration)}</span></span>
+              <div className="flex-1" />
+              <div className="group hidden items-center lg:flex">
+                <button className="btn-ghost p-2 text-white" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={muted ? 'Unmute' : 'Mute'}>{muted || volume === 0 ? <IconMute size={18} /> : <IconVolume size={18} />}</button>
+                <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(+e.target.value)} className="w-0 opacity-0 transition-all group-hover:w-20 group-hover:opacity-100 focus:w-20 focus:opacity-100" aria-label="Volume" />
+              </div>
+              <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
+                <IconCC size={20} />
+              </button>
+              <button className="btn-ghost hidden p-2 text-white sm:inline-flex" onClick={togglePip} aria-label="Picture in picture"><IconPip size={18} /></button>
+              <button className="btn-ghost p-2 text-white" onClick={toggleFullscreen} aria-label="Fullscreen">{fullscreen ? <IconShrink size={20} /> : <IconExpand size={20} />}</button>
             </div>
-          )}
-        </div>
-      )}
+            <div className="relative h-5">
+              <div className="absolute inset-x-1 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
+                <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
+                <div className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${duration ? (shownTime / duration) * 100 : 0}%` }} />
+              </div>
+              <input type="range" aria-label="Seek" min={0} max={duration || 0} step={0.1} value={shownTime}
+                onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = +e.target.value; }}
+                className="seek absolute inset-0 h-5 w-full cursor-pointer appearance-none bg-transparent" />
+            </div>
+          </div>
+        )}
 
-      {phase === 'ready' && waiting && (
-        <div className="pointer-events-none absolute inset-0 grid place-items-center">
-          <div className="h-12 w-12 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-        </div>
-      )}
+        {/* Subtitle sheet (fullscreen only: otherwise the settings sit under the video) */}
+        {panel && fullscreen && (
+          <div className="absolute inset-y-0 right-0 z-20 w-full max-w-sm overflow-y-auto bg-ink-950/95 p-4 backdrop-blur scrollbar-thin"
+            onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
+            <SubtitleSettings subs={subs} hidden={subsHidden} onHiddenChange={setSubsHidden} listening={syncListening} generate={generate} onClose={() => setPanel(false)} />
+          </div>
+        )}
+      </div>
 
-      {phase === 'ready' && !playing && !waiting && (
-        <button className="absolute left-1/2 top-1/2 grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white backdrop-blur" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
-          <IconPlay size={28} />
-        </button>
-      )}
-
-      {flash && (
-        <div key={flash.key} className={`pointer-events-none absolute top-1/2 -translate-y-1/2 ${flash.side === 'left' ? 'left-[12%]' : flash.side === 'right' ? 'right-[12%]' : 'left-1/2 -translate-x-1/2'}`}>
-          <div className="animate-ripple rounded-full bg-white/20 px-4 py-3 text-sm font-semibold text-white">{flash.label}</div>
-        </div>
-      )}
-
-      {scrub != null && (
-        <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg bg-black/70 px-4 py-2 text-lg font-semibold tabular-nums text-white">
-          {fmtTime(scrub)} / {fmtTime(duration)}
-        </div>
-      )}
-
-      {/* Top bar */}
       {req && (
-        <div className={`absolute inset-x-0 top-0 flex items-start gap-2 bg-gradient-to-b from-black/80 to-transparent p-3 pt-[max(0.75rem,env(safe-area-inset-top))] transition-opacity ${controls || phase !== 'ready' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-          onPointerUp={(e) => e.stopPropagation()}>
-          {onBack && <button className="btn-ghost -ml-1 p-1 text-white md:hidden" onClick={onBack} aria-label="Back"><IconBack /></button>}
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-white">{req.title}{req.season != null ? ` · S${String(req.season).padStart(2, '0')}E${String(req.episode ?? '').padStart(2, '0')}` : ''}</p>
-            <p className="truncate text-[11px] text-white/60">
-              {source?.engine === 'cloud' ? (source.remux ? 'your relay · MKV converted' : 'your relay') : source?.engine === 'direct' ? `direct link${source.url.includes('/api/proxy') ? ' via your relay' : ''}${source.remux ? ' · MKV converted' : ''}` : source?.engine ?? '…'}{source?.fileName ? ` · ${source.fileName}` : ''}
-              {source?.engine === 'cloud' && cloudStats && ` · ${cloudStats.peers} peer${cloudStats.peers === 1 ? '' : 's'} · ↓ ${formatBytes(cloudStats.downSpeed)}/s`}
-              {wtStats && ` · ${wtStats.numPeers} peers · ↓ ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%`}
+        <div className="player-details space-y-6 px-4 pb-6 pt-4 md:px-0">
+          <div className="space-y-1.5">
+            <h1 className="text-lg font-semibold leading-snug text-white" dir="auto">{req.title}</h1>
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-400">
+              {epTag && <span className="font-medium text-ink-200">{epTag}</span>}
+              {req.result?.quality && req.result.quality !== 'Unknown' && <span className="rounded bg-ink-800 px-1.5 py-0.5 text-xs font-semibold text-ink-200">{req.result.quality}</span>}
+              <span>{[req.result?.sizeBytes ? formatBytes(req.result.sizeBytes) : '', engineName].filter(Boolean).join(' · ')}</span>
+              {liveStats && <span className="text-hd">{liveStats}</span>}
             </p>
           </div>
-        </div>
-      )}
 
-      {/* Bottom controls */}
-      {phase === 'ready' && (
-        <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-8 transition-opacity ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-          onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); poke(); }}>
-          <div className="relative mb-1 h-4">
-            <div className="absolute inset-x-0 top-1/2 h-1 -translate-y-1/2 rounded-full bg-white/20">
-              <div className="h-full rounded-full bg-white/30" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
-            </div>
-            <input type="range" aria-label="Seek" min={0} max={duration || 0} step={0.1} value={shownTime}
-              onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = +e.target.value; }}
-              className="absolute inset-0 h-4 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-runnable-track]:bg-transparent" />
-          </div>
-          <div className="flex items-center gap-1 text-white">
-            <button className="btn-ghost p-2 text-white" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={20} /> : <IconPlay size={20} />}</button>
-            <button className="btn-ghost hidden p-2 text-xs text-white sm:inline-flex" onClick={() => seekBy(-10)} aria-label="Back 10 seconds">−10</button>
-            <button className="btn-ghost hidden p-2 text-xs text-white sm:inline-flex" onClick={() => seekBy(10)} aria-label="Forward 10 seconds">+10</button>
-            <span className="px-1 text-xs tabular-nums text-white/80">{fmtTime(shownTime)} / {fmtTime(duration)}</span>
-            <div className="flex-1" />
-            <div className="group hidden items-center lg:flex">
-              <button className="btn-ghost p-2 text-white" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={muted ? 'Unmute' : 'Mute'}>{muted || volume === 0 ? <IconMute size={18} /> : <IconVolume size={18} />}</button>
-              <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(+e.target.value)} className="w-0 opacity-0 transition-all group-hover:w-20 group-hover:opacity-100 focus:w-20 focus:opacity-100" aria-label="Volume" />
-            </div>
-            <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/50' : 'text-white'}`} onClick={() => setPanel((p) => !p)} aria-label="Subtitles">
-              <IconCC size={18} />
-              {LANGS.filter((l) => subs.loaded[l]?.cues.length).map((l) => <span key={l} className="text-[10px] font-bold uppercase">{l}</span>)}
-            </button>
-            <button className="btn-ghost hidden p-2 text-white sm:inline-flex" onClick={togglePip} aria-label="Picture in picture"><IconPip size={18} /></button>
-            <button className="btn-ghost p-2 text-white" onClick={toggleFullscreen} aria-label="Fullscreen">{fullscreen ? <IconShrink size={18} /> : <IconExpand size={18} />}</button>
-          </div>
-        </div>
-      )}
+          <SubtitleSettings subs={subs} hidden={subsHidden} onHiddenChange={setSubsHidden} listening={syncListening} generate={generate} />
 
-      {/* Subtitle panel */}
-      {panel && (
-        <div className="absolute inset-0 z-20 bg-ink-950/95 backdrop-blur md:inset-y-0 md:left-auto md:w-96 md:border-l md:border-ink-700"
-          onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
-          <SubtitlePanel subs={subs} onClose={() => setPanel(false)} hidden={subsHidden} onHiddenChange={setSubsHidden} listening={syncListening} />
+          <StreamInfo req={req} source={source} engineName={engineName} alternatives={alternatives} onEngine={setEngineOverride} />
         </div>
       )}
     </div>
+  );
+}
+
+function StreamInfo({ req, source, engineName, alternatives, onEngine }: {
+  req: NonNullable<ReturnType<typeof useApp.getState>['nowPlaying']>;
+  source?: Source;
+  engineName?: string;
+  alternatives: { label: string; engine: Engine }[];
+  onEngine: (e: Engine) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const r = req.result;
+  const link = req.url ?? r?.magnet;
+  const copy = async () => {
+    if (!link) return;
+    try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 1200); } catch { /* denied */ }
+  };
+  return (
+    <section>
+      <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Stream</h3>
+      <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 text-sm ring-1 ring-ink-700/70">
+        {engineName && (
+          <div className="flex justify-between gap-4 px-4 py-3"><span className="text-ink-400">Playing via</span><span className="text-right text-ink-200">{engineName}{source?.remux ? ' · MKV converted' : ''}</span></div>
+        )}
+        {(source?.fileName || r?.title) && (
+          <div className="space-y-0.5 px-4 py-3"><span className="text-ink-400">File</span><p className="break-all text-xs text-ink-200">{source?.fileName ?? r?.title}</p></div>
+        )}
+        {r && (r.seeders > 0 || r.tracker || r.releaseGroup) && (
+          <div className="flex justify-between gap-4 px-4 py-3"><span className="text-ink-400">Release</span>
+            <span className="text-right text-ink-200">{[r.seeders ? `${r.seeders} seeders` : '', r.tracker, r.releaseGroup].filter(Boolean).join(' · ')}</span></div>
+        )}
+        {link && (
+          <button className="flex w-full items-center justify-between gap-4 px-4 py-3 text-left hover:bg-ink-800/60" onClick={copy}>
+            <span className="text-ink-200">{req.url ? 'Copy link' : 'Copy magnet link'}</span>
+            {copied ? <span className="text-xs text-hd">Copied</span> : <IconCopy size={16} className="text-ink-400" />}
+          </button>
+        )}
+      </div>
+      {alternatives.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {alternatives.map((a) => <button key={a.engine} className="btn-ghost bg-ink-800 text-xs" onClick={() => onEngine(a.engine)}>{a.label}</button>)}
+        </div>
+      )}
+    </section>
   );
 }

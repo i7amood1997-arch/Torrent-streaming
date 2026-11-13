@@ -3,6 +3,8 @@ import { DEFAULT_API_BASE } from './config';
 import { parseMagnet } from './magnet';
 import { useApp, type ServerCaps } from './store';
 import type { SessionStats } from './bt/session';
+import { googleTranslate } from './translate';
+import type { Transcript } from './speech/generate';
 
 export type StreamStats = SessionStats;
 export type StreamPrepare =
@@ -79,6 +81,31 @@ export const api = {
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),
   subtitleCues: (token: string, signal?: AbortSignal) => get<{ cues: SubtitleCue[] }>('/api/subtitles/file', { token }, signal),
+
+  /** Translate newline-separated lines: straight from this browser, else through the relay. */
+  async translate(text: string, from: string, to: string, signal?: AbortSignal): Promise<string> {
+    try {
+      return await googleTranslate(text, from, to, signal);
+    } catch (e) {
+      if ((e as Error).name === 'AbortError' || !apiBase()) throw e;
+      const res = await call('/api/translate', { method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ text, from, to }), signal });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      return body.text as string;
+    }
+  },
+
+  /** Speech → text on the relay (Workers AI Whisper). */
+  async transcribe(audio: { bytes: Uint8Array; mime: string }, opts: { language?: string }, signal?: AbortSignal): Promise<Transcript> {
+    const base = apiBase();
+    if (!base) throw Object.assign(new Error('Generating subtitles needs your relay.'), { fatal: true });
+    const res = await fetch(`${base}/api/transcribe${opts.language ? `?lang=${encodeURIComponent(opts.language)}` : ''}`, {
+      method: 'POST', headers: { ...headers(), 'Content-Type': audio.mime }, body: audio.bytes as BodyInit, signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { fatal: !!body.fatal || res.status === 501 });
+    return body as Transcript;
+  },
 
   /** Built-in cloud streaming: ask the relay to open the torrent. Poll until `ready`. */
   async streamPrepare(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<StreamPrepare> {

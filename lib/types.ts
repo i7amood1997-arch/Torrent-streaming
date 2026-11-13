@@ -99,7 +99,7 @@ export interface SubtitleCue {
 
 export interface SubtitleTrackInfo {
   id: string;
-  provider: 'opensubtitles' | 'subdl' | 'local' | 'embedded';
+  provider: 'opensubtitles' | 'subdl' | 'local' | 'embedded' | 'translated' | 'generated';
   lang: 'ar' | 'en' | string;
   label: string;
   releaseName?: string;
@@ -109,6 +109,8 @@ export interface SubtitleTrackInfo {
   hashMatch?: boolean;
   /** 0..1 similarity to the playing release name, used for auto-selection. */
   score?: number;
+  /** Translated/generated tracks: the language the text came from. */
+  sourceLang?: string;
   /** Opaque token passed back to /api/subtitles/file. */
   token: string;
 }

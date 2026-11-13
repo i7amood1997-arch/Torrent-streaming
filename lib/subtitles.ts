@@ -7,6 +7,7 @@ import { cinemeta } from './cinemeta';
 import { parseRelease, titleFromRelease } from './release-parser';
 import { describeError, serverOnlyHeaders } from './runtime';
 import { decodeSubtitleBytes, parseSubtitles, releaseSimilarity } from './subtitle-parser';
+import { ISO2 } from './translate';
 import type { SubtitleCue, SubtitleTrackInfo } from './types';
 
 export interface SubtitleSearch {
@@ -77,7 +78,7 @@ const normLang = (l: string) => {
 };
 
 async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): Promise<SubtitleTrackInfo[]> {
-  const p = new URLSearchParams({ languages: (q.langs ?? ['ar', 'en']).join(','), order_by: 'download_count' });
+  const p = new URLSearchParams({ languages: (q.langs ?? ['ar', 'en']).filter((l) => l !== '*').join(','), order_by: 'download_count' });
   const imdbNum = q.imdbId?.replace(/^tt0*/, '');
   if (q.type === 'series' && imdbNum) {
     p.set('parent_imdb_id', imdbNum);
@@ -120,7 +121,7 @@ async function searchOpenSubtitles(q: SubtitleSearch, key: string, ua: string): 
 async function searchSubDL(q: SubtitleSearch, key: string): Promise<SubtitleTrackInfo[]> {
   const p = new URLSearchParams({
     api_key: key,
-    languages: (q.langs ?? ['ar', 'en']).map((l) => l.toUpperCase()).join(','),
+    languages: (q.langs ?? ['ar', 'en']).filter((l) => l !== '*').map((l) => l.toUpperCase()).join(','),
     subs_per_page: '30',
   });
   if (q.imdbId) p.set('imdb_id', q.imdbId);
@@ -151,7 +152,6 @@ async function searchSubDL(q: SubtitleSearch, key: string): Promise<SubtitleTrac
   });
 }
 
-const LANG3: Record<string, string> = { ara: 'ar', eng: 'en', ar: 'ar', en: 'en' };
 
 async function searchStremio(q: SubtitleSearch): Promise<SubtitleTrackInfo[]> {
   if (!q.imdbId) return [];
@@ -167,13 +167,18 @@ async function searchStremio(q: SubtitleSearch): Promise<SubtitleTrackInfo[]> {
   if (!res.ok) throw new Error(`OpenSubtitles feed ${res.status}`);
   const data = (await res.json()) as { subtitles?: { id?: string; url?: string; lang?: string; movieReleaseName?: string; subtitleFileName?: string }[] };
   const wanted = q.langs ?? ['ar', 'en'];
+  // '*': also return a few tracks in other languages, as sources for translation.
+  const others = wanted.includes('*');
   const perLang: Record<string, number> = {};
   const out: SubtitleTrackInfo[] = [];
   for (const s of data.subtitles ?? []) {
-    const lang = LANG3[(s.lang ?? '').toLowerCase()];
-    if (!lang || !wanted.includes(lang) || !s.url || !isStremioUrl(s.url)) continue;
+    const code = (s.lang ?? '').toLowerCase();
+    const lang = ISO2[code] ?? (/^[a-z]{2}$/.test(code) ? code : undefined);
+    if (!lang || !s.url || !isStremioUrl(s.url)) continue;
+    const main = wanted.includes(lang);
+    if (!main && !others) continue;
     const n = (perLang[lang] = (perLang[lang] ?? 0) + 1);
-    if (n > 8) continue; // the feed is ordered best-first; a handful per language is plenty
+    if (n > (main ? 8 : 2)) continue; // the feed is ordered best-first; a handful per language is plenty
     const releaseName = s.movieReleaseName || s.subtitleFileName || `OpenSubtitles #${n}`;
     const similarity = releaseSimilarity(releaseName, q.fileName || q.releaseName);
     out.push({
@@ -212,7 +217,7 @@ export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
     if (s.status === 'fulfilled') tracks.push(...s.value);
     else errors.push({ provider: jobs[i][0], message: describeError(s.reason) });
   });
-  if (!tracks.length && !errors.length) errors.push({ provider: 'subtitles', message: q.imdbId ? 'No Arabic or English subtitles found for this title.' : 'Could not identify this title to look up subtitles.' });
+  if (!tracks.length && !errors.length) errors.push({ provider: 'subtitles', message: q.imdbId ? 'No subtitles found for this title.' : 'Could not identify this title to look up subtitles.' });
   tracks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.downloads ?? 0) - (a.downloads ?? 0));
   return { tracks, errors };
 }

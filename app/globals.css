@@ -87,7 +87,72 @@ textarea {
   transition: bottom 0.2s ease;
 }
 .player[data-controls='true'] .sub-layer {
-  bottom: calc(var(--sub-bottom) + 64px);
+  bottom: calc(var(--sub-bottom) + 56px);
+}
+
+/* Small player (phone portrait): controls and subtitles don't fit together, controls win while shown. */
+@container (max-height: 320px) {
+  .player[data-controls='true'] .sub-layer {
+    opacity: 0;
+  }
+}
+
+/* The video stays at the top while the settings under it scroll. */
+.player-shell .player {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+@media (min-width: 768px) {
+  .player-shell .player {
+    top: 1rem;
+  }
+  .player-shell {
+    padding-top: 1rem;
+  }
+}
+.player:fullscreen .player-title {
+  display: block;
+}
+
+/* Phone turned sideways while something plays: the player takes the whole screen. */
+@media (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
+  .player-shell[data-active='true'] .player {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    aspect-ratio: auto;
+    border-radius: 0;
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+  .player-shell[data-active='true'] .player-title {
+    display: block;
+  }
+}
+
+/* Seek bar: invisible native track over the drawn one, with a round thumb. */
+.seek::-webkit-slider-runnable-track {
+  background: transparent;
+}
+.seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(232, 176, 74, 0.35);
+}
+.seek::-moz-range-thumb {
+  height: 14px;
+  width: 14px;
+  border: 0;
+  border-radius: 9999px;
+  background: #fff;
+}
+.seek::-moz-range-track {
+  background: transparent;
 }
 .sub-cue {
   max-width: 100%;
@@ -188,5 +253,9 @@ input[type='range'] {
   }
   .rr-play-label {
     display: inline;
+  }
+  .rr-play {
+    width: auto;
+    padding: 0 1rem;
   }
 }

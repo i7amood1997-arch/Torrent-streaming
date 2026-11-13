@@ -9,6 +9,8 @@
  *   POST /api/debrid/resolve   { provider, magnet|infoHash, fileIdx?, season?, episode? }
  *   GET  /api/subtitles?imdb&tmdb&type&season&episode&release&q&langs
  *   GET  /api/subtitles/file?token=…
+ *   POST /api/translate        { text, from, to }  (subtitle lines, newline-separated)
+ *   POST /api/transcribe?lang  raw audio bytes → speech segments (Workers AI Whisper)
  *
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
@@ -21,9 +23,15 @@ import { ALL_INDEXERS, configFromEnv, parseAddonList, searchTorrents, type Index
 import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
+import { googleTranslate } from '../translate';
 import type { DebridProvider, SearchQuery } from '../types';
 
 export type Env = Record<string, string | undefined>;
+
+/** Non-string bindings (Cloudflare): Workers AI for speech recognition. */
+export interface ApiBindings {
+  AI?: { run(model: string, input: unknown): Promise<unknown> };
+}
 
 const ALLOWED_HEADERS = [
   'content-type',
@@ -73,7 +81,7 @@ const subtitleKeys = (req: Request, env: Env): SubtitleKeys => ({
 
 // ─── Route handlers ─────────────────────────────────────────────────────────
 
-function config(env: Env) {
+function config(env: Env, b: ApiBindings) {
   const c = configFromEnv(env);
   return json({
     tmdb: !!env.TMDB_API_KEY,
@@ -83,6 +91,7 @@ function config(env: Env) {
     clientTorznab: env.ALLOW_CLIENT_TORZNAB === 'true',
     accessToken: !!env.ACCESS_TOKEN,
     stream: env.STREAM_ENABLED === 'true',
+    ai: !!b.AI,
   });
 }
 
@@ -206,7 +215,7 @@ async function subtitles(req: Request, env: Env, sp: URLSearchParams) {
         episode: intParam(sp.get('episode')),
         releaseName: sp.get('release')?.slice(0, 300) || undefined,
         query: sp.get('q')?.slice(0, 200) || undefined,
-        langs: (sp.get('langs') || 'ar,en').split(',').map((l) => l.trim().toLowerCase()).filter((l) => /^[a-z]{2}$/.test(l)),
+        langs: (sp.get('langs') || 'ar,en').split(',').map((l) => l.trim().toLowerCase()).filter((l) => /^([a-z]{2}|\*)$/.test(l)),
         videoHash: /^[0-9a-f]{16}$/.test(sp.get('hash') ?? '') ? sp.get('hash')! : undefined,
         videoSize: Number(sp.get('size')) || undefined,
         fileName: sp.get('file')?.slice(0, 300) || undefined,
@@ -231,6 +240,66 @@ async function subtitleFile(req: Request, env: Env, sp: URLSearchParams) {
   } catch (e) {
     return err(describeError(e), 502);
   }
+}
+
+// ─── Translation & speech recognition ───────────────────────────────────────
+
+async function translate(req: Request) {
+  const body = (await req.json().catch(() => ({}))) as { text?: unknown; from?: unknown; to?: unknown };
+  const code = (v: unknown) => (typeof v === 'string' && /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/.test(v) ? v : undefined);
+  const to = code(body.to);
+  if (typeof body.text !== 'string' || !body.text || body.text.length > 8000 || !to) return err('text (≤ 8000 chars) and to required', 400);
+  try {
+    return json({ text: await googleTranslate(body.text, code(body.from) ?? 'auto', to, AbortSignal.timeout(20000)) });
+  } catch (e) {
+    return err(describeError(e), 502);
+  }
+}
+
+const WHISPER = '@cf/openai/whisper-large-v3-turbo';
+
+function base64(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+interface WhisperOut {
+  transcription_info?: { language?: string };
+  segments?: { start: number; end: number; text: string; no_speech_prob?: number; avg_logprob?: number; words?: { word: string; start: number; end: number }[] }[];
+}
+
+async function transcribe(req: Request, sp: URLSearchParams, b: ApiBindings) {
+  if (!b.AI) return err('Speech recognition isn’t set up on this relay (it needs the Workers AI binding, added automatically on the next deploy).', 501);
+  const audio = new Uint8Array(await req.arrayBuffer());
+  if (!audio.length) return err('audio required', 400);
+  if (audio.length > 25 << 20) return err('audio clip too large', 413);
+  const lang = sp.get('lang');
+  const opts = { vad_filter: true, condition_on_previous_text: false, ...(lang && /^[a-z]{2,3}$/.test(lang) ? { language: lang } : {}) };
+  const contentType = req.headers.get('content-type') || 'application/octet-stream';
+  let out: WhisperOut;
+  try {
+    // Streamed body first (no base64 work for the Worker), then the documented base64 form.
+    try {
+      out = (await b.AI.run(WHISPER, { audio: { body: new Response(audio).body, contentType }, ...opts })) as WhisperOut;
+    } catch (e) {
+      if (/neuron|allocation|quota|4006|limit/i.test(describeError(e))) throw e;
+      out = (await b.AI.run(WHISPER, { audio: base64(audio), ...opts })) as WhisperOut;
+    }
+  } catch (e) {
+    const m = describeError(e);
+    if (/neuron|allocation|quota|4006/i.test(m)) {
+      return json({ error: 'Today’s free speech-recognition allowance on your relay is used up (about 3½ hours of audio a day). It resets daily.', fatal: true }, 429);
+    }
+    return err(`Speech recognition failed: ${m}`, 502);
+  }
+  const segments = (out.segments ?? [])
+    .filter((s) => s.text?.trim() && !((s.no_speech_prob ?? 0) > 0.8) && !((s.avg_logprob ?? 0) < -1.2))
+    .map((s) => ({
+      start: s.start, end: s.end, text: s.text.trim(),
+      words: s.words?.map((w) => ({ word: w.word, start: w.start, end: w.end })),
+    }));
+  return json({ language: out.transcription_info?.language, segments });
 }
 
 // ─── Direct-link playback proxy ─────────────────────────────────────────────
@@ -307,7 +376,7 @@ export const encodeProxyHeaders = b64urlJson.enc;
 
 // ─── Router ─────────────────────────────────────────────────────────────────
 
-export async function handleApi(req: Request, env: Env): Promise<Response> {
+export async function handleApi(req: Request, env: Env, bindings: ApiBindings = {}): Promise<Response> {
   const cors = corsHeaders(req, env);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
@@ -324,12 +393,14 @@ export async function handleApi(req: Request, env: Env): Promise<Response> {
     try {
       const get = req.method === 'GET';
       if (path === '' || path === '/api') res = json({ ok: true, service: 'streamdeck-api' });
-      else if (path === '/api/config' && get) res = config(env);
+      else if (path === '/api/config' && get) res = config(env, bindings);
       else if (path === '/api/search' && get) res = await search(req, env, url.searchParams);
       else if (path === '/api/tmdb' && get) res = await tmdb(req, env, url.searchParams);
       else if (path === '/api/debrid/resolve' && req.method === 'POST') res = await debridResolve(req, env);
       else if (path === '/api/subtitles' && get) res = await subtitles(req, env, url.searchParams);
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
+      else if (path === '/api/translate' && req.method === 'POST') res = await translate(req);
+      else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
       else res = err('Not found', 404);
     } catch (e) {

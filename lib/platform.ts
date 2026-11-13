@@ -37,11 +37,13 @@ export interface PlatformInfo {
   ios: boolean;
   mac: boolean;
   webTorrent: boolean;
+  /** Running as an installed home-screen app. */
+  standalone: boolean;
 }
 
 /** Platform flags resolved after mount (server render assumes a generic desktop). */
 export function usePlatform(): PlatformInfo {
-  const [p, setP] = useState<PlatformInfo>({ ios: false, mac: false, webTorrent: false });
-  useEffect(() => setP({ ios: isIOS(), mac: isMac(), webTorrent: supportsWebTorrent() }), []);
+  const [p, setP] = useState<PlatformInfo>({ ios: false, mac: false, webTorrent: false, standalone: false });
+  useEffect(() => setP({ ios: isIOS(), mac: isMac(), webTorrent: supportsWebTorrent(), standalone: matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true }), []);
   return p;
 }

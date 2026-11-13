@@ -3,13 +3,14 @@
  *  - /api/stream/*  built-in torrent streaming (Durable Object, worker/stream-do.ts)
  *  - everything else: lib/server/handlers.ts (search, TMDB, Debrid, subtitles)
  */
-import { handleApi, type Env } from '../lib/server/handlers';
+import { handleApi, type ApiBindings, type Env } from '../lib/server/handlers';
 import { TorrentStream } from './stream-do';
 
 export { TorrentStream };
 
 interface Bindings {
   STREAM?: DurableObjectNamespaceLike;
+  AI?: ApiBindings['AI'];
   [key: string]: unknown;
 }
 
@@ -26,7 +27,7 @@ export default {
     const m = url.pathname.match(/^\/api\/stream\/([a-f0-9]{40})\/(prepare|status|file)(\/|$)/);
     if (!m) {
       if (url.pathname.startsWith('/api/stream/')) return new Response('Not found', { status: 404 });
-      return handleApi(request, env);
+      return handleApi(request, env, { AI: bindings.AI });
     }
 
     const cors: Record<string, string> = {

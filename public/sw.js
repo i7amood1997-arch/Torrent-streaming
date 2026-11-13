@@ -6,7 +6,7 @@
 importScripts('vendor/webtorrent/sw.min.js'); // resolved relative to this script
 
 const SCOPE = new URL(self.registration.scope).pathname; // e.g. "/Torrent-streaming/"
-const SHELL_CACHE = 'streamdeck-shell-v3';
+const SHELL_CACHE = 'streamdeck-shell-v4';
 const SHELL = ['', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'].map((p) => SCOPE + p);
 
 self.addEventListener('install', (event) => {
