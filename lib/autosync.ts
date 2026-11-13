@@ -53,7 +53,7 @@ function coverage(cues: SubtitleCue[]): Uint8Array {
  * Find the shift/speed that best aligns subtitles with detected speech.
  * `center` is the current offset (s): candidates span center ± range.
  */
-export function alignSubtitles(samples: SpeechSample[], cues: SubtitleCue[], opts: { center?: number; range?: number; scales?: number[] } = {}): Alignment | undefined {
+export function alignSubtitles(samples: SpeechSample[], cues: SubtitleCue[], opts: { center?: number; range?: number; scales?: number[]; minSeconds?: number; threshold?: number } = {}): Alignment | undefined {
   const center = opts.center ?? 0;
   const range = opts.range ?? 20;
   const scales = opts.scales ?? SYNC_SCALES;
@@ -67,13 +67,13 @@ export function alignSubtitles(samples: SpeechSample[], cues: SubtitleCue[], opt
     const prev = slots.get(k);
     if (prev === undefined || s.e > prev) slots.set(k, s.e);
   }
-  if (slots.size < 60 * HZ) return undefined; // need at least a minute of audio
+  if (slots.size < (opts.minSeconds ?? 60) * HZ) return undefined; // need at least a minute of audio
 
   const keys = [...slots.keys()].sort((a, b) => a - b);
   const energies = keys.map((k) => slots.get(k)!);
   const sorted = [...energies].sort((a, b) => a - b);
   // Speech is the louder part of the speech band; the median adapts to each mix and volume.
-  const threshold = percentile(sorted, 0.5);
+  const threshold = opts.threshold ?? percentile(sorted, 0.5);
   const speech: number[] = energies.map((e) => (e > threshold ? 1 : 0));
   const mean = speech.reduce((a, b) => a + b, 0) / speech.length;
   const centered = speech.map((v) => v - mean);

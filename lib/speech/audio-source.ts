@@ -21,6 +21,8 @@ export interface AudioClip {
 
 export interface AudioSource {
   duration: number;
+  /** Bytes that must be downloaded per second of audio read (MKV: the whole stream; MP4: audio only). */
+  costPerSecond: number;
   codec: AudioCodec;
   read(start: number, end: number, signal?: AbortSignal): Promise<AudioClip>;
 }
@@ -220,7 +222,7 @@ async function openMkv(url: string, size: number, signal?: AbortSignal): Promise
     throw new Error('Couldn’t find this part of the video.');
   };
 
-  return { duration, codec, read };
+  return { duration, codec, read, costPerSecond: bytesPerSec || 1e6 };
 }
 
 // ─── MP4 ────────────────────────────────────────────────────────────────────
@@ -382,6 +384,24 @@ export function parseMp4Audio(moov: Uint8Array): Mp4Track {
         for (let k = 0; k < per && sample < count; k++, sample++) { offsets[sample] = o; o += sizes[sample]; }
       }
     }
+    // Edit list: where this track's timeline starts in the film (skips encoder priming, or delays the track).
+    let shift = 0;
+    const elst = child(b, child(b, trak, 'edts') ?? { type: '', start: 0, end: 0 }, 'elst');
+    if (elst) {
+      const v = b[elst.start];
+      const mvhd = child(b, root, 'mvhd');
+      const movieScale = mvhd ? dv.getUint32(mvhd.start + (b[mvhd.start] === 1 ? 20 : 12)) : 1000;
+      let o = elst.start + 8;
+      for (let e = 0, entries = dv.getUint32(elst.start + 4); e < entries && e < 4; e++) {
+        const dur = v === 1 ? Number(dv.getBigUint64(o)) : dv.getUint32(o);
+        const mediaTime = v === 1 ? Number(dv.getBigInt64(o + 8)) : dv.getInt32(o + 4);
+        o += v === 1 ? 20 : 12;
+        if (mediaTime < 0) { shift += dur / movieScale; continue; } // empty edit: the track starts later
+        shift -= mediaTime / timescale;
+        break;
+      }
+    }
+    if (shift) for (let i = 0; i < count; i++) times[i] += shift;
     return { info, times, offsets, sizes, duration: t / timescale };
   }
   throw new UnsupportedAudio(unsupported ? `This video’s ${unsupported} can’t be read for subtitles.` : 'This video has no audio track.');
@@ -425,5 +445,6 @@ async function openMp4(url: string, head: Uint8Array, size: number, signal?: Abo
     return { start: list[0].t, end: list[list.length - 1].t, ...file };
   };
 
-  return { duration: tr.duration, codec: tr.info.codec, read };
+  const audioBytes = tr.sizes.reduce((n, x) => n + x, 0);
+  return { duration: tr.duration, codec: tr.info.codec, read, costPerSecond: tr.duration ? audioBytes / tr.duration : 40000 };
 }

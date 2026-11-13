@@ -82,3 +82,54 @@ describe('automatic subtitle sync', () => {
     expect(agrees(base, { ...base, scale: 25 / 23.976 })).toBe(false);
   });
 });
+
+import { alignToReference, anchorOffset, fitTrack, fits, planWindows } from '@/lib/presync';
+
+describe('up-front sync', () => {
+  const film = dialogue(90, 3);
+  /** Audio stretches as the offline analyser would return them. */
+  const stretches = (cues: SubtitleCue[], starts: number[], len: number, map: (t: number) => number) =>
+    starts.map((s) => speech(cues.map((c) => ({ ...c, start: map(c.start), end: map(c.end) })), 0, 1, 90 * 60 * 1.1).filter((x) => x.t >= s && x.t < s + len));
+
+  it('plans stretches across the dialogue', () => {
+    const w = planWindows(film, 5400, 4, 60);
+    expect(w.length).toBe(4);
+    expect(w[0]).toBeLessThan(1500);
+    expect(w[3]).toBeGreaterThan(3500);
+  });
+
+  it('fits shift and speed from four one-minute stretches', () => {
+    const scale = 25 / 23.976;
+    const starts = planWindows(film, 5400, 4, 60).map((s) => s * scale);
+    const f = fitTrack(stretches(film, starts, 60, (t) => t * scale + 3.7), film)!;
+    expect(f.scale).toBeCloseTo(scale, 6);
+    expect(Math.abs(f.offset - 3.7)).toBeLessThanOrEqual(0.15);
+    expect(fits(f)).toBe(true);
+  });
+
+  it('notices a subtitle made for a different cut', () => {
+    const starts = planWindows(film, 5400, 4, 60);
+    // 6 s of extra footage in the middle: the second half is shifted.
+    const f = fitTrack(stretches(film, starts, 60, (t) => (t < 2700 ? t + 1 : t + 7)), film);
+    expect(fits(f)).toBe(false);
+  });
+
+  it('lines a subtitle up with a reference in another language', () => {
+    const ref = dialogue(20, 5);
+    // Same dialogue rhythm, slightly different line lengths, 4.2 s early.
+    const other = ref.map((c, i) => ({ start: c.start - 4.2 + (i % 3) * 0.1, end: c.end - 4.2 - (i % 2) * 0.2, text: 'x' }));
+    const a = alignToReference(ref, other)!;
+    expect(confident(a)).toBe(true);
+    expect(Math.abs(a.offset - 4.2)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('finds the shift from recognised words', () => {
+    const vocab = Array.from({ length: 120 }, (_, i) => `word${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + ((i * 7) % 26))}${i}`.replace(/\d/g, (d) => 'ghijklmnop'[+d]));
+    const r = rng(11);
+    const cues: SubtitleCue[] = Array.from({ length: 60 }, (_, i) => ({ start: i * 4, end: i * 4 + 3, text: Array.from({ length: 5 }, () => vocab[Math.floor(r() * vocab.length)]).join(' ') }));
+    const words = cues.slice(10, 25).flatMap((c) => c.text.split(' ').map((w, k) => ({ word: w, start: c.start + 0.3 + k * 0.6 - 2.5 })));
+    const a = anchorOffset(words, cues)!;
+    expect(Math.abs(a.offset + 2.5)).toBeLessThanOrEqual(0.3);
+    expect(a.ratio).toBeGreaterThan(1.5);
+  });
+});

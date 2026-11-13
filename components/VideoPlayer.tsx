@@ -29,6 +29,7 @@ import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@
 import { openAudioSource } from '@/lib/speech/audio-source';
 import { SubtitleGenerator, type GeneratorStatus } from '@/lib/speech/generate';
 import { IconBack, IconBack10, IconCC, IconCopy, IconExpand, IconFwd10, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
+import { usePresync } from './use-presync';
 import { LANGS, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
 
 
@@ -317,7 +318,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         const a = alignSubtitles(tap.samples, tr.cues, { center: st.applied ? center : base / 1000, range: st.applied ? 3 : 20 });
         if (!confident(a)) continue;
         // Apply when two consecutive estimates agree; later, only move if a new estimate is stable and differs.
-        if (st.last && agrees(a!, st.last) && (!st.applied || !agrees(a!, st.applied))) {
+        if (st.last && agrees(a!, st.last) && (!st.applied || (a!.scale === st.applied.scale && Math.abs(a!.offset - st.applied.offset) > 0.35))) {
           st.applied = a;
           subs.applyAutoSync(lang, a!.offset * 1000 - base, a!.scale);
         }
@@ -327,6 +328,21 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     return () => clearInterval(t);
   }, [settings.subtitle.autoSync, subs]);
   useEffect(() => { syncState.current = {}; }, [req?.nonce]);
+
+  // Up-front sync: fit subtitles to audio sampled from across the file, before the viewer needs them.
+  const presyncUrls = source && phase === 'ready' ? readableUrls(source) : undefined;
+  usePresync({
+    playKey: source && phase === 'ready' ? `${req?.nonce}|${source.url}` : '',
+    urls: presyncUrls,
+    enabled: settings.subtitle.autoSync,
+    ai: !!caps?.ai,
+    subsRef,
+    getTime: () => videoRef.current?.currentTime ?? 0,
+    onApplied: (lang, a) => {
+      const applied: Alignment = { offset: a.offset, scale: a.scale, z: 99, ratio: 99, seconds: 0 };
+      syncState.current[lang] = { track: a.track, applied, last: undefined };
+    },
+  });
 
   // ── Subtitles from speech (no subtitles anywhere, or asked for) ───────────
   const genRef = useRef<SubtitleGenerator | null>(null);

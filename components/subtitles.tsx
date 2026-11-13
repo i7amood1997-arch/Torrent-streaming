@@ -36,7 +36,11 @@ export interface PlayingFile {
 export interface AutoSyncInfo {
   offsetMs: number;
   scale: number;
+  /** How it was found: the film's audio, another subtitle known to be right, or recognised words. */
+  method?: 'audio' | 'reference' | 'words';
 }
+
+export type SyncPhase = 'checking' | 'unsure';
 
 export interface SubtitleState {
   tracks: SubtitleTrackInfo[];
@@ -51,7 +55,12 @@ export interface SubtitleState {
   manual: Set<Lang>;
   /** Last automatic correction per language. */
   autoSynced: Partial<Record<Lang, AutoSyncInfo>>;
-  applyAutoSync: (lang: Lang, offsetMs: number, scale: number) => void;
+  applyAutoSync: (lang: Lang, offsetMs: number, scale: number, method?: AutoSyncInfo['method']) => void;
+  /** Up-front sync progress per language. */
+  syncPhase: Partial<Record<Lang, SyncPhase>>;
+  setSyncPhase: (lang: Lang, phase: SyncPhase | undefined) => void;
+  /** Replace a language's subtitle with a better-fitting one (not a user choice). */
+  autoSwitch: (lang: Lang, info: SubtitleTrackInfo, cues: SubtitleCue[]) => void;
   /** Undo manual timing changes: automatic sync takes over again. */
   resetSync: (lang: Lang) => void;
   loading: boolean;
@@ -109,6 +118,16 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const [manual, setManual] = useState<Set<Lang>>(new Set());
   const [autoSynced, setAutoSynced] = useState<Partial<Record<Lang, AutoSyncInfo>>>({});
   const [auto, setAuto] = useState<Partial<Record<Lang, AutoJob>>>({});
+  const [syncPhase, setPhases] = useState<Partial<Record<Lang, SyncPhase>>>({});
+  const setSyncPhase = useCallback((lang: Lang, phase: SyncPhase | undefined) => setPhases((p) => (p[lang] === phase ? p : { ...p, [lang]: phase })), []);
+  const prevIds = useRef<Partial<Record<Lang, string>>>({});
+  const keepSync = useRef<Partial<Record<Lang, string>>>({});
+  const autoSwitch = useCallback((lang: Lang, info: SubtitleTrackInfo, cues: SubtitleCue[]) => {
+    if (userPickedRef.current.has(lang)) return;
+    keepSync.current[lang] = info.id;
+    setTracks((ts) => (ts.some((t) => t.id === info.id) ? ts : [...ts, info]));
+    setLoaded((l) => ({ ...l, [lang]: { info, cues } }));
+  }, []);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
@@ -188,7 +207,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     genAbort.current.abort();
     genAbort.current = new AbortController();
     setTracks([]); setLoaded({}); setErrors([]); setOffsets({ ar: 0, en: 0 }); setScales({ ar: 1, en: 1 });
-    setManual(new Set()); setAutoSynced({}); setAuto({}); setSearched(false);
+    setManual(new Set()); setAutoSynced({}); setAuto({}); setSearched(false); setPhases({});
     embeddedRef.current = {};
     userPickedRef.current = new Set();
     translatedRef.current = new Map();
@@ -334,20 +353,26 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     setAutoSynced((a) => { const n = { ...a }; delete n[lang]; return n; });
   }, []);
 
-  const applyAutoSync = useCallback((lang: Lang, offsetMs: number, scale: number) => {
+  const applyAutoSync = useCallback((lang: Lang, offsetMs: number, scale: number, method?: AutoSyncInfo['method']) => {
     setOffsets((o) => ({ ...o, [lang]: Math.round(offsetMs) }));
     setScales((s) => ({ ...s, [lang]: scale }));
-    setAutoSynced((a) => ({ ...a, [lang]: { offsetMs: Math.round(offsetMs), scale } }));
+    setAutoSynced((a) => ({ ...a, [lang]: { offsetMs: Math.round(offsetMs), scale, method } }));
   }, []);
 
   // A different track has different timing: drop the previous automatic correction.
   const trackIds = LANGS.map((l) => loaded[l]?.info.id ?? '').join('|');
   useEffect(() => {
-    setAutoSynced((a) => {
-      const next = { ...a };
-      for (const lang of LANGS) if (a[lang] && (loaded[lang]?.info.provider === 'embedded' || loaded[lang]?.info.provider === 'generated')) delete next[lang];
-      return next;
-    });
+    for (const lang of LANGS) {
+      const id = loaded[lang]?.info.id ?? '';
+      if (prevIds.current[lang] === id) continue;
+      prevIds.current[lang] = id;
+      if (keepSync.current[lang] === id) continue; // switched by the sync engine, which sets the timing itself
+      setOffsets((o) => (o[lang] ? { ...o, [lang]: 0 } : o));
+      setScales((s) => (s[lang] !== 1 ? { ...s, [lang]: 1 } : s));
+      setAutoSynced((a) => { if (!a[lang]) return a; const n = { ...a }; delete n[lang]; return n; });
+      setManual((m) => { if (!m.has(lang)) return m; const n = new Set(m); n.delete(lang); return n; });
+      setPhases((p) => (p[lang] ? { ...p, [lang]: undefined } : p));
+    }
   }, [trackIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const timing = useCallback((lang: Lang) => {
@@ -355,7 +380,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     return { shiftMs: (embedded ? 0 : baseShiftMs) + offsets[lang], scale: embedded ? 1 : scales[lang] };
   }, [loaded, baseShiftMs, offsets, scales]);
 
-  return { tracks, loaded, offsets, scales, baseShiftMs, setBaseShift, manual, autoSynced, applyAutoSync, resetSync, timing, loading, searched, errors, auto, select, loadFile, setOffset, addEmbedded, addGenerated };
+  return { tracks, loaded, offsets, scales, baseShiftMs, setBaseShift, manual, autoSynced, applyAutoSync, syncPhase, setSyncPhase, autoSwitch, resetSync, timing, loading, searched, errors, auto, select, loadFile, setOffset, addEmbedded, addGenerated };
 }
 
 // ─── Overlay renderer ───────────────────────────────────────────────────────
@@ -440,12 +465,17 @@ function syncText(subs: SubtitleState, lang: Lang, enabled: boolean, listening: 
   const prefix = info.provider === 'translated' ? `Machine-translated from ${languageName(info.sourceLang)} · ` : '';
   if (auto) {
     const s = auto.offsetMs / 1000;
-    return { text: `${prefix}Synced to the audio (${s > 0 ? '+' : ''}${s.toFixed(1)} s${auto.scale !== 1 ? ', speed fixed' : ''})`, good: true };
+    const how = auto.method === 'reference' ? 'matched to the other subtitle' : auto.method === 'words' ? 'matched to the spoken words' : 'matched to the audio';
+    const moved = Math.abs(s) >= 0.05 || auto.scale !== 1 ? ` (${s > 0 ? '+' : ''}${s.toFixed(1)} s${auto.scale !== 1 ? ', speed fixed' : ''})` : '';
+    return { text: `${prefix}In sync · ${how}${moved}`, good: true };
   }
-  if (info.hashMatch) return { text: `${prefix}Made for this exact file · in sync`, good: true };
   if (!enabled) return { text: `${prefix}Auto-sync off` };
+  const phase = subs.syncPhase[lang];
+  if (phase === 'checking') return { text: `${prefix}Syncing to the film’s audio…` };
+  if (info.hashMatch) return { text: `${prefix}Made for this exact file · in sync`, good: true };
+  if (phase === 'unsure') return { text: `${prefix}Couldn’t confirm the timing${listening ? ' yet · still listening' : ''}` };
   if (listening) return { text: `${prefix}Checking the timing against the dialogue…` };
-  return { text: `${prefix}Auto-sync starts once the video plays with sound` };
+  return { text: `${prefix}Timing not checked yet` };
 }
 
 const COLORS = ['#ffffff', '#ffe066', '#9be9a8', '#8bd3ff', '#ffb3c7'];
