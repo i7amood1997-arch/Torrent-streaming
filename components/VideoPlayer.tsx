@@ -211,6 +211,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         if (res.status === 'error') throw new Error(res.message ?? 'Debrid error');
         if (res.status === 'ready' && res.url) {
           const preferHls = !!res.hlsUrl && (isIOS() || (res.mimeType === 'video/x-matroska' && !canPlayMkv()));
+          const mkv = res.mimeType === 'video/x-matroska' || /\.(mkv|webm)$/i.test(res.fileName ?? '');
+          if (!preferHls && mkv && !canPlayMkv()) {
+            // No iPhone-friendly (HLS) version from the Debrid service: convert the MKV in the page instead.
+            if (!mkvRemuxSupported()) throw new Error('This release is an MKV file. Playing MKV on iPhone/iPad needs iOS 17.1 or later, or choose an MP4 release.');
+            setSource({ url: res.url, alt: api.proxyUrl(res.url), engine, fileName: res.fileName, mime: 'video/x-matroska', remux: true });
+            return;
+          }
           setSource({
             url: preferHls ? res.hlsUrl! : res.url,
             alt: preferHls ? res.url : res.hlsUrl,
@@ -266,6 +273,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       if (source.remux) {
         const player = new MkvMsePlayer(video, source.url, {
           audioLanguages: ['en', 'ar', 'ja'],
+          fallbackUrl: source.alt,
           onError: (m) => { setError(m); setPhase('error'); },
           onSubtitle: (lang, label, cue) => subsRef.current?.addEmbedded(lang, label, cue),
           onTracks: (t) => setStatus(`Converting MKV · ${t.video}${t.audio ? ` + ${t.audio}` : ''}`),
@@ -335,10 +343,11 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         }
         // The browser claimed it could open this MKV but couldn't: convert it instead.
         const isMkv = /\.(mkv|webm)$/i.test(source?.fileName ?? '') || source?.mime === 'video/x-matroska';
-        if (source && isMkv && !source.remux && (source.engine === 'cloud' || source.engine === 'direct') && mkvRemuxSupported()) {
+        if (source && isMkv && !source.remux && (source.engine === 'cloud' || source.engine === 'direct' || source.engine === 'debrid') && mkvRemuxSupported()) {
           setStatus('Converting MKV for this browser…');
-          const viaRelay = source.engine === 'direct' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined;
-          setSource({ ...source, url: viaRelay ?? source.url, remux: true });
+          const viaRelay = source.engine !== 'cloud' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined;
+          // Try the link itself first; the relay copy is the fallback if the host won't share it with this page.
+          setSource({ ...source, alt: viaRelay, remux: true });
           return;
         }
         setError(
@@ -612,7 +621,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
       {/* Idle / resolving / error overlays */}
       {phase !== 'ready' && (
-        <div className="absolute inset-0 grid place-items-center bg-gradient-to-b from-ink-900 to-black p-6 text-center" onPointerUp={(e) => e.stopPropagation()}>
+        <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-gradient-to-b from-ink-900 to-black px-6 pb-4 pt-16 text-center" onPointerUp={(e) => e.stopPropagation()}>
           {phase === 'idle' && (
             <div className="max-w-sm space-y-2 text-ink-400">
               <IconPlay size={40} className="mx-auto text-ink-600" />

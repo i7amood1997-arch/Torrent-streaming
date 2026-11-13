@@ -19,6 +19,8 @@ export interface MkvPlayerOptions {
   onSubtitle?(lang: string, label: string, cue: { start: number; end: number; text: string }): void;
   onTracks?(info: { video: string; audio?: string; subtitles: number }): void;
   audioLanguages?: string[];
+  /** Used if `url` can't be read from the browser (e.g. the host doesn't allow other sites): typically the relay proxy. */
+  fallbackUrl?: string;
 }
 
 const MAX_AHEAD_S = 75; // stop downloading this far ahead of the playhead
@@ -294,8 +296,14 @@ export class MkvMsePlayer {
         if (gen !== this.gen || this.destroyed) return;
         if ((e as Error).name === 'AbortError') return;
         debug('load error', (e as Error).message);
+        // Nothing read yet and the link can't be fetched from here (CORS, refused): switch to the fallback once.
+        if (pos === 0 && this.opts.fallbackUrl && this.url !== this.opts.fallbackUrl && (e instanceof TypeError || /HTTP 40[13]/.test((e as Error).message))) {
+          debug('switching to fallback URL');
+          this.url = this.opts.fallbackUrl;
+          continue;
+        }
         if (++attempt > 6) {
-          this.fail(`Lost the connection to your relay (${(e as Error).message}).`);
+          this.fail(`Lost the connection to the video (${(e as Error).message}).`);
           return;
         }
         await sleep(800 * attempt);
