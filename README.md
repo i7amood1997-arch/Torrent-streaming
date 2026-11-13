@@ -9,10 +9,10 @@ A cross-platform Progressive Web App (iPhone, iPad, desktop) that combines **TMD
 **https://i7amood1997-arch.github.io/Torrent-streaming/** is hosted free on GitHub Pages. There's no server to set up.
 
 1. Open the link. On iPhone/iPad, tap Share → **Add to Home Screen** to use it like an app.
-2. In **Settings**, add free keys if you want them:
-   - **TMDB** (posters and the movie/show catalog): themoviedb.org → Settings → API
+2. Nothing is required. The catalog (Cinemeta) and Arabic/English subtitles (OpenSubtitles feed) work without keys. Optional keys in **Settings**:
+   - **TMDB** (alternative catalog with more metadata): themoviedb.org → Settings → API
    - **Real-Debrid / TorBox / Debrid-Link** (optional, paid): fastest, and handles every file format. Without a key, your own relay streams torrents into the app for free (MP4 releases on iPhone), with webtor.io as a fallback.
-   - **OpenSubtitles / SubDL** (Arabic and English subtitles)
+   - **OpenSubtitles / SubDL** (adds release-matched subtitle results)
 3. Choose your **Torrent sources** in Settings and start searching.
 
 Keys are saved only in your browser.
@@ -63,6 +63,7 @@ lib/server/handlers.ts        Fetch-API router, runs in the browser (direct mode
                               /api/debrid/resolve, /api/subtitles, /api/subtitles/file
                               (CORS allow-list, optional ACCESS_TOKEN)
 worker/index.ts               optional Cloudflare Worker entry
+lib/cinemeta.ts               keyless catalog (Cinemeta): search, trending, seasons, title → IMDB id
 lib/runtime.ts                browser-vs-server differences (CORS-safe headers, error messages)
 lib/bt/                       BitTorrent client for the Worker: bencode, HTTP trackers, wire protocol, streaming session
 worker/stream-do.ts           Durable Object serving /api/stream/* (torrent → HTTP video)
@@ -95,18 +96,21 @@ public/
 ```
 
 ### Search flow
-1. **Catalog mode (TMDB):** text → TMDB multi-search → title → (season/episode) → streams by IMDB id.
+1. **Catalog mode:** text → catalog search (TMDB with a key, otherwise the keyless Cinemeta catalog) → title → (season/episode) → streams by IMDB id.
 2. **Fallback:** no TMDB key, a TMDB error, or zero matches → the same text runs as a **raw torrent search**.
 3. **Direct Torrent mode** (`⌘/Ctrl + K`): free-text search across text-capable indexers.
 4. **Magnet box:** a magnet URI, 40-hex or 32-base32 info-hash, or an `.m3u8`/`.mp4` URL plays immediately. Pasting a magnet into the main search also plays it.
 
 | Indexer   | By IMDB id | By text | Notes |
 |-----------|:---:|:---:|---|
+| knaben    | — | ✅ | meta-search across many public trackers (movies, TV, anime) |
+| nyaa      | — | ✅ | anime (RSS) |
+| torrentscsv | — | ✅ | open DHT-crawled index |
 | torrentio | ✅ | — | Stremio add-on protocol; gives per-file `fileIdx` for season packs |
 | torznab   | ✅ | ✅ | Jackett / Prowlarr — reaches 1337x, TorrentGalaxy, etc. through your own instance |
 | yts       | ✅ | ✅ | movies |
 | eztv      | ✅ | — | series |
-| apibay    | — | ✅ | off by default; enable via `INDEXERS` |
+| apibay    | — | ✅ | The Pirate Bay API |
 
 Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
 
@@ -122,7 +126,7 @@ Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNA
 - Playback: native HLS on Safari, `hls.js` elsewhere, progressive HTTP for files; resume position saved per torrent.
 
 ### Subtitles
-- Searched by IMDB id (or TMDB id / title) with season/episode, ranked by similarity to the playing release name; the best **Arabic** and **English** tracks load automatically.
+- Searched by IMDB id with season/episode through the keyless OpenSubtitles feed (the Stremio add-on); with an OpenSubtitles or SubDL key, results are also ranked by similarity to the playing release name. The best **Arabic** and **English** tracks load automatically. For raw search results without an IMDB id, the title is identified through the catalog first.
 - Arabic is decoded from Windows-1256 when not UTF-8, and rendered `dir="rtl"` with Cairo/Tajawal.
 - Dual-language display, per-language **sync offset** (±10 s slider, ±100 ms buttons, `[`/`]` keys), size, background opacity, colour and vertical position, plus local `.srt`/`.vtt` upload.
 - iPhone system fullscreen can't show HTML overlays, so the cues (with the offset applied) are also exposed as native `<track>`s that switch on in fullscreen.

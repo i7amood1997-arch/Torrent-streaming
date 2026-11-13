@@ -15,6 +15,8 @@ export interface ParsedRelease {
   audio: string[]; // AAC, AC3, DDP, DTS-HD, TrueHD, Atmos
   channels?: string; // 2.0, 5.1, 7.1
   releaseGroup?: string;
+  /** File container when it can be told from the name (mp4, mkv, avi…). iPhone Safari only plays mp4/m4v/mov. */
+  container?: string;
   season?: number;
   episode?: number;
   year?: number;
@@ -37,6 +39,8 @@ export interface TorrentResult extends ParsedRelease {
   /** The upstream tracker/site name when known (1337x, TGx, YTS...). */
   tracker?: string;
   publishedAt?: string;
+  /** IMDB id when the indexer knows it (lets subtitles work for raw search results). */
+  imdbId?: string;
 }
 
 export interface IndexerError {
@@ -112,6 +116,8 @@ export interface TmdbItem {
   backdropPath?: string | null;
   rating?: number;
   imdbId?: string;
+  /** Where the item came from. With 'cinemeta', `id` is derived from the IMDB id, not a TMDB id. */
+  source?: 'tmdb' | 'cinemeta';
 }
 
 export interface TmdbDetails extends TmdbItem {

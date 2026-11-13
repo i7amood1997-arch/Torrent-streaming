@@ -96,7 +96,9 @@ export function parseRelease(rawTitle: string): ParsedRelease {
   const y = t.match(/\b(19[2-9]\d|20[0-4]\d)\b/);
   const year = y ? +y[1] : undefined;
 
-  return { quality, resolution, hdr, remux, source, videoCodec, audio, channels, releaseGroup, season, episode, year };
+  const container = rawTitle.match(/\.(mp4|m4v|mov|mkv|avi|webm|wmv|ts)$/i)?.[1].toLowerCase();
+
+  return { quality, resolution, hdr, remux, source, videoCodec, audio, channels, releaseGroup, container, season, episode, year };
 }
 
 const UNITS: Record<string, number> = { b: 1, kb: 1024, mb: 1024 ** 2, gb: 1024 ** 3, tb: 1024 ** 4 };
@@ -129,4 +131,15 @@ export function qualityLabel(q: QualityTier): string {
     case 'SD': return 'SD';
     default: return 'Unknown';
   }
+}
+
+/**
+ * Best-effort title from a release name:
+ *   "The.Bear.S03E04.1080p.WEB-DL-NTb" → "The Bear"
+ *   "[SubsPlease] Frieren - 12 (1080p) [ABCD1234].mkv" → "Frieren"
+ */
+export function titleFromRelease(name: string): string {
+  const cleaned = norm(name.replace(/^(\s*\[[^\]]*\])+/g, '').replace(/[()\[\]]/g, ' '));
+  const cut = cleaned.search(/\b(19[2-9]\d|20[0-4]\d|s\d{1,2}\s?e\d{1,3}|s\d{1,2}|season \d+|\d{1,2}x\d{2,3}|2160p|1080p|720p|480p|4k|uhd|bluray|web ?dl|webrip|hdtv)\b| - \d{1,4}\b/i);
+  return (cut > 0 ? cleaned.slice(0, cut) : cleaned).replace(/[-–\s]+$/, '').trim();
 }

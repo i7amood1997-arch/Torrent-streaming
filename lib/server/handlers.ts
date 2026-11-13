@@ -18,6 +18,7 @@ import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
 import { createTmdbClient, TmdbError } from '../tmdb';
 import { ALL_INDEXERS, configFromEnv, searchTorrents, type IndexerId } from '../torrent-indexer';
+import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
 import type { DebridProvider, SearchQuery } from '../types';
@@ -126,7 +127,9 @@ async function search(req: Request, env: Env, sp: URLSearchParams) {
 
 async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
   try {
-    const client = createTmdbClient({ apiKey: keyFrom(req, 'x-tmdb-key', env.TMDB_API_KEY), language: sp.get('lang') || 'en-US' });
+    const apiKey = keyFrom(req, 'x-tmdb-key', env.TMDB_API_KEY);
+    // No TMDB key → the keyless Cinemeta catalog (same response shapes).
+    const client = apiKey ? createTmdbClient({ apiKey, language: sp.get('lang') || 'en-US' }) : cinemeta;
     const id = intParam(sp.get('id'));
     const type = sp.get('type') === 'series' ? 'series' : 'movie';
     switch (sp.get('action')) {

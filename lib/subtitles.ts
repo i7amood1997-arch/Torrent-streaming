@@ -3,6 +3,8 @@
  * Search by IMDB id / TMDB id / release title, Arabic + English first.
  */
 import { unzipSync } from 'fflate';
+import { cinemeta } from './cinemeta';
+import { parseRelease, titleFromRelease } from './release-parser';
 import { describeError, serverOnlyHeaders } from './runtime';
 import { decodeSubtitleBytes, parseSubtitles, releaseSimilarity } from './subtitle-parser';
 import type { SubtitleCue, SubtitleTrackInfo } from './types';
@@ -31,7 +33,16 @@ const DEFAULT_UA = 'TorrentStreamingPWA v0.1';
 const SUBDL_API = 'https://api.subdl.com/api/v1/subtitles';
 const SUBDL_DL = 'https://dl.subdl.com';
 
-type Token = { p: 'opensubtitles'; fileId: number; lang: string } | { p: 'subdl'; url: string; lang: string; season?: number; episode?: number };
+type Token =
+  | { p: 'opensubtitles'; fileId: number; lang: string }
+  | { p: 'subdl'; url: string; lang: string; season?: number; episode?: number }
+  | { p: 'stremio'; url: string; lang: string };
+
+/** Keyless OpenSubtitles feed published as a Stremio add-on (lookup by IMDB id). */
+const STREMIO_SUBS = 'https://opensubtitles-v3.strem.io';
+const isStremioUrl = (u: string) => {
+  try { const x = new URL(u); return x.protocol === 'https:' && (x.hostname === 'strem.io' || x.hostname.endsWith('.strem.io')); } catch { return false; }
+};
 
 // base64url without Node's Buffer (runs in Workers and browsers)
 const b64urlEncode = (s: string) => {
@@ -49,6 +60,7 @@ export function decodeToken(s: string): Token {
   const t = JSON.parse(b64urlDecode(s));
   if (t?.p === 'opensubtitles' && Number.isInteger(t.fileId)) return t;
   if (t?.p === 'subdl' && typeof t.url === 'string' && /^\/subtitle\/[\w.-]+\.zip$/.test(t.url)) return t;
+  if (t?.p === 'stremio' && typeof t.url === 'string' && isStremioUrl(t.url)) return t;
   throw new Error('Invalid subtitle token');
 }
 
@@ -131,8 +143,49 @@ async function searchSubDL(q: SubtitleSearch, key: string): Promise<SubtitleTrac
   });
 }
 
+const LANG3: Record<string, string> = { ara: 'ar', eng: 'en', ar: 'ar', en: 'en' };
+
+async function searchStremio(q: SubtitleSearch): Promise<SubtitleTrackInfo[]> {
+  if (!q.imdbId) return [];
+  const series = q.type === 'series' && q.season != null && q.episode != null;
+  const id = series ? `${q.imdbId}:${q.season}:${q.episode}` : q.imdbId;
+  const res = await fetch(`${STREMIO_SUBS}/subtitles/${series ? 'series' : 'movie'}/${id}.json`, { signal: AbortSignal.timeout(9000) });
+  if (!res.ok) throw new Error(`OpenSubtitles feed ${res.status}`);
+  const data = (await res.json()) as { subtitles?: { id?: string; url?: string; lang?: string }[] };
+  const wanted = q.langs ?? ['ar', 'en'];
+  const perLang: Record<string, number> = {};
+  const out: SubtitleTrackInfo[] = [];
+  for (const s of data.subtitles ?? []) {
+    const lang = LANG3[(s.lang ?? '').toLowerCase()];
+    if (!lang || !wanted.includes(lang) || !s.url || !isStremioUrl(s.url)) continue;
+    const n = (perLang[lang] = (perLang[lang] ?? 0) + 1);
+    if (n > 8) continue; // the feed is ordered best-first; a handful per language is plenty
+    out.push({
+      id: `st-${s.id ?? `${lang}${n}`}`,
+      provider: 'opensubtitles',
+      lang,
+      label: `${lang.toUpperCase()} · OpenSubtitles #${n}`,
+      releaseName: `OpenSubtitles #${n}`,
+      // No release names in this feed: keep the feed's own order via a tiny descending score.
+      score: 0.01 / n,
+      token: encodeToken({ p: 'stremio', url: s.url, lang }),
+    });
+  }
+  return out;
+}
+
 export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
-  const jobs: [string, Promise<SubtitleTrackInfo[]>][] = [];
+  // No IMDB id (raw torrent result)? Look the title up in the keyless catalog.
+  if (!q.imdbId && !q.tmdbId) {
+    const parsed = q.releaseName ? parseRelease(q.releaseName) : undefined;
+    const title = q.releaseName ? titleFromRelease(q.releaseName) : q.query;
+    const type = q.type ?? (parsed?.season != null ? 'series' : 'movie');
+    if (title) {
+      const imdbId = await cinemeta.findImdbId(title, type, type === 'movie' ? parsed?.year : undefined).catch(() => undefined);
+      if (imdbId) q = { ...q, imdbId, type, season: q.season ?? parsed?.season, episode: q.episode ?? parsed?.episode };
+    }
+  }
+  const jobs: [string, Promise<SubtitleTrackInfo[]>][] = [['opensubtitles-feed', searchStremio(q)]];
   if (keys.openSubtitles) jobs.push(['opensubtitles', searchOpenSubtitles(q, keys.openSubtitles, keys.userAgent || DEFAULT_UA)]);
   if (keys.subdl) jobs.push(['subdl', searchSubDL(q, keys.subdl)]);
   const settled = await Promise.allSettled(jobs.map(([, p]) => p));
@@ -142,7 +195,7 @@ export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
     if (s.status === 'fulfilled') tracks.push(...s.value);
     else errors.push({ provider: jobs[i][0], message: describeError(s.reason) });
   });
-  if (!jobs.length) errors.push({ provider: 'config', message: 'No subtitle provider key configured (OpenSubtitles or SubDL).' });
+  if (!tracks.length && !errors.length) errors.push({ provider: 'subtitles', message: q.imdbId ? 'No Arabic or English subtitles found for this title.' : 'Could not identify this title to look up subtitles.' });
   tracks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.downloads ?? 0) - (a.downloads ?? 0));
   return { tracks, errors };
 }
@@ -152,7 +205,11 @@ export async function fetchSubtitleCues(tokenStr: string, keys: SubtitleKeys): P
   const token = decodeToken(tokenStr);
   let bytes: Uint8Array;
 
-  if (token.p === 'opensubtitles') {
+  if (token.p === 'stremio') {
+    const res = await fetch(token.url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`Subtitle download ${res.status}`);
+    bytes = new Uint8Array(await res.arrayBuffer());
+  } else if (token.p === 'opensubtitles') {
     if (!keys.openSubtitles) throw new Error('OpenSubtitles key missing');
     const dl = await fetch(`${OS_API}/download`, {
       method: 'POST',

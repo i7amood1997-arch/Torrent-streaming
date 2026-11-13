@@ -12,10 +12,13 @@ import type { DebridProvider } from '@/lib/types';
 const DEPLOY_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/i7amood1997-arch/Torrent-streaming';
 
 const SOURCES = [
-  { id: 'torrentio', name: 'Torrentio', help: 'Best for Catalog mode — streams by IMDB id (movies & episodes).' },
-  { id: 'yts', name: 'YTS', help: 'Movies, small MP4 encodes (good for iPhone).' },
+  { id: 'torrentio', name: 'Torrentio', help: 'Catalog mode: many trackers at once for movies, shows and anime.' },
+  { id: 'knaben', name: 'Knaben', help: 'Search engine across many public trackers (movies, TV, anime).' },
+  { id: 'yts', name: 'YTS', help: 'Movies in MP4 — the format iPhone plays directly.' },
   { id: 'eztv', name: 'EZTV', help: 'TV episodes (Catalog mode).' },
-  { id: 'apibay', name: 'The Pirate Bay API', help: 'Raw text search of all video.' },
+  { id: 'nyaa', name: 'Nyaa', help: 'Anime.' },
+  { id: 'apibay', name: 'The Pirate Bay API', help: 'Text search of all video.' },
+  { id: 'torrentscsv', name: 'Torrents-CSV', help: 'Open index built from the DHT network.' },
   { id: 'torznab', name: 'Jackett / Prowlarr', help: 'Your own indexer manager (Torznab).' },
 ];
 
@@ -77,13 +80,13 @@ export function SettingsPanel() {
 
       <section className="card space-y-4 p-4">
         <h3 className="font-semibold text-white">Metadata & subtitles</h3>
-        <Field label="TMDB API key / read token" hint={<>themoviedb.org → Settings → API<ServerBadge on={caps?.tmdb} /></>}>
+        <Field label="TMDB API key / read token (optional)" hint={<>Not required: the catalog works without it. themoviedb.org → Settings → API<ServerBadge on={caps?.tmdb} /></>}>
           <input {...secret} value={settings.tmdbKey} onChange={(e) => updateSettings({ tmdbKey: e.target.value.trim() })} />
         </Field>
-        <Field label="OpenSubtitles API key" hint={<>opensubtitles.com/consumers<ServerBadge on={caps?.subtitles.opensubtitles} /></>}>
+        <Field label="OpenSubtitles API key (optional)" hint={<>Not required: Arabic and English subtitles load without it. A key adds release-matched results. opensubtitles.com/consumers<ServerBadge on={caps?.subtitles.opensubtitles} /></>}>
           <input {...secret} value={settings.openSubtitlesKey} onChange={(e) => updateSettings({ openSubtitlesKey: e.target.value.trim() })} />
         </Field>
-        <Field label="SubDL API key" hint={<>subdl.com/panel/api<ServerBadge on={caps?.subtitles.subdl} /></>}>
+        <Field label="SubDL API key (optional)" hint={<>subdl.com/panel/api<ServerBadge on={caps?.subtitles.subdl} /></>}>
           <input {...secret} value={settings.subdlKey} onChange={(e) => updateSettings({ subdlKey: e.target.value.trim() })} />
         </Field>
       </section>

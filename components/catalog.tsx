@@ -17,7 +17,9 @@ export function Catalog({ active }: { active: boolean }) {
   const mode = useApp((s) => s.mode);
   const caps = useApp((s) => s.caps);
   const userKey = useApp((s) => s.settings.tmdbKey);
-  const tmdbAvailable = !!userKey || !!caps?.tmdb;
+  // Without a TMDB key the backend uses the keyless Cinemeta catalog, so the catalog is always available.
+  const tmdbAvailable = !!caps && !caps.offline;
+  void userKey;
   const query = mode === 'catalog' ? submitted : '';
 
   const [items, setItems] = useState<TmdbItem[]>([]);
@@ -58,7 +60,7 @@ export function Catalog({ active }: { active: boolean }) {
     return (
       <div className="space-y-3">
         <div className="card border-accent/30 bg-accent/5 p-3 text-sm text-ink-200">
-          {tmdbAvailable ? <>No catalog match for “{fallback}”.</> : <>TMDB isn’t configured.</>} Showing <b>raw torrent results</b> instead.
+          No catalog match for “{fallback}”. Showing <b>raw torrent results</b> instead.
         </div>
         <TorrentSearch query={fallback} />
       </div>
@@ -69,11 +71,6 @@ export function Catalog({ active }: { active: boolean }) {
     <div className="space-y-4">
       <h2 className="text-lg font-semibold text-white">{query ? `Results for “${query}”` : 'Trending this week'}</h2>
       {error && <p className="text-sm text-red-300">{error}</p>}
-      {!tmdbAvailable && !query && (
-        <div className="card p-4 text-sm text-ink-400">
-          Add a TMDB API key in Settings (or <code>TMDB_API_KEY</code> on the server) for posters & metadata — or switch to <b>Direct Torrent</b> search.
-        </div>
-      )}
       <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-4 2xl:grid-cols-6">
         {loading && !items.length
           ? Array.from({ length: 12 }, (_, i) => <li key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-ink-800" />)
@@ -174,7 +171,7 @@ function TitleDetail({ item, onBack }: { item: TmdbItem; onBack: () => void }) {
       header={header}
       // No IMDB id → id-based indexers can't help; use the title as a raw query.
       query={details.imdbId ? undefined : `${details.title}${item.type === 'movie' && details.year ? ` ${details.year}` : season != null ? ` S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}` : ''}`}
-      context={{ imdbId: details.imdbId, tmdbId: details.id, type: item.type, season: item.type === 'series' ? season : undefined, episode: item.type === 'series' ? episode : undefined, title: details.title, year: details.year }}
+      context={{ imdbId: details.imdbId, tmdbId: details.source === 'tmdb' ? details.id : undefined, type: item.type, season: item.type === 'series' ? season : undefined, episode: item.type === 'series' ? episode : undefined, title: details.title, year: details.year }}
     />
   );
 }

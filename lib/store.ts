@@ -97,7 +97,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
-  indexers: ['torrentio', 'yts', 'eztv'],
+  indexers: ['torrentio', 'knaben', 'yts', 'eztv', 'nyaa', 'apibay', 'torrentscsv'],
   publicRelays: true,
   engine: 'auto',
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true },
@@ -127,7 +127,14 @@ export const useApp = create<AppState>()(
     }),
     {
       name: 'ts-settings',
-      version: 1,
+      version: 2,
+      // v2 added sources (Knaben, Nyaa, Torrents-CSV) and made the Pirate Bay API default: switch them on once for existing users.
+      migrate: (persisted: any, version) => {
+        if (version < 2 && Array.isArray(persisted?.settings?.indexers)) {
+          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'knaben', 'nyaa', 'apibay', 'torrentscsv'])];
+        }
+        return persisted;
+      },
       skipHydration: true, // rehydrated in a client effect to avoid SSR mismatch
       storage: createJSONStorage(() => localStorage),
       partialize: (s) => ({ settings: s.settings, mode: s.mode }),

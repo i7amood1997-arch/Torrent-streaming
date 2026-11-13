@@ -95,7 +95,7 @@ export function TorrentSearch({ query, context, header }: Props) {
     set({ qualities: filters.qualities.includes(q) ? filters.qualities.filter((x) => x !== q) : [...filters.qualities, q] });
 
   const onPlay = (r: TorrentResult) =>
-    play({ kind: 'torrent', result: r, title: context?.title ?? r.title, imdbId: context?.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode });
+    play({ kind: 'torrent', result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode });
 
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
@@ -178,6 +178,7 @@ export function TorrentSearch({ query, context, header }: Props) {
               <div className="rr-main min-w-0">
                 <div className="mb-1.5 flex min-w-0 items-center gap-2">
                   <QualityBadge q={r.quality} />
+                  <ContainerBadge r={r} />
                   <span className="truncate text-xs text-ink-400">{r.tracker ?? r.indexer}</span>
                 </div>
                 <ResultTitle r={r} />
@@ -210,6 +211,19 @@ export function TorrentSearch({ query, context, header }: Props) {
         </div>
       )}
     </section>
+  );
+}
+
+/** File type, when known. MP4 plays on iPhone via the relay; MKV needs Debrid or the online player there. */
+function ContainerBadge({ r }: { r: TorrentResult }) {
+  const c = r.container ?? r.fileName?.split('.').pop()?.toLowerCase();
+  if (!c || !['mp4', 'm4v', 'mov', 'mkv', 'avi', 'webm'].includes(c)) return null;
+  const easy = ['mp4', 'm4v', 'mov'].includes(c);
+  return (
+    <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${easy ? 'bg-hd/15 text-hd' : 'bg-ink-700 text-ink-400'}`}
+      title={easy ? 'Plays on every device, including iPhone' : 'iPhone Safari cannot play this format directly'}>
+      {c}
+    </span>
   );
 }
 

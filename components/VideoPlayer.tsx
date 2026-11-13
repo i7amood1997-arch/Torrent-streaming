@@ -314,13 +314,19 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const doc = document as any;
     if (doc.fullscreenElement || doc.webkitFullscreenElement) {
       (doc.exitFullscreen ?? doc.webkitExitFullscreen)?.call(doc);
-    } else if (el?.requestFullscreen) {
-      el.requestFullscreen().catch(() => v?.webkitEnterFullscreen?.());
-    } else if (el?.webkitRequestFullscreen) {
-      el.webkitRequestFullscreen();
-    } else {
-      v?.webkitEnterFullscreen?.(); // iPhone: system player, native <track> fallback kicks in
+      return;
     }
+    // iPhone has no element fullscreen: only the <video> itself can go fullscreen (system player,
+    // where the native <track> subtitle fallback takes over). It must be called synchronously in
+    // the tap handler — after a rejected requestFullscreen() promise the tap no longer counts.
+    const elementFs = (doc.fullscreenEnabled ?? doc.webkitFullscreenEnabled) && !/iPhone|iPod/.test(navigator.userAgent);
+    if (!elementFs && v?.webkitEnterFullscreen) {
+      if (v.readyState >= 1) v.webkitEnterFullscreen();
+      return;
+    }
+    if (el?.requestFullscreen) el.requestFullscreen().catch(() => undefined);
+    else if (el?.webkitRequestFullscreen) el.webkitRequestFullscreen();
+    else if (v?.readyState >= 1) v?.webkitEnterFullscreen?.();
   }, []);
 
   // ── Native text-track fallback (iPhone system fullscreen / AirPlay) ───────

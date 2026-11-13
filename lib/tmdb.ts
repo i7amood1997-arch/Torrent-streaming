@@ -94,9 +94,11 @@ function toItem(r: any): TmdbItem {
     posterPath: r.poster_path,
     backdropPath: r.backdrop_path,
     rating: r.vote_average,
+    source: 'tmdb',
   };
 }
 
 export function posterUrl(path?: string | null, size: 'w185' | 'w342' | 'w500' | 'original' = 'w342') {
-  return path ? `${TMDB_IMG}/${size}${path}` : undefined;
+  if (!path) return undefined;
+  return /^https?:\/\//.test(path) ? path : `${TMDB_IMG}/${size}${path}`; // Cinemeta gives full URLs
 }

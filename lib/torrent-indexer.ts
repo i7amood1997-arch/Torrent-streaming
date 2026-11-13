@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -37,6 +37,9 @@ export interface IndexerConfig {
   ytsUrls: string[];
   eztvUrl: string;
   apibayUrl: string;
+  knabenUrl: string;
+  torrentsCsvUrl: string;
+  nyaaUrl: string;
   timeoutMs: number;
   /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
   publicRelays?: boolean;
@@ -45,7 +48,7 @@ export interface IndexerConfig {
 }
 
 export function configFromEnv(env: Record<string, string | undefined>): IndexerConfig {
-  const enabled = (env.INDEXERS ?? 'torrentio,torznab,yts,eztv')
+  const enabled = (env.INDEXERS ?? 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter((s): s is IndexerId => (ALL_INDEXERS as string[]).includes(s));
@@ -59,6 +62,9 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     ytsUrls: [...new Set([...(env.YTS_URL ?? '').split(','), ...YTS_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
     eztvUrl: trimSlash(env.EZTV_URL || 'https://eztvx.to'),
     apibayUrl: trimSlash(env.APIBAY_URL || 'https://apibay.org'),
+    knabenUrl: trimSlash(env.KNABEN_URL || 'https://api.knaben.org'),
+    torrentsCsvUrl: trimSlash(env.TORRENTS_CSV_URL || 'https://torrents-csv.com'),
+    nyaaUrl: trimSlash(env.NYAA_URL || 'https://nyaa.si'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 9000),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
@@ -282,8 +288,7 @@ const yts: IndexerAdapter = {
         if (t.quality === '3D') continue;
         const codec = t.video_codec === 'x265' ? 'x265' : 'x264';
         const ch = t.audio_channels ? ` ${t.audio_channels}` : '';
-        out.push(
-          makeResult({
+        const r = makeResult({
             title: `${m.title_long} ${t.quality} ${t.type === 'bluray' ? 'BluRay' : 'WEBRip'} ${codec} AAC${ch}-YTS`,
             infoHash: t.hash,
             sizeBytes: t.size_bytes,
@@ -291,9 +296,11 @@ const yts: IndexerAdapter = {
             leechers: t.peers,
             indexer: 'yts',
             tracker: 'YTS',
+            imdbId: m.imdb_code,
             publishedAt: t.date_uploaded,
-          }),
-        );
+        });
+        r.container = 'mp4'; // YTS encodes are always MP4 — playable on iPhone
+        out.push(r);
       }
     }
     return out;
@@ -322,6 +329,7 @@ const eztv: IndexerAdapter = {
           leechers: Math.max(0, t.peers - t.seeds),
           indexer: 'eztv',
           tracker: 'EZTV',
+          imdbId: q.imdbId,
           publishedAt: t.date_released_unix ? new Date(t.date_released_unix * 1000).toISOString() : undefined,
         }),
       );
@@ -335,7 +343,7 @@ const apibay: IndexerAdapter = {
   supports: (q) => !!textQueryFor(q),
   async search(q, { config, fetchJson }) {
     // cat 200 = Video
-    const data = await fetchJson<{ id: string; name: string; info_hash: string; seeders: string; leechers: string; size: string; added: string }[]>(
+    const data = await fetchJson<{ id: string; name: string; info_hash: string; seeders: string; leechers: string; size: string; added: string; imdb?: string }[]>(
       `${config.apibayUrl}/q.php?cat=200&q=${encodeURIComponent(textQueryFor(q)!)}`,
     );
     return data
@@ -349,13 +357,110 @@ const apibay: IndexerAdapter = {
           leechers: Number(t.leechers) || 0,
           indexer: 'apibay',
           tracker: 'TPB',
+          imdbId: t.imdb && /^tt\d+$/.test(t.imdb) ? t.imdb : undefined,
           publishedAt: t.added ? new Date(Number(t.added) * 1000).toISOString() : undefined,
         }),
       );
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay };
+// ─── Knaben (meta-search across many public trackers) ──────────────────────
+
+interface KnabenHit { title?: string; hash?: string; magnetUrl?: string; bytes?: number; seeders?: number; peers?: number; tracker?: string; date?: string }
+
+const knaben: IndexerAdapter = {
+  id: 'knaben',
+  supports: (q) => !!textQueryFor(q),
+  async search(q, { config, fetchJson }) {
+    const data = await fetchJson<{ hits?: KnabenHit[] }>(`${config.knabenUrl}/v1`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        search_type: '100%', search_field: 'title', query: textQueryFor(q), order_by: 'seeders', order_direction: 'desc',
+        // 2000000 movies, 3000000 TV, 6000000 anime
+        categories: q.type === 'movie' ? [2000000, 6000000] : q.type === 'series' ? [3000000, 6000000] : [2000000, 3000000, 6000000],
+        from: 0, size: 100, hide_unsafe: true, hide_xxx: true,
+      }),
+    });
+    return (data.hits ?? []).flatMap((h) => {
+      const infoHash = (h.hash || (h.magnetUrl ? parseMagnet(h.magnetUrl)?.infoHash : '') || '').toLowerCase();
+      if (!/^[a-f0-9]{40}$/.test(infoHash) || !h.title) return [];
+      const seeders = Number(h.seeders) || 0;
+      return [makeResult({
+        title: h.title,
+        infoHash,
+        magnet: h.magnetUrl ? parseMagnet(h.magnetUrl)?.magnet : undefined,
+        sizeBytes: Number(h.bytes) || undefined,
+        seeders,
+        leechers: Math.max(0, (Number(h.peers) || 0) - seeders),
+        indexer: 'knaben',
+        tracker: h.tracker,
+        publishedAt: h.date,
+      })];
+    });
+  },
+};
+
+// ─── Torrents-CSV (open DHT-crawled index) ──────────────────────────────────
+
+const torrentscsv: IndexerAdapter = {
+  id: 'torrentscsv',
+  supports: (q) => !!textQueryFor(q),
+  async search(q, { config, fetchJson }) {
+    const data = await fetchJson<{ torrents?: { infohash: string; name: string; size_bytes: number; seeders: number; leechers: number; created_unix?: number }[] }>(
+      `${config.torrentsCsvUrl}/service/search?size=50&q=${encodeURIComponent(textQueryFor(q)!)}`,
+    );
+    return (data.torrents ?? [])
+      .filter((t) => /^[a-f0-9]{40}$/i.test(t.infohash) && /\b(2160p|1080p|720p|480p|x26[45]|hevc|bluray|web|hdtv|dvdrip)\b/i.test(t.name)) // index covers all file types: keep video releases
+      .map((t) =>
+        makeResult({
+          title: t.name,
+          infoHash: t.infohash,
+          sizeBytes: Number(t.size_bytes) || undefined,
+          seeders: Number(t.seeders) || 0,
+          leechers: Number(t.leechers) || 0,
+          indexer: 'torrentscsv',
+          tracker: 'Torrents-CSV',
+          publishedAt: t.created_unix ? new Date(t.created_unix * 1000).toISOString() : undefined,
+        }),
+      );
+  },
+};
+
+// ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────
+
+/** Parse a Nyaa RSS feed (nyaa:infoHash / nyaa:seeders / nyaa:size extensions). */
+export function parseNyaaRss(body: string): TorrentResult[] {
+  const items: any[] = xml.parse(body)?.rss?.channel?.item ?? [];
+  return items.flatMap((it) => {
+    const infoHash = String(it['nyaa:infoHash'] ?? '').toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(infoHash)) return [];
+    return [makeResult({
+      title: String(it.title ?? infoHash),
+      infoHash,
+      sizeBytes: parseSize(String(it['nyaa:size'] ?? '')),
+      seeders: Number(it['nyaa:seeders']) || 0,
+      leechers: Number(it['nyaa:leechers']) || 0,
+      indexer: 'nyaa',
+      tracker: 'Nyaa',
+      publishedAt: it.pubDate,
+    })];
+  });
+}
+
+const nyaa: IndexerAdapter = {
+  id: 'nyaa',
+  // Anime lives under "series"; plain movie lookups by id would only add noise.
+  supports: (q) => !!textQueryFor(q) && !(q.imdbId && q.type === 'movie'),
+  async search(q, { config, fetchText }) {
+    // Anime releases are named "Title - 07", not "Title S01E07".
+    const term = q.q?.trim() || (q.title && q.episode != null ? `${q.title} ${String(q.episode).padStart(2, '0')}` : textQueryFor(q)!);
+    // c=1_2: Anime, English-translated. f=0: no filter.
+    return parseNyaaRss(await fetchText(`${config.nyaaUrl}/?page=rss&c=1_2&f=0&q=${encodeURIComponent(term)}`));
+  },
+};
+
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
@@ -421,7 +526,7 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
     // public relays. Torznab uses fetchText: its URL carries an API key and must never be relayed.
     fetchJson: async (url, init) => {
       const direct = async () => (await fetchWithTimeout(url, init)).json();
-      return isBrowser && config.publicRelays ? fetchJsonWithRelays(url, direct, { timeoutMs: config.timeoutMs }) : direct();
+      return isBrowser && config.publicRelays && !init?.method ? fetchJsonWithRelays(url, direct, { timeoutMs: config.timeoutMs }) : direct();
     },
     fetchText: async (url, init) => (await fetchWithTimeout(url, init)).text(),
   };
