@@ -21,7 +21,7 @@ export function apiBase(): string {
  * user's own Settings choose which ones run. Keys still come from request headers.
  */
 export const directEnv = (): Record<string, string> => ({
-  INDEXERS: 'torrentio,torznab,yts,eztv,apibay',
+  INDEXERS: 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons',
   ALLOW_CLIENT_TORZNAB: 'true',
   USE_PUBLIC_RELAYS: String(useApp.getState().settings.publicRelays),
 });
@@ -50,6 +50,7 @@ function headers(): Record<string, string> {
   if (dk) h['x-debrid-key'] = dk;
   if (s.openSubtitlesKey) h['x-opensubtitles-key'] = s.openSubtitlesKey;
   if (s.subdlKey) h['x-subdl-key'] = s.subdlKey;
+  if (s.stremioAddons?.trim()) h['x-stremio-addons'] = s.stremioAddons.trim().split(/\s+/).join(' ');
   if (s.torznabUrl) {
     h['x-torznab-url'] = s.torznabUrl;
     if (s.torznabKey) h['x-torznab-key'] = s.torznabKey;

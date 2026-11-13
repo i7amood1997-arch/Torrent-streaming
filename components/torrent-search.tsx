@@ -45,7 +45,7 @@ export const QUALITY_STYLES: Record<QualityTier, string> = {
   Unknown: 'border-ink-600 bg-ink-800 text-ink-400',
 };
 
-const SOURCE_NAMES: Record<string, string> = { torrentio: 'Torrentio', knaben: 'Knaben', yts: 'YTS', eztv: 'EZTV', nyaa: 'Nyaa', apibay: 'Pirate Bay', torrentscsv: 'Torrents-CSV', torznab: 'Jackett/Prowlarr' };
+const SOURCE_NAMES: Record<string, string> = { animetosho: 'AnimeTosho', mediafusion: 'MediaFusion', addons: 'Your add-ons', torrentio: 'Torrentio', knaben: 'Knaben', yts: 'YTS', eztv: 'EZTV', nyaa: 'Nyaa', apibay: 'Pirate Bay', torrentscsv: 'Torrents-CSV', torznab: 'Jackett/Prowlarr' };
 const sourceName = (ix: string) => SOURCE_NAMES[ix] ?? ix;
 
 export function QualityBadge({ q }: { q: QualityTier }) {

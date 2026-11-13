@@ -17,6 +17,8 @@ const SOURCES = [
   { id: 'yts', name: 'YTS', help: 'Movies in MP4 — the format iPhone plays directly.' },
   { id: 'eztv', name: 'EZTV', help: 'TV episodes (Catalog mode).' },
   { id: 'nyaa', name: 'Nyaa', help: 'Anime.' },
+  { id: 'animetosho', name: 'AnimeTosho', help: 'Anime from Nyaa, TokyoTosho and AniDex, with seeders.' },
+  { id: 'mediafusion', name: 'MediaFusion', help: 'Big aggregator (Prowlarr, Zilean, Torrentio…). Its public server may hide torrents from free users.' },
   { id: 'apibay', name: 'The Pirate Bay API', help: 'Text search of all video.' },
   { id: 'torrentscsv', name: 'Torrents-CSV', help: 'Open index built from the DHT network.' },
   { id: 'torznab', name: 'Jackett / Prowlarr', help: 'Your own indexer manager (Torznab).' },
@@ -109,6 +111,10 @@ export function SettingsPanel() {
             );
           })}
         </div>
+        <Field label="Your own Stremio add-ons (optional)" hint="One manifest link per line, e.g. a configured AIOStreams, Comet, TorrentClaw or MediaFusion. Results with torrent links are added to every Catalog search.">
+          <textarea className="input min-h-[72px] font-mono text-xs" spellCheck={false} placeholder="https://…/manifest.json" value={settings.stremioAddons}
+            onChange={(e) => updateSettings({ stremioAddons: e.target.value })} />
+        </Field>
         {caps?.direct && (
           <label className="flex items-start gap-3 rounded-lg border border-ink-700 p-3">
             <input type="checkbox" className="mt-1" checked={settings.publicRelays} onChange={(e) => updateSettings({ publicRelays: e.target.checked })} />

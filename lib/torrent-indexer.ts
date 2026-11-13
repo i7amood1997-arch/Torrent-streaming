@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -35,7 +35,12 @@ export interface IndexerConfig {
   torznabApiKey?: string;
   /** YTS mirrors, tried in order; the one that answers is remembered. */
   ytsUrls: string[];
-  eztvUrl: string;
+  /** EZTV mirrors, tried in order; the one that answers is remembered. */
+  eztvUrls: string[];
+  animetoshoUrl: string;
+  mediafusionUrl: string;
+  /** Extra Stremio add-ons (manifest URLs) whose torrent streams are included. */
+  stremioAddons: string[];
   apibayUrl: string;
   knabenUrl: string;
   torrentsCsvUrl: string;
@@ -48,7 +53,7 @@ export interface IndexerConfig {
 }
 
 export function configFromEnv(env: Record<string, string | undefined>): IndexerConfig {
-  const enabled = (env.INDEXERS ?? 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa')
+  const enabled = (env.INDEXERS ?? ALL_INDEXERS.join(','))
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter((s): s is IndexerId => (ALL_INDEXERS as string[]).includes(s));
@@ -60,7 +65,10 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     torznabApiKey: env.TORZNAB_API_KEY || undefined,
     // YTS changes domain often (yts.mx died in 2025). Configured URL(s) first, then known mirrors.
     ytsUrls: [...new Set([...(env.YTS_URL ?? '').split(','), ...YTS_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
-    eztvUrl: trimSlash(env.EZTV_URL || 'https://eztvx.to'),
+    eztvUrls: [...new Set([...(env.EZTV_URL ?? '').split(','), ...EZTV_MIRRORS].map((u) => trimSlash(u.trim())).filter(Boolean))],
+    animetoshoUrl: trimSlash(env.ANIMETOSHO_URL || 'https://feed.animetosho.net'),
+    mediafusionUrl: trimSlash(env.MEDIAFUSION_URL || 'https://mediafusion.elfhosted.com'),
+    stremioAddons: parseAddonList(env.STREMIO_ADDONS),
     apibayUrl: trimSlash(env.APIBAY_URL || 'https://apibay.org'),
     knabenUrl: trimSlash(env.KNABEN_URL || 'https://api.knaben.org'),
     torrentsCsvUrl: trimSlash(env.TORRENTS_CSV_URL || 'https://torrents-csv.com'),
@@ -187,15 +195,52 @@ export function parseTorrentioStream(s: StremioStream): TorrentResult | null {
   });
 }
 
+/** Torrent streams from any Stremio add-on (base URL = manifest URL without /manifest.json). */
+async function stremioStreams(base: string, q: SearchQuery, fetchJson: Ctx['fetchJson'], label: string): Promise<TorrentResult[]> {
+  const kind = q.type === 'series' ? 'series' : 'movie';
+  const id = kind === 'series' && q.season != null ? `${q.imdbId}:${q.season}:${q.episode ?? 1}` : q.imdbId!;
+  const data = await fetchJson<{ streams?: StremioStream[] }>(`${base}/stream/${kind}/${id}.json`);
+  return (data.streams ?? []).flatMap((s) => {
+    const r = parseTorrentioStream(s);
+    if (!r) return [];
+    r.indexer = label;
+    r.imdbId = q.imdbId;
+    return [r];
+  });
+}
+
+/** "https://x/abc/manifest.json https://y/manifest.json" → base URLs (https only, max 5). */
+export function parseAddonList(raw?: string | null): string[] {
+  return (raw ?? '')
+    .split(/[\s,]+/)
+    .map((u) => u.trim().replace(/\/manifest\.json$/i, '').replace(/\/+$/, ''))
+    .filter((u) => /^https:\/\/[^\s/]+\.[^\s/]+/i.test(u))
+    .slice(0, 5);
+}
+
 const torrentio: IndexerAdapter = {
   id: 'torrentio',
   supports: (q) => !!q.imdbId,
+  search: (q, { config, fetchJson }) =>
+    stremioStreams(config.torrentioUrl + (config.torrentioOptions ? `/${config.torrentioOptions}` : ''), q, fetchJson, 'torrentio'),
+};
+
+/** MediaFusion's public instance (aggregates Prowlarr, Zilean, Torrentio and more). May hide torrents for anonymous users. */
+const mediafusion: IndexerAdapter = {
+  id: 'mediafusion',
+  supports: (q) => !!q.imdbId,
+  search: (q, { config, fetchJson }) => stremioStreams(config.mediafusionUrl, q, fetchJson, 'mediafusion'),
+};
+
+/** The user's own Stremio add-ons (e.g. a configured AIOStreams, Comet, TorrentClaw or MediaFusion). */
+const addons: IndexerAdapter = {
+  id: 'addons',
+  supports: (q, c) => !!q.imdbId && c.stremioAddons.length > 0,
   async search(q, { config, fetchJson }) {
-    const kind = q.type === 'series' ? 'series' : 'movie';
-    const id = kind === 'series' && q.season != null ? `${q.imdbId}:${q.season}:${q.episode ?? 1}` : q.imdbId!;
-    const opts = config.torrentioOptions ? `/${config.torrentioOptions}` : '';
-    const data = await fetchJson<{ streams?: StremioStream[] }>(`${config.torrentioUrl}${opts}/stream/${kind}/${id}.json`);
-    return (data.streams ?? []).map(parseTorrentioStream).filter((r): r is TorrentResult => r !== null);
+    const settled = await Promise.allSettled(config.stremioAddons.map((base) => stremioStreams(base, q, fetchJson, 'addons')));
+    const ok = settled.flatMap((s) => (s.status === 'fulfilled' ? s.value : []));
+    if (!ok.length && settled.every((s) => s.status === 'rejected')) throw (settled[0] as PromiseRejectedResult).reason;
+    return ok;
   },
 };
 
@@ -264,26 +309,30 @@ const torznab: IndexerAdapter = {
 
 // ─── YTS (movies) ───────────────────────────────────────────────────────────
 
-export const YTS_MIRRORS = ['https://yts.bz', 'https://yts.lt', 'https://yts.gg', 'https://yts.am', 'https://yts.ag', 'https://yts.mx'];
+// Primary domains per Prowlarr's maintained definitions (Nov 2026): yts.gg (the others redirect to it), eztvx.to.
+export const YTS_MIRRORS = ['https://yts.gg', 'https://yts.bz', 'https://yts.lt', 'https://yts.am', 'https://yts.ag', 'https://yts.mx'];
+export const EZTV_MIRRORS = ['https://eztvx.to', 'https://eztv.wf', 'https://eztv.tf', 'https://eztv.yt', 'https://eztv1.xyz'];
 
-/** Mirror that answered last (per process / page session) — tried first next time. */
-let ytsPreferred: string | undefined;
+/** Mirror that answered last, per mirror group (per process / page session) — tried first next time. */
+const preferredMirror = new Map<string, string>();
 
-/** Try YTS mirrors in order until one returns valid API JSON. */
+/** Try mirrors in order until one returns valid API JSON. */
 export async function fetchFromMirrors<T>(mirrors: string[], path: string, fetchJson: (url: string) => Promise<T>, isValid: (d: T) => boolean): Promise<T> {
-  const order = ytsPreferred && mirrors.includes(ytsPreferred) ? [ytsPreferred, ...mirrors.filter((m) => m !== ytsPreferred)] : mirrors;
+  const group = mirrors.join('|');
+  const pref = preferredMirror.get(group);
+  const order = pref && mirrors.includes(pref) ? [pref, ...mirrors.filter((m) => m !== pref)] : mirrors;
   const failures: string[] = [];
   for (const base of order) {
     try {
       const data = await fetchJson(base + path);
       if (!isValid(data)) throw new Error('unexpected response');
-      ytsPreferred = base;
+      preferredMirror.set(group, base);
       return data;
     } catch (e) {
       failures.push(`${new URL(base).host}: ${describeError(e)}`);
     }
   }
-  ytsPreferred = undefined;
+  preferredMirror.delete(group);
   throw new Error(`all mirrors failed (${failures.join('; ')})`);
 }
 
@@ -337,9 +386,10 @@ const eztv: IndexerAdapter = {
   supports: (q) => q.type === 'series' && !!q.imdbId,
   async search(q, { config, fetchJson }) {
     const imdbNum = q.imdbId!.replace(/^tt/, '');
-    const data = await fetchJson<{
+    const data = await fetchFromMirrors<{
+      torrents_count?: number;
       torrents?: { title: string; hash: string; magnet_url: string; seeds: number; peers: number; size_bytes: string; season: string; episode: string; date_released_unix: number }[];
-    }>(`${config.eztvUrl}/api/get-torrents?imdb_id=${imdbNum}&limit=100`);
+    }>(config.eztvUrls, `/api/get-torrents?imdb_id=${imdbNum}&limit=100`, (url) => fetchJson(url), (d: any) => d && typeof d === 'object' && 'torrents_count' in d);
     return (data.torrents ?? [])
       .filter((t) => (q.season == null || +t.season === q.season) && (q.episode == null || +t.episode === q.episode || +t.episode === 0))
       .map((t) =>
@@ -401,21 +451,22 @@ const knaben: IndexerAdapter = {
       body: JSON.stringify({
         search_type: '100%', search_field: 'title', query: term, order_by: 'seeders', order_direction: 'desc',
         // 2000000 movies, 3000000 TV, 6000000 anime
-        categories: q.type === 'movie' ? [2000000, 6000000] : q.type === 'series' ? [3000000, 6000000] : [2000000, 3000000, 6000000],
+        // Knaben categories (per Prowlarr): 2000000 TV, 3000000 movies, 6000000 anime.
+        categories: q.type === 'movie' ? [3000000, 6000000] : q.type === 'series' ? [2000000, 6000000] : [2000000, 3000000, 6000000],
         from: 0, size: 100, hide_unsafe: true, hide_xxx: true,
       }),
     });
     return (data.hits ?? []).flatMap((h) => {
       const infoHash = (h.hash || (h.magnetUrl ? parseMagnet(h.magnetUrl)?.infoHash : '') || '').toLowerCase();
-      if (!/^[a-f0-9]{40}$/.test(infoHash) || !h.title) return [];
       const seeders = Number(h.seeders) || 0;
+      if (!/^[a-f0-9]{40}$/.test(infoHash) || !h.title || seeders <= 0) return [];
       return [makeResult({
         title: h.title,
         infoHash,
         magnet: h.magnetUrl ? parseMagnet(h.magnetUrl)?.magnet : undefined,
         sizeBytes: Number(h.bytes) || undefined,
         seeders,
-        leechers: Math.max(0, (Number(h.peers) || 0) - seeders),
+        leechers: Number(h.peers) || 0, // Knaben's `peers` already means leechers
         indexer: 'knaben',
         tracker: h.tracker,
         publishedAt: h.date,
@@ -483,7 +534,20 @@ const nyaa: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa };
+// ─── AnimeTosho (anime; public Torznab feed, per Prowlarr's definition) ───────
+
+const animetosho: IndexerAdapter = {
+  id: 'animetosho',
+  supports: (q) => !!textQueryFor(q) && !(q.imdbId && q.type === 'movie'),
+  async search(q, { config, fetchText }) {
+    // Anime releases are named "Title - 07", not "Title S01E07".
+    const term = q.q?.trim() || (q.title && q.episode != null ? `${q.title} ${String(q.episode).padStart(2, '0')}` : textQueryFor(q)!);
+    const xmlBody = await fetchText(`${config.animetoshoUrl}/api/torznab?t=search&limit=100&q=${encodeURIComponent(term)}`);
+    return parseTorznabXml(xmlBody, 'animetosho').filter((r) => r.seeders > 0);
+  },
+};
+
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 

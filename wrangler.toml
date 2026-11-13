@@ -22,10 +22,10 @@ tag = "v1"
 new_sqlite_classes = ["TorrentStream"]
 
 [vars]
-INDEXERS = "torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa"
+INDEXERS = "torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons"
 TORRENTIO_URL = "https://torrentio.strem.fun"
 # Comma-separated; known mirrors are tried automatically after these.
-YTS_URL = "https://yts.bz,https://yts.lt"
+YTS_URL = "https://yts.gg"
 EZTV_URL = "https://eztvx.to"
 APIBAY_URL = "https://apibay.org"
 OPENSUBTITLES_USER_AGENT = "StreamdeckPWA v0.1"

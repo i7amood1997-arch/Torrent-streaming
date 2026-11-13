@@ -17,7 +17,7 @@ import { DebridError, envDebridKey, resolveDebridStream } from '../debrid';
 import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
 import { createTmdbClient, TmdbError } from '../tmdb';
-import { ALL_INDEXERS, configFromEnv, searchTorrents, type IndexerId } from '../torrent-indexer';
+import { ALL_INDEXERS, configFromEnv, parseAddonList, searchTorrents, type IndexerId } from '../torrent-indexer';
 import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
@@ -34,6 +34,7 @@ const ALLOWED_HEADERS = [
   'x-subdl-key',
   'x-torznab-url',
   'x-torznab-key',
+  'x-stremio-addons',
 ].join(', ');
 
 function corsHeaders(req: Request, env: Env): Record<string, string> {
@@ -108,6 +109,12 @@ async function search(req: Request, env: Env, sp: URLSearchParams) {
       cfg.torznabApiKey = req.headers.get('x-torznab-key') || undefined;
       if (!cfg.enabled.includes('torznab')) cfg.enabled.push('torznab');
     }
+  }
+
+  // The user's own Stremio add-ons (https only, fixed /stream/… path). Disable with ALLOW_CLIENT_ADDONS=false.
+  if (env.ALLOW_CLIENT_ADDONS !== 'false') {
+    const extra = parseAddonList(req.headers.get('x-stremio-addons'));
+    if (extra.length) cfg.stremioAddons = extra;
   }
 
   const tmdbKey = keyFrom(req, 'x-tmdb-key', env.TMDB_API_KEY);

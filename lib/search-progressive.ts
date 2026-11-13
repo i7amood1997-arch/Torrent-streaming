@@ -95,10 +95,12 @@ async function viaBrowser(p: SearchParams, ix: string, signal: AbortSignal): Pro
 }
 
 async function searchOne(p: SearchParams, ix: string, signal: AbortSignal): Promise<{ results: TorrentResult[]; error?: IndexerError }> {
-  const hasRelay = !!apiBase();
+  const caps = useApp.getState().caps;
+  // A relay that doesn't offer this source yet (older deployment) can't help: use the browser.
+  const hasRelay = !!apiBase() && (!caps?.indexers?.length || caps.indexers.includes(ix));
   const pref = hasRelay ? preferredRoute(ix) ?? 'relay' : 'browser';
   // Torznab's address and key live on the relay; never send them from the browser when a relay exists.
-  const order: Route[] = !hasRelay ? ['browser'] : ix === 'torznab' ? ['relay'] : pref === 'relay' ? ['relay', 'browser'] : ['browser', 'relay'];
+  const order: Route[] = !hasRelay ? (ix === 'torznab' && apiBase() ? [] : ['browser']) : ix === 'torznab' ? ['relay'] : pref === 'relay' ? ['relay', 'browser'] : ['browser', 'relay'];
   let last: IndexerError | undefined;
   for (const route of order) {
     try {
@@ -124,7 +126,9 @@ export async function searchProgressive(p: SearchParams, onUpdate: (s: SearchPro
   const started = Date.now();
   const { mergeResults, sortBySeeders } = await import('./torrent-indexer');
   const caps = useApp.getState().caps;
-  const chosen = useApp.getState().settings.indexers.filter((ix) => !caps?.indexers?.length || caps.direct || caps.indexers.includes(ix) || ix !== 'torznab');
+  const settings = useApp.getState().settings;
+  const chosen = settings.indexers.filter((ix) => ix !== 'addons' && (ix !== 'torznab' || caps?.direct || caps?.indexers?.includes('torznab') || caps?.clientTorznab));
+  if (settings.stremioAddons?.trim()) chosen.push('addons');
   const skipped = chosen.filter((ix) => Date.now() - (dead.get(ix) ?? 0) < DEAD_TTL);
   const active = chosen.filter((ix) => !skipped.includes(ix));
 

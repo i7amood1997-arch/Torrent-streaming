@@ -31,6 +31,8 @@ export interface Settings {
   torznabKey: string;
   /** Torrent sources to query (subset of what the API offers). */
   indexers: string[];
+  /** Extra Stremio add-on manifest URLs (one per line), searched like Torrentio. */
+  stremioAddons: string;
   /** No-backend mode: retry blocked sources through public relays (keyless searches only). */
   publicRelays: boolean;
   engine: EnginePref;
@@ -97,7 +99,8 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
-  indexers: ['torrentio', 'knaben', 'yts', 'eztv', 'nyaa', 'apibay', 'torrentscsv'],
+  indexers: ['torrentio', 'knaben', 'yts', 'eztv', 'nyaa', 'animetosho', 'mediafusion', 'apibay', 'torrentscsv'],
+  stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true },
@@ -127,11 +130,15 @@ export const useApp = create<AppState>()(
     }),
     {
       name: 'ts-settings',
-      version: 2,
+      version: 3,
       // v2 added sources (Knaben, Nyaa, Torrents-CSV) and made the Pirate Bay API default: switch them on once for existing users.
       migrate: (persisted: any, version) => {
         if (version < 2 && Array.isArray(persisted?.settings?.indexers)) {
           persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'knaben', 'nyaa', 'apibay', 'torrentscsv'])];
+        }
+        // v3 added AnimeTosho and MediaFusion.
+        if (version < 3 && Array.isArray(persisted?.settings?.indexers)) {
+          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'animetosho', 'mediafusion'])];
         }
         return persisted;
       },

@@ -104,7 +104,10 @@ public/
 
 | Indexer   | By IMDB id | By text | Notes |
 |-----------|:---:|:---:|---|
-| knaben    | — | ✅ | meta-search across many public trackers (movies, TV, anime) |
+| knaben    | — | ✅ | meta-search across many public trackers incl. 1337x and TPB (movies, TV, anime) |
+| mediafusion | ✅ | — | public MediaFusion instance (Stremio protocol); may return nothing if the instance hides torrents from anonymous users |
+| addons    | ✅ | — | the user's own Stremio add-on manifest URLs (Settings), https only; disable on the relay with `ALLOW_CLIENT_ADDONS=false` |
+| animetosho | — | ✅ | anime via its public Torznab feed |
 | nyaa      | — | ✅ | anime (RSS) |
 | torrentscsv | — | ✅ | open DHT-crawled index |
 | torrentio | ✅ | — | Stremio add-on protocol; gives per-file `fileIdx` for season packs |
@@ -113,7 +116,7 @@ public/
 | eztv      | ✅ | — | series |
 | apibay    | — | ✅ | The Pirate Bay API |
 
-Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
+Site addresses and query formats are checked against [Prowlarr's maintained definitions](https://github.com/Prowlarr/Indexers); YTS and EZTV fall back across their known mirrors. Enable sources with `INDEXERS` in `wrangler.toml` (comma-separated); set `TORZNAB_URL`/`TORZNAB_API_KEY` as Worker secrets. Your Jackett/Prowlarr must be reachable from the internet for the Worker to use it.
 
 ### Streaming engines
 - **Built-in streaming through your relay (free, plays in the app):** the Cloudflare Worker runs its own download-only BitTorrent client (`lib/bt/`, `worker/stream-do.ts`). One Durable Object per torrent connects to peers over Cloudflare's outbound TCP sockets, fetches the file list from the magnet, downloads pieces in playback order (each SHA-1 verified), and serves the file as a normal HTTP video with Range support. Nothing is stored; pieces stay in memory only while being watched. It's the default when you have a relay and no Debrid key.
