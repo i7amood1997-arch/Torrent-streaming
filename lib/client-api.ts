@@ -115,17 +115,35 @@ export const api = {
     return u.toString();
   },
 
+  /**
+   * Debrid services expect requests from the viewer's own connection (Real-Debrid restricts
+   * datacenter/VPN IPs, and links can be tied to the IP that created them), so ask from this
+   * browser first. Only if the browser can't reach the service (CORS/network) use the relay.
+   */
   async resolveDebrid(r: TorrentResult, ctx: { season?: number; episode?: number }, signal?: AbortSignal): Promise<ResolvedStream> {
     const s = useApp.getState().settings;
-    const res = await call('/api/debrid/resolve', {
+    const init = (): RequestInit => ({
       method: 'POST',
       headers: { ...headers(), 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider: s.debridProvider, magnet: r.magnet, fileIdx: r.fileIdx, ...ctx }),
       signal,
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
-    return body as ResolvedStream;
+    const parse = async (res: Response) => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { status: res.status });
+      return body as ResolvedStream;
+    };
+    const { handleApi } = await import('./server/handlers');
+    signal?.throwIfAborted();
+    try {
+      return await parse(await handleApi(new Request(new URL('/api/debrid/resolve', location.origin), init()), directEnv()));
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.name === 'AbortError') throw e;
+      const unreachable = err.status === 500 || /blocked by the browser|failed to fetch|load failed|network/i.test(err.message);
+      if (!apiBase() || !unreachable) throw e;
+      return parse(await call('/api/debrid/resolve', init()));
+    }
   },
 
   /** Probe capabilities. Direct mode never "fails"; a configured-but-unreachable backend sets `offline`. */
