@@ -305,3 +305,12 @@ describe('direct links', async () => {
     expect(bad.status).toBe(400);
   });
 });
+
+describe('debrid errors', async () => {
+  const { explainDebridError } = await import('@/lib/debrid');
+  it('explains common Real-Debrid error codes', () => {
+    expect(explainDebridError('infringing_file')).toMatch(/copyright complaint/);
+    expect(explainDebridError('bad_token')).toMatch(/API key/);
+    expect(explainDebridError('something_new')).toBe('something_new');
+  });
+});

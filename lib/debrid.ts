@@ -72,9 +72,22 @@ async function http<T>(url: string, init: RequestInit & { timeout?: number } = {
   try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
   if (!res.ok) {
     const msg = body?.error ?? body?.detail ?? body?.message ?? (typeof body === 'string' ? body.slice(0, 200) : `HTTP ${res.status}`);
-    throw new DebridError(String(msg), res.status);
+    throw new DebridError(explainDebridError(String(msg)), res.status);
   }
   return body as T;
+}
+
+/** Human-readable text for common Debrid API error codes. */
+export function explainDebridError(code: string): string {
+  const known: Record<string, string> = {
+    infringing_file: 'Real-Debrid has blocked this file after a copyright complaint, so it won’t stream it.',
+    bad_token: 'Your Debrid API key isn’t valid. Copy it again from the provider’s website into Settings.',
+    permission_denied: 'Your Debrid account can’t do this. Check that your subscription is active.',
+    ip_not_allowed: 'Real-Debrid refused this connection (VPN or server address). Try without a VPN.',
+    too_many_requests: 'The Debrid service is rate-limiting requests. Wait a minute and try again.',
+    torrent_too_big: 'This torrent is too big for your Debrid account.',
+  };
+  return known[code] ?? code;
 }
 
 export class DebridError extends Error {
