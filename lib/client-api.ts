@@ -69,8 +69,32 @@ export const api = {
   tmdbDetails: (type: string, id: number) => get<TmdbDetails>('/api/tmdb', { action: 'details', type, id }),
   tmdbSeason: (id: number, season: number) => get<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
 
-  search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
-    get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
+  async search(p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal): Promise<SearchResponse> {
+    const params = { ...p, indexers: useApp.getState().settings.indexers.join(',') };
+    const res = await get<SearchResponse>('/api/search', params, signal);
+    if (!apiBase()) return res;
+    // Sources that refused the relay (rate limits on shared cloud IPs, blocks) often answer the
+    // viewer's own connection: retry just those from this browser (with public relays as backup).
+    const retry = res.errors.filter((e) => e.indexer !== 'torznab' && /HTTP (429|403|5\d\d)|blocked|fetch failed|timed out|internal error|network/i.test(e.message)).map((e) => e.indexer);
+    if (!retry.length) return res;
+    try {
+      const [{ handleApi }, { mergeResults, sortBySeeders }] = await Promise.all([import('./server/handlers'), import('./torrent-indexer')]);
+      const qs = new URLSearchParams();
+      for (const [k, v] of Object.entries({ ...params, indexers: retry.join(',') })) if (v !== undefined && v !== '') qs.set(k, String(v));
+      const r = await handleApi(new Request(new URL(`/api/search?${qs}`, location.origin), { headers: headers(), signal }), directEnv());
+      if (!r.ok) return res;
+      const local = (await r.json()) as SearchResponse;
+      const stillFailing = new Map(local.errors.map((e) => [e.indexer, e]));
+      return {
+        ...res,
+        results: sortBySeeders(mergeResults([...res.results, ...local.results])),
+        errors: res.errors.flatMap((e) => (retry.includes(e.indexer) ? (stillFailing.has(e.indexer) ? [stillFailing.get(e.indexer)!] : []) : [e])),
+      };
+    } catch (e) {
+      if ((e as Error).name === 'AbortError') throw e;
+      return res;
+    }
+  },
 
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),

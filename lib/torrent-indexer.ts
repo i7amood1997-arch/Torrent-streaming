@@ -512,11 +512,19 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
   if (q.imdbId && !/^tt\d{5,}$/.test(q.imdbId)) throw new Error('Invalid IMDB id');
 
   const fetchWithTimeout = async (url: string, init?: RequestInit) => {
-    const res = await fetch(url, {
-      ...init,
-      headers: { ...serverOnlyHeaders({ 'User-Agent': UA }), Accept: 'application/json, application/xml;q=0.9, */*;q=0.8', ...init?.headers },
-      signal: AbortSignal.timeout(config.timeoutMs),
-    });
+    const once = () =>
+      fetch(url, {
+        ...init,
+        headers: { ...serverOnlyHeaders({ 'User-Agent': UA }), Accept: 'application/json, application/xml;q=0.9, */*;q=0.8', ...init?.headers },
+        signal: AbortSignal.timeout(config.timeoutMs),
+      });
+    let res = await once();
+    // Rate limited (common for shared cloud IPs): wait briefly and try once more.
+    if (res.status === 429 || res.status === 503) {
+      const wait = Math.min(2500, Math.max(500, Number(res.headers.get('retry-after')) * 1000 || 1200));
+      await new Promise((r) => setTimeout(r, wait));
+      res = await once();
+    }
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res;
   };

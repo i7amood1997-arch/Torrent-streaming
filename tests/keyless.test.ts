@@ -135,3 +135,13 @@ describe('new torrent sources', () => {
     expect(res.results[1]).toMatchObject({ imdbId: 'tt1234567', container: 'mp4' });
   });
 });
+
+describe('rate limits', () => {
+  it('retries a source once after HTTP 429', async () => {
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => (++n === 1 ? new Response('slow down', { status: 429, headers: { 'retry-after': '0' } }) : Response.json([]))));
+    const res = await searchTorrents({ q: 'film' }, configFromEnv({ INDEXERS: 'apibay' }));
+    expect(n).toBe(2);
+    expect(res.errors).toEqual([]);
+  });
+});
