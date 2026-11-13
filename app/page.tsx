@@ -65,7 +65,7 @@ export default function Home() {
   const r = nowPlaying?.result;
 
   return (
-    <div className="flex h-[100dvh] overflow-hidden pl-safe-l pr-safe-r">
+    <div className="relative flex h-[var(--app-h,100dvh)] overflow-hidden pl-safe-l pr-safe-r">
       {/* Desktop sidebar */}
       <aside className="hidden w-56 shrink-0 flex-col border-r border-ink-800 bg-ink-900/60 p-4 xl:flex">
         <div className="mb-6 flex items-center gap-2 px-2">
@@ -151,14 +151,14 @@ export default function Home() {
       {/* iPhone: mini now-playing bar */}
       {nowPlaying && view !== 'player' && (
         <button onClick={() => setView('player')}
-          className="fixed inset-x-3 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 flex items-center gap-3 rounded-xl border border-ink-700 bg-ink-800/95 p-2.5 text-left shadow-lg backdrop-blur md:hidden">
+          className="absolute inset-x-3 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 flex items-center gap-3 rounded-xl border border-ink-700 bg-ink-800/95 p-2.5 text-left shadow-lg backdrop-blur md:hidden">
           <span className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-ink-950"><IconPlay size={14} /></span>
           <span className="min-w-0 flex-1 truncate text-sm text-ink-200">{nowPlaying.title}</span>
         </button>
       )}
 
       {/* iPhone: bottom tab bar */}
-      <nav className="fixed inset-x-0 bottom-0 z-40 flex border-t border-ink-800 bg-ink-950/95 pb-safe-b backdrop-blur md:hidden" aria-label="Main">
+      <nav className="absolute inset-x-0 bottom-0 z-40 flex border-t border-ink-800 bg-ink-950/95 pb-safe-b backdrop-blur md:hidden" aria-label="Main">
         {NAV.map((n) => (
           <button key={n.id} onClick={() => (n.id === 'search' ? setMode('torrent') : n.id === 'discover' ? setMode('catalog') : setView(n.id))}
             className={`flex flex-1 flex-col items-center gap-0.5 py-2 text-[10px] font-medium ${view === n.id ? 'text-accent' : 'text-ink-400'}`}

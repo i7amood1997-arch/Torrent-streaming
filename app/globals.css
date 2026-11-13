@@ -12,8 +12,9 @@
 
 html,
 body {
+  /* --app-h is set by an early script (see app/layout.tsx); dvh is the fallback. */
+  height: var(--app-h, 100dvh);
   @apply bg-ink-950 text-ink-200 antialiased;
-  height: 100%;
   overscroll-behavior: none;
   -webkit-tap-highlight-color: transparent;
 }
