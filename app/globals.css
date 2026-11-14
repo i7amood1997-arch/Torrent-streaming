@@ -367,12 +367,6 @@ input[type='range'] {
 [data-tv] .group:focus {
   outline: none;
 }
-[data-tv] .group:focus .lift {
-  transform: scale(1.08);
-  box-shadow:
-    0 0 0 3px #fff,
-    0 24px 50px rgba(0, 0, 0, 0.7);
-}
 [data-tv] .btn-primary:focus,
 [data-tv] .btn-glass:focus {
   transform: scale(1.05);
@@ -400,4 +394,48 @@ input[type='range'] {
 }
 [data-tv] .tv-flex {
   display: inline-flex;
+}
+
+/* ── Android TV performance ────────────────────────────────────
+ * TV chips are slow at blur and repaints: no backdrop blur (solid materials instead),
+ * no slow zoom on the big picture, and only transform/opacity animate (compositor-only). */
+[data-tv] .glass {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: rgba(30, 30, 33, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+[data-tv] [class*='backdrop-blur'] {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+[data-tv] .bg-ink-950\/95 {
+  background-color: rgba(0, 0, 0, 0.97);
+}
+[data-tv] .kenburns {
+  animation: none;
+}
+[data-tv] .fade {
+  animation-duration: 0.3s;
+}
+[data-tv] .rise {
+  animation-duration: 0.35s;
+}
+[data-tv] .lift {
+  transition: transform 0.16s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+[data-tv] .group:focus .lift {
+  transform: scale(1.07);
+  box-shadow: none;
+  outline: 3px solid #fff;
+  outline-offset: 0;
+}
+[data-tv] .btn-primary:focus,
+[data-tv] .btn-glass:focus {
+  transform: scale(1.04);
+}
+[data-tv] .btn,
+[data-tv] button {
+  transition-property: transform, background-color, color, opacity;
+  transition-duration: 0.12s;
 }

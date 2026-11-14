@@ -605,6 +605,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       const free = !el || el === document.body || !containerRef.current?.contains(el);
       if (!free) {
         poke();
+        // The seek bar's own arrow step is 0.1 s: on the remote, jump 10 s instead.
+        if (el?.matches('input[aria-label="Seek"]') && (k === 'ArrowLeft' || k === 'ArrowRight')) { seekBy(k === 'ArrowLeft' ? -10 : 10); return true; }
         if (k === 'ArrowUp' && !moveFocus('up')) { el!.blur(); return true; }
         return false;
       }
@@ -966,7 +968,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 <button className="btn-ghost p-2 text-white" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={muted ? 'Unmute' : 'Mute'}>{muted || volume === 0 ? <IconMute size={18} /> : <IconVolume size={18} />}</button>
                 <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(+e.target.value)} className="w-0 opacity-0 transition-all group-hover:w-20 group-hover:opacity-100 focus:w-20 focus:opacity-100" aria-label="Volume" />
               </div>
-              <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
+              <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen || tv ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
                 <IconCC size={20} />
               </button>
               {tv ? (

@@ -81,21 +81,22 @@ export default function App() {
 
   const inPlayer = view === 'player';
   const pane = (v: View) => `absolute inset-0 overflow-y-auto overscroll-contain scrollbar-thin pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 ${!inPlayer && !detail && listView === v ? '' : 'hidden'}`;
+  const paneOn = (v: View) => (!inPlayer && !detail && listView === v ? '' : undefined);
   const nowLabel = nowPlaying ? `${nowPlaying.title}${nowPlaying.season != null ? ` · S${nowPlaying.season} E${nowPlaying.episode}` : ''}` : '';
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black pl-safe-l pr-safe-r">
       <main className="absolute inset-0">
-        <div className={pane('discover')}><Home active={listView === 'discover'} /></div>
-        <div className={pane('search')}><SearchView active={listView === 'search'} /></div>
-        <div className={pane('settings')}>
+        <div className={pane('discover')} data-tv-pane={paneOn('discover')}><Home active={listView === 'discover'} /></div>
+        <div className={pane('search')} data-tv-pane={paneOn('search')}><SearchView active={listView === 'search'} /></div>
+        <div className={pane('settings')} data-tv-pane={paneOn('settings')}>
           <div className="gutter mx-auto max-w-2xl pt-[max(1.25rem,env(safe-area-inset-top))] md:pt-24">
             <h1 className="mb-6 text-[34px] font-extrabold tracking-tight text-white">Settings</h1>
             <SettingsPanel />
           </div>
         </div>
         {detail && (
-          <div key={`${detail.type}-${detail.id}`} className={`fade absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
+          <div key={`${detail.type}-${detail.id}`} data-tv-pane={inPlayer ? undefined : ''} className={`fade absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
             <TitleDetail item={detail} />
           </div>
         )}
@@ -111,7 +112,7 @@ export default function App() {
         <>
           {/* Keeps scrolled content from showing through behind the floating bar */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/85 via-black/45 to-transparent md:block" />
-          <nav className="glass absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-1 rounded-full p-1.5 md:flex" aria-label="Main">
+          <nav data-tv-nav className="glass absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-1 rounded-full p-1.5 md:flex" aria-label="Main">
             {NAV.map((n) => {
               const on = listView === n.id && !detail;
               return (
@@ -139,7 +140,7 @@ export default function App() {
                 </span>
               </button>
             )}
-            <nav className="glass flex rounded-[1.6rem] p-1" aria-label="Main">
+            <nav data-tv-nav className="glass flex rounded-[1.6rem] p-1" aria-label="Main">
               {NAV.map((n) => {
                 const on = listView === n.id;
                 return (

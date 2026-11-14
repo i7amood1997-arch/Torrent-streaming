@@ -112,7 +112,7 @@ function toItem(r: any): TmdbItem {
   };
 }
 
-export function posterUrl(path?: string | null, size: 'w185' | 'w342' | 'w500' | 'original' = 'w342') {
+export function posterUrl(path?: string | null, size: 'w185' | 'w342' | 'w500' | 'w780' | 'w1280' | 'original' = 'w342') {
   if (!path) return undefined;
   return /^https?:\/\//.test(path) ? path : `${TMDB_IMG}/${size}${path}`; // Cinemeta gives full URLs
 }

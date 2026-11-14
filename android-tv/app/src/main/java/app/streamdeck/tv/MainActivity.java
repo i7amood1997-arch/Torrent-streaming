@@ -60,6 +60,14 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setUserAgentString(s.getUserAgentString() + " StreamdeckTV/" + BuildConfig.VERSION_NAME);
 
+        // Smoother scrolling: draw a little beyond the screen ahead of time, and give the
+        // page's renderer priority while the app is in front.
+        if (android.os.Build.VERSION.SDK_INT >= 23) s.setOffscreenPreRaster(true);
+        if (android.os.Build.VERSION.SDK_INT >= 26) web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true);
+        web.setOverScrollMode(View.OVER_SCROLL_NEVER);
+        web.setVerticalScrollBarEnabled(false);
+        web.setHorizontalScrollBarEnabled(false);
+
         web.addJavascriptInterface(new Bridge(), "StreamdeckTV");
         web.setWebViewClient(new WebViewClient() {
             @Override

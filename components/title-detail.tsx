@@ -63,7 +63,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
       <section className="relative -mx-[var(--gutter)] min-h-[62vh] overflow-hidden md:min-h-[min(72vh,64vw)]">
         {(d.backdropPath || d.posterPath) && (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={posterUrl(d.backdropPath ?? d.posterPath, 'original')} alt="" className="fade absolute inset-0 h-full w-full object-cover" />
+          <img decoding="async" src={posterUrl(d.backdropPath ?? d.posterPath, 'w1280')} alt="" className="fade absolute inset-0 h-full w-full object-cover" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/10" />
         <div className="absolute inset-0 hidden bg-gradient-to-r from-black/75 via-black/10 to-transparent md:block" />
@@ -115,7 +115,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
                   <span className={`lift relative block aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-ink-700 to-ink-900 ${on ? 'ring-[3px] ring-white' : 'group-focus-visible:ring-[3px] group-focus-visible:ring-white/60'}`}>
                     {e.stillPath && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={posterUrl(e.stillPath, 'w342')} alt="" loading="lazy" className="h-full w-full object-cover" onError={(ev) => { ev.currentTarget.style.display = 'none'; }} />
+                      <img decoding="async" src={posterUrl(e.stillPath, 'w342')} alt="" loading="lazy" className="h-full w-full object-cover" onError={(ev) => { ev.currentTarget.style.display = 'none'; }} />
                     )}
                     <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent" />
                     <span className="absolute bottom-2 left-3 text-[11px] font-bold uppercase tracking-wider text-white/85">Episode {e.episodeNumber}</span>

@@ -20,7 +20,7 @@ export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: numb
         <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800 group-focus-visible:ring-[3px] group-focus-visible:ring-white">
           {item.posterPath ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={posterUrl(item.posterPath, 'w342')} alt="" loading="lazy" className="h-full w-full object-cover" />
+            <img decoding="async" src={posterUrl(item.posterPath, 'w342')} alt="" loading="lazy" className="h-full w-full object-cover" />
           ) : (
             <span className="grid h-full place-items-center p-3 text-center text-sm font-semibold text-ink-200">{item.title}</span>
           )}
@@ -47,11 +47,16 @@ const Skeleton = () => (
 export function Shelf({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: false });
+  // Arrows are for mouse users only; elsewhere skip the bookkeeping (it re-rendered the row on every scroll frame).
+  const [fine, setFine] = useState(false); // decided after mount: the server can't know the pointer
+  useEffect(() => setFine(matchMedia('(pointer: fine)').matches), []);
   const update = useCallback(() => {
     const el = ref.current;
-    if (!el) return;
-    setEdges({ start: el.scrollLeft < 8, end: el.scrollLeft + el.clientWidth > el.scrollWidth - 8 });
-  }, []);
+    if (!el || !fine) return;
+    const start = el.scrollLeft < 8;
+    const end = el.scrollLeft + el.clientWidth > el.scrollWidth - 8;
+    setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+  }, [fine]);
   useEffect(() => {
     update();
     const el = ref.current;
@@ -67,9 +72,9 @@ export function Shelf({ children, className = '' }: { children: React.ReactNode;
   const arrow = 'absolute top-1/2 z-10 hidden h-[60%] max-h-40 w-[calc(var(--gutter)-0.5rem)] min-w-10 -translate-y-1/2 place-items-center text-white opacity-0 transition group-hover/shelf:opacity-100 [@media(pointer:fine)]:grid';
   return (
     <div className="group/shelf relative">
-      <div ref={ref} onScroll={update} className={`shelf ${className}`}>{children}</div>
-      {!edges.start && <button className={`${arrow} left-0 bg-gradient-to-r from-black/80 to-transparent`} onClick={() => page(-1)} aria-label="Scroll left" tabIndex={-1}><IconBack size={28} /></button>}
-      {!edges.end && <button className={`${arrow} right-0 bg-gradient-to-l from-black/80 to-transparent`} onClick={() => page(1)} aria-label="Scroll right" tabIndex={-1}><IconChevron size={28} /></button>}
+      <div ref={ref} onScroll={fine ? update : undefined} className={`shelf ${className}`}>{children}</div>
+      {fine && !edges.start && <button className={`${arrow} left-0 bg-gradient-to-r from-black/80 to-transparent`} onClick={() => page(-1)} aria-label="Scroll left" tabIndex={-1}><IconBack size={28} /></button>}
+      {fine && !edges.end && <button className={`${arrow} right-0 bg-gradient-to-l from-black/80 to-transparent`} onClick={() => page(1)} aria-label="Scroll right" tabIndex={-1}><IconChevron size={28} /></button>}
     </div>
   );
 }
@@ -102,13 +107,17 @@ function LazyShelf({ title, type, genre }: { title: string; type: 'movie' | 'ser
 function Hero({ items }: { items: TmdbItem[] }) {
   const open = useApp((s) => s.openDetail);
   const [i, setI] = useState(0);
+  const heroRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (items.length < 2) return;
     const t = setInterval(() => {
-      // Don't swap the title under the viewer's focus (TV remote / keyboard).
-      if (document.activeElement?.hasAttribute('data-tv-start')) return;
+      // Don't swap the title under the viewer's focus, or while it's scrolled away / the tab is hidden
+      // (loading a big new picture mid-scroll causes hitches on TVs).
+      if (document.activeElement?.hasAttribute('data-tv-start') || document.hidden) return;
+      const hero = heroRef.current?.getBoundingClientRect();
+      if (!hero || hero.bottom < 80 || hero.width === 0) return;
       setI((x) => (x + 1) % items.length);
-    }, 9000);
+    }, 10000);
     return () => clearInterval(t);
   }, [items.length]);
   const it = items[i % Math.max(1, items.length)];
@@ -116,9 +125,9 @@ function Hero({ items }: { items: TmdbItem[] }) {
   useEffect(() => { if (items.length) setTimeout(() => initialFocus('[data-tv-start]'), 300); }, [items.length]);
   if (!it) return <div className="h-[68vh] min-h-[420px] animate-pulse bg-ink-900 md:h-[min(78vh,70vw)]" />;
   return (
-    <section className="relative h-[68vh] min-h-[420px] overflow-hidden md:h-[min(78vh,70vw)]">
+    <section ref={heroRef} className="relative h-[68vh] min-h-[420px] overflow-hidden md:h-[min(78vh,70vw)]">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img key={it.id} src={posterUrl(it.backdropPath ?? it.posterPath, 'original')} alt="" className="fade kenburns absolute inset-0 h-full w-full object-cover" />
+      <img decoding="async" key={it.id} src={posterUrl(it.backdropPath ?? it.posterPath, 'w1280')} alt="" className="fade kenburns absolute inset-0 h-full w-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/10" />
       <div className="absolute inset-0 hidden bg-gradient-to-r from-black/70 via-transparent to-transparent md:block" />
       <div key={`t-${it.id}`} className="gutter rise absolute inset-x-0 bottom-0 flex flex-col items-center pb-9 text-center md:items-start md:pb-14 md:text-left">
@@ -154,7 +163,7 @@ function ContinueWatching() {
               <span className="lift relative block aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-ink-700 to-ink-900">
                 {(h.backdrop || h.poster) && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={posterUrl(h.backdrop ?? h.poster, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
+                  <img decoding="async" src={posterUrl(h.backdrop ?? h.poster, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
                 )}
                 <span className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent" />
                 <span className="absolute bottom-2.5 left-2.5 grid h-8 w-8 place-items-center rounded-full bg-white/20 text-white backdrop-blur"><IconPlay size={13} /></span>
