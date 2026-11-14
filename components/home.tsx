@@ -142,7 +142,7 @@ function Hero({ items }: { items: TmdbItem[] }) {
           <div className="mt-3 flex gap-1.5">
             {items.map((x, k) => (
               // Small dot, finger-sized hit area.
-              <button key={x.id} tabIndex={-1} onClick={() => setI(k)} aria-label={`Show ${x.title}`} className="-mx-1 grid h-8 min-w-[1.25rem] place-items-center px-1">
+              <button key={x.id} tabIndex={-1} onClick={() => setI(k)} aria-label={`Show ${x.title}`} className="-mx-1.5 grid h-10 min-w-[1.75rem] place-items-center px-1.5">
                 <span className={`block h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-white' : 'w-1.5 bg-white/35'}`} />
               </button>
             ))}
@@ -176,7 +176,7 @@ function ContinueWatching() {
               <span className="mt-2 block truncate text-[13px] font-medium text-ink-200" dir="auto">{h.title}</span>
               <span className="block text-[11px] text-ink-400">{h.season != null ? `S${h.season} · E${h.episode}` : h.result?.quality && h.result.quality !== 'Unknown' ? h.result.quality : 'Resume'}</span>
             </button>
-            <button className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full bg-black/50 text-white/80 opacity-0 backdrop-blur transition group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => forget(i)} aria-label={`Remove ${h.title}`}><IconX size={12} /></button>
+            <button className="absolute right-0 top-0 grid h-10 w-10 place-items-center opacity-0 transition group-hover:opacity-100 focus:opacity-100 [@media(hover:none)]:opacity-100" onClick={() => forget(i)} aria-label={`Remove ${h.title}`}><span className="grid h-6 w-6 place-items-center rounded-full bg-black/60 text-white/85 backdrop-blur"><IconX size={12} /></span></button>
           </div>
         ))}
       </Shelf>

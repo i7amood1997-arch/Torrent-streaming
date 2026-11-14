@@ -184,7 +184,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
         {loading && <span className="animate-pulse">Searching {pending.map(sourceName).join(', ') || '…'}</span>}
         {!loading && !results.length && took != null && <span>No streams · {(took / 1000).toFixed(1)} s</span>}
         {(errors.length > 0 || skipped.length > 0) && (
-          <button className="underline decoration-ink-600 underline-offset-2 hover:text-ink-200" onClick={() => setShowProblems((v) => !v)} aria-expanded={showProblems}>
+          <button className="-my-2 py-2 underline decoration-ink-600 underline-offset-2 hover:text-ink-200" onClick={() => setShowProblems((v) => !v)} aria-expanded={showProblems}>
             {errors.length + skipped.length} source{errors.length + skipped.length === 1 ? '' : 's'} didn’t answer
           </button>
         )}
