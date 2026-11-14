@@ -11,7 +11,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useApp, type PlayRequest } from '@/lib/store';
 import { activeCues, autoSelectTracks, decodeSubtitleBytes, hasRtlChars, isRtlLang, parseSubtitles, releaseSimilarity } from '@/lib/subtitle-parser';
-import { languageName, plainLine, translateLines } from '@/lib/translate';
+import { languageName, plainLine, translateLines, type BatchTranslateFn } from '@/lib/translate';
 import type { SubtitleCue, SubtitleTrackInfo } from '@/lib/types';
 import type { GeneratorStatus } from '@/lib/speech/generate';
 import { IconUpload, IconX } from './icons';
@@ -88,8 +88,17 @@ export function appLang(code: string): Lang | undefined {
   return undefined;
 }
 
+/** The AI translator on the relay, when available and chosen. */
+function aiTranslator(from: string, to: string, title?: string): BatchTranslateFn | undefined {
+  const st = useApp.getState();
+  if (!st.caps?.ai || st.caps.offline || st.settings.subtitle.translator === 'google') return undefined;
+  return (lines, context, signal) => api.translateAI(lines, context, from, to, title, signal);
+}
+
 export interface AutoJob {
   kind: 'translate' | 'generate';
+  /** Which translator did the work (AI falls back to Google when its allowance runs out). */
+  engine?: 'ai' | 'google';
   status: 'working' | 'done' | 'error';
   from?: string;
   /** 0..1 while translating. */
@@ -110,6 +119,8 @@ export function pickTranslationSource(tracks: SubtitleTrackInfo[], target: strin
 
 export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): SubtitleState {
   const releaseName = file.name;
+  const titleRef = useRef<string | undefined>(undefined);
+  titleRef.current = req?.title;
   const [tracks, setTracks] = useState<SubtitleTrackInfo[]>([]);
   const [loaded, setLoaded] = useState<SubtitleState['loaded']>({});
   const [offsets, setOffsets] = useState<Record<Lang, number>>({ ar: 0, en: 0 });
@@ -165,7 +176,9 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     const ac = new AbortController();
     jobRef.current[lang] = ac;
     parent?.addEventListener('abort', () => ac.abort(), { once: true });
-    const id = `tr-${lang}-${src.id}`;
+    const ai = aiTranslator(src.lang, lang, titleRef.current);
+    let engine: 'ai' | 'google' = ai ? 'ai' : 'google';
+    const id = `tr-${lang}-${src.id}-${engine}`;
     const info: SubtitleTrackInfo = {
       id, provider: 'translated', lang, sourceLang: src.lang, token: '', score: src.score, hashMatch: src.hashMatch,
       label: `${lang.toUpperCase()} · Translated from ${languageName(src.lang)}`, releaseName: src.releaseName,
@@ -174,7 +187,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     const cached = translatedRef.current.get(id);
     if (cached) { setLoaded((l) => ({ ...l, [lang]: cached })); return; }
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
-    setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'working', from: src.lang, progress: 0 } }));
+    setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'working', from: src.lang, progress: 0 } }));
     try {
       const srcCues = (await api.subtitleCues(src.token, ac.signal)).cues ?? [];
       if (!srcCues.length) throw new Error('the subtitle file is empty');
@@ -186,14 +199,16 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       };
       const out = await translateLines(lines, src.lang, lang, {
         translate: api.translate,
+        ai,
         signal: ac.signal,
+        onAiFailed: () => { engine = 'google'; },
         onBatch: (done, partial) => {
           publish(partial);
-          setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'working', from: src.lang, progress: done / Math.max(1, lines.length) } }));
+          setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'working', from: src.lang, progress: done / Math.max(1, lines.length) } }));
         },
       });
       translatedRef.current.set(id, { info, cues: publish(out) });
-      setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'done', from: src.lang } }));
+      setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'done', from: src.lang } }));
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
       setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'error', from: src.lang, message: `Couldn’t translate: ${(e as Error).message}` } }));
@@ -287,7 +302,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       if (src === lang) apply(cues);
       else {
         genQueue.current = genQueue.current
-          .then(() => translateLines(cues.map((c) => plainLine(c.text)), src, lang, { translate: api.translate, signal }))
+          .then(() => translateLines(cues.map((c) => plainLine(c.text)), src, lang, { translate: api.translate, ai: aiTranslator(src, lang, titleRef.current), signal }))
           .then((out) => apply(cues.map((c, i) => ({ ...c, text: out[i] })).filter((c) => c.text)))
           .catch(() => undefined);
       }
@@ -457,13 +472,13 @@ function syncText(subs: SubtitleState, lang: Lang, enabled: boolean, listening: 
   const info = tr?.info;
   if (!info) return undefined;
   const job = subs.auto[lang];
-  if (info.provider === 'translated' && job?.status === 'working') return { text: `Translating from ${languageName(job.from)}… ${Math.round((job.progress ?? 0) * 100)}%` };
+  if (info.provider === 'translated' && job?.status === 'working') return { text: `${job.engine === 'ai' ? 'AI is translating' : 'Translating'} from ${languageName(job.from)}… ${Math.round((job.progress ?? 0) * 100)}%` };
   if (!tr.cues.length) return { text: info.provider === 'generated' ? 'Listening to the first minute…' : 'Downloading…' };
   if (info.provider === 'embedded') return { text: 'From the video file · always in sync', good: true };
   if (info.provider === 'generated') return { text: info.sourceLang === lang ? 'Made from the audio · in sync' : `Made from the audio · machine-translated from ${languageName(info.sourceLang)}`, good: true };
   if (subs.manual.has(lang)) return { text: 'Timing set by hand' };
   const auto = subs.autoSynced[lang];
-  const prefix = info.provider === 'translated' ? `Machine-translated from ${languageName(info.sourceLang)} · ` : '';
+  const prefix = info.provider === 'translated' ? `${subs.auto[lang]?.engine === 'ai' ? 'AI-translated' : 'Machine-translated'} from ${languageName(info.sourceLang)} · ` : '';
   if (auto) {
     const s = auto.offsetMs / 1000;
     const how = auto.method === 'reference' ? 'matched to the other subtitle' : auto.method === 'words' ? 'matched to the spoken words' : 'matched to the audio';
@@ -484,6 +499,7 @@ const fmtShift = (ms: number) => `${ms > 0 ? '+' : ms < 0 ? '−' : ''}${(Math.a
 
 function LanguageCard({ subs, lang, enabled, listening }: { subs: SubtitleState; lang: Lang; enabled: boolean; listening: boolean }) {
   const cur = subs.loaded[lang];
+  const hasSubdl = useApp((s) => !!s.settings.subdlKey || !!s.caps?.subtitles.subdl);
   const own = subs.tracks.filter((t) => t.lang === lang);
   const foreign = subs.tracks.filter((t) => t.lang !== lang && t.lang !== 'ar' && t.lang !== 'en' && t.token).slice(0, 12);
   const other = subs.tracks.filter((t) => t.lang === (lang === 'ar' ? 'en' : 'ar') && t.token).slice(0, 4);
@@ -511,6 +527,9 @@ function LanguageCard({ subs, lang, enabled, listening }: { subs: SubtitleState;
       </select>
       {status && <p className={`text-xs ${status.good ? 'text-hd' : 'text-ink-400'}`}>{status.good && '✓ '}{status.text}</p>}
       {job?.status === 'error' && <p className="text-xs text-red-300">{job.message}</p>}
+      {lang === 'ar' && cur?.info.provider === 'translated' && !hasSubdl && (
+        <p className="text-[11px] leading-snug text-ink-400">Tip: a free SubDL key (Settings → Optional keys) finds many more Arabic subtitles made by people.</p>
+      )}
       {cur && cur.cues.length > 0 && cur.info.provider !== 'embedded' && (
         <div className="flex items-center gap-1.5">
           <span className="mr-auto text-xs text-ink-400">Timing</span>
@@ -530,6 +549,7 @@ function LanguageCard({ subs, lang, enabled, listening }: { subs: SubtitleState;
 export function SubtitleSettings({ subs, hidden, onHiddenChange, listening, generate, onClose }: { subs: SubtitleState; hidden: boolean; onHiddenChange: (h: boolean) => void; listening?: boolean; generate?: GenerateControl; onClose?: () => void }) {
   const style = useApp((s) => s.settings.subtitle);
   const update = useApp((s) => s.updateSubtitleStyle);
+  const caps = useApp((s) => s.caps);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadLang, setUploadLang] = useState<Lang>('ar');
   const none = subs.searched && !LANGS.some((l) => subs.loaded[l]);
@@ -595,7 +615,11 @@ export function SubtitleSettings({ subs, hidden, onHiddenChange, listening, gene
           <Row label="Sync to the audio" hint="Lines subtitles up with the dialogue, including speed differences.">
             <Switch checked={style.autoSync} onChange={(v) => update({ autoSync: v })} label="Sync to the audio" />
           </Row>
-          <Row label="Translate when missing" hint="No Arabic or English? Translate the best subtitle in another language.">
+<Row wrap label="Translator" hint={caps?.ai ? 'AI reads the lines in context: more natural Arabic. It uses your relay’s free daily allowance; Google takes over when that runs out.' : 'AI translation needs your relay, updated to the latest version.'}>
+          <Segmented label="Translator" size="sm" value={style.translator} onChange={(v) => update({ translator: v })}
+            options={[{ value: 'ai', label: 'AI (best)' }, { value: 'google', label: 'Google' }]} />
+        </Row>
+        <Row label="Translate when missing" hint="No Arabic or English? Translate the best subtitle in another language.">
             <Switch checked={style.autoTranslate} onChange={(v) => update({ autoTranslate: v })} label="Translate when missing" />
           </Row>
           <Row label="Make from the audio" hint="No subtitles at all? Generate them with speech recognition on your relay.">

@@ -11,6 +11,7 @@
  *   GET  /api/subtitles/file?token=…
  *   POST /api/translate        { text, from, to }  (subtitle lines, newline-separated)
  *   POST /api/transcribe?lang  raw audio bytes → speech segments (Workers AI Whisper)
+ *   POST /api/translate-ai     { lines, context, from, to, title } → subtitle lines translated by an LLM
  *
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
@@ -23,7 +24,7 @@ import { ALL_INDEXERS, configFromEnv, parseAddonList, searchTorrents, type Index
 import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
-import { googleTranslate } from '../translate';
+import { buildSubtitlePrompt, googleTranslate, parseNumberedLines, readLlmText } from '../translate';
 import type { DebridProvider, SearchQuery } from '../types';
 
 export type Env = Record<string, string | undefined>;
@@ -258,6 +259,36 @@ async function translate(req: Request) {
   }
 }
 
+/** Strongest multilingual models on Workers AI first; each costs ~1,200 of the 10,000 free daily units per episode. */
+const TRANSLATORS = ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct'];
+
+async function translateAi(req: Request, b: ApiBindings) {
+  if (!b.AI) return err('AI translation isn’t set up on this relay.', 501);
+  const body = (await req.json().catch(() => ({}))) as { lines?: unknown; context?: unknown; from?: unknown; to?: unknown; title?: unknown };
+  const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 300)).slice(0, max) : []);
+  const lines = strings(body.lines, 60);
+  const context = strings(body.context, 6);
+  const code = (v: unknown) => (typeof v === 'string' && /^[a-z]{2,3}$/.test(v) ? v : undefined);
+  const to = code(body.to);
+  if (!lines.length || !to) return err('lines and to required', 400);
+  const messages = buildSubtitlePrompt(lines, { from: code(body.from), to, context, title: typeof body.title === 'string' ? body.title.slice(0, 120) : undefined });
+  let lastError = '';
+  for (const model of TRANSLATORS) {
+    try {
+      const out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+      const parsed = parseNumberedLines(readLlmText(out), lines.length);
+      if (parsed.filter(Boolean).length >= Math.ceil(lines.length * 0.8)) return json({ lines: parsed, model });
+      lastError = 'incomplete answer';
+    } catch (e) {
+      lastError = describeError(e);
+      if (/neuron|allocation|quota|4006/i.test(lastError)) {
+        return json({ error: 'Today’s free AI allowance on your relay is used up; standard translation is used until it resets.', fatal: true }, 429);
+      }
+    }
+  }
+  return err(`AI translation failed: ${lastError}`, 502);
+}
+
 const WHISPER = '@cf/openai/whisper-large-v3-turbo';
 
 function base64(bytes: Uint8Array): string {
@@ -402,6 +433,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/subtitles' && get) res = await subtitles(req, env, url.searchParams);
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
       else if (path === '/api/translate' && req.method === 'POST') res = await translate(req);
+      else if (path === '/api/translate-ai' && req.method === 'POST') res = await translateAi(req, bindings);
       else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
       else res = err('Not found', 404);

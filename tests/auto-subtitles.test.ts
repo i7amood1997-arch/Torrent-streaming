@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { batches, parseGoogle, plainLine, translateLines, type TranslateFn } from '@/lib/translate';
+import { batches, buildSubtitlePrompt, parseGoogle, parseNumberedLines, plainLine, readLlmText, sentenceGroups, splitTranslation, translateLines, type TranslateFn } from '@/lib/translate';
 import { segmentsToCues } from '@/lib/speech/generate';
 import { adts, adtsParams, buildAudioFile, oggPage, xiphHeaders } from '@/lib/speech/elementary';
 import { handleApi } from '@/lib/server/handlers';
@@ -29,8 +29,8 @@ describe('translation', () => {
       // Merges lines when given more than two at once.
       return lines.length > 2 ? lines.slice(0, -1).map((l) => `T(${l})`).join('\n') : lines.map((l) => `T(${l})`).join('\n');
     });
-    const out = await translateLines(['1', '2', '3', '4', '5'], 'fr', 'en', { translate: t });
-    expect(out).toEqual(['T(1)', 'T(2)', 'T(3)', 'T(4)', 'T(5)']);
+    const out = await translateLines(['1.', '2.', '3.', '4.', '5.'], 'fr', 'en', { translate: t });
+    expect(out).toEqual(['T(1.)', 'T(2.)', 'T(3.)', 'T(4.)', 'T(5.)']);
   });
 
   it('reports progress in order', async () => {
@@ -39,6 +39,56 @@ describe('translation', () => {
     await translateLines(lines, 'en', 'ar', { translate: async (x) => x, onBatch: (done) => seen.push(done) });
     expect(seen[seen.length - 1]).toBe(200);
     expect([...seen].sort((a, b) => a - b)).toEqual(seen);
+  });
+});
+
+describe('better translation', () => {
+  it('groups a sentence split over lines, but not separate speakers', () => {
+    const lines = ['I told you', 'not to come here.', '- Why?', '- Because', 'it is dangerous.', 'Fine.'];
+    expect(sentenceGroups(lines)).toEqual([[0, 2], [2, 3], [3, 5], [5, 6]]);
+  });
+
+  it('splits a translated sentence back over its lines by length', () => {
+    expect(splitTranslation('قلت لك ألا تأتي إلى هنا', ['I told you', 'not to come here.'])).toEqual(['قلت لك', 'ألا تأتي إلى هنا']);
+  });
+
+  it('translates whole sentences with Google', async () => {
+    const seen: string[] = [];
+    const t: TranslateFn = async (text) => { seen.push(text); return text.split('\n').map((l) => l.toUpperCase()).join('\n'); };
+    const out = await translateLines(['I told you', 'not to come here.', 'Fine.'], 'en', 'ar', { translate: t });
+    expect(seen[0]).toBe('I told you not to come here.\nFine.');
+    expect(out).toEqual(['I TOLD YOU', 'NOT TO COME HERE.', 'FINE.']);
+  });
+
+  it('uses the AI translator with context, filling gaps with Google', async () => {
+    const calls: { lines: string[]; context: string[] }[] = [];
+    const ai = async (lines: string[], context: string[]) => { calls.push({ lines, context }); return lines.map((l, i) => (i === 1 ? undefined : `AI:${l}`)); };
+    const lines = Array.from({ length: 45 }, (_, i) => `Line ${i}.`);
+    const out = await translateLines(lines, 'en', 'ar', { ai, translate: async (x) => x.split('\n').map((l) => `G:${l}`).join('\n') });
+    expect(calls.length).toBe(2);
+    expect(calls[1].context).toEqual(['Line 36.', 'Line 37.', 'Line 38.', 'Line 39.']);
+    expect(out[0]).toBe('AI:Line 0.');
+    expect(out[1]).toBe('G:Line 1.');
+    expect(out[44]).toBe('AI:Line 44.');
+  });
+
+  it('falls back to Google for the rest when the AI fails', async () => {
+    let failed = '';
+    const ai = async () => { throw new Error('allowance used up'); };
+    const out = await translateLines(['A.', 'B.'], 'en', 'ar', { ai, translate: async (x) => x.split('\n').map((l) => `G:${l}`).join('\n'), onAiFailed: (e) => { failed = e.message; } });
+    expect(out).toEqual(['G:A.', 'G:B.']);
+    expect(failed).toBe('allowance used up');
+  });
+
+  it('builds a numbered prompt and reads numbered answers in any shape', () => {
+    const [sys, user] = buildSubtitlePrompt(['Hi.', 'Bye.'], { from: 'en', to: 'ar', context: ['Hello?'], title: 'Dexter' });
+    expect(sys.content).toContain('Arabic');
+    expect(user.content).toContain('1|Hi.\n2|Bye.');
+    expect(user.content).toContain('Title: Dexter');
+    expect(parseNumberedLines('<think>x</think>\n1| مرحبا\n2. وداعا\nnote', 2)).toEqual(['مرحبا', 'وداعا']);
+    expect(readLlmText({ response: 'a' })).toBe('a');
+    expect(readLlmText({ choices: [{ message: { content: 'b' } }] })).toBe('b');
+    expect(readLlmText({ output: [{ type: 'reasoning', content: [{ type: 'reasoning_text', text: 'r' }] }, { type: 'message', content: [{ type: 'output_text', text: 'c' }] }] })).toBe('c');
   });
 });
 
@@ -139,6 +189,15 @@ describe('relay routes', () => {
     expect(calls).toBe(2);
     expect(res.status).toBe(429);
     expect((await res.json()).fatal).toBe(true);
+  });
+
+  it('translates with the first model that answers completely', async () => {
+    const models: string[] = [];
+    const run = async (model: string) => { models.push(model); return model.includes('gpt-oss') ? { choices: [{ message: { content: '1|نعم' } }] } : { response: '1|نعم\n2|لا' }; };
+    const res = await handleApi(req('/api/translate-ai', { method: 'POST', body: JSON.stringify({ lines: ['Yes.', 'No.'], to: 'ar' }) }), {}, { AI: { run } });
+    const body = await res.json();
+    expect(body.lines).toEqual(['نعم', 'لا']);
+    expect(models).toEqual(['@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct']);
   });
 
   it('needs the binding for transcription and validates translation input', async () => {

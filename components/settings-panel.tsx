@@ -89,6 +89,10 @@ export function SettingsPanel() {
         </Row>
         <Row label="Show both languages"><Switch checked={sub.dual} onChange={(v) => updateSubtitleStyle({ dual: v })} label="Show both languages" /></Row>
         <Row label="Sync to the audio" hint="Lines subtitles up with the dialogue automatically."><Switch checked={sub.autoSync} onChange={(v) => updateSubtitleStyle({ autoSync: v })} label="Sync to the audio" /></Row>
+<Row wrap label="Translator" hint={caps?.ai ? 'AI reads the lines in context: more natural Arabic. It uses your relay’s free daily allowance; Google takes over when that runs out.' : 'AI translation needs your relay, updated to the latest version.'}>
+          <Segmented label="Translator" size="sm" value={sub.translator} onChange={(v) => updateSubtitleStyle({ translator: v })}
+            options={[{ value: 'ai', label: 'AI (best)' }, { value: 'google', label: 'Google' }]} />
+        </Row>
         <Row label="Translate when missing" hint="No Arabic or English subtitles? Translate them from another language."><Switch checked={sub.autoTranslate} onChange={(v) => updateSubtitleStyle({ autoTranslate: v })} label="Translate when missing" /></Row>
         <Row label="Make from the audio" hint={caps?.ai ? 'No subtitles at all? Your relay writes them from the speech (free daily allowance).' : 'Needs your relay, updated to the latest version.'}>
           <Switch checked={sub.autoGenerate} onChange={(v) => updateSubtitleStyle({ autoGenerate: v })} label="Make from the audio" />
@@ -165,7 +169,7 @@ export function SettingsPanel() {
         <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
           <KeyField label="TMDB API key" hint={<>Not needed: the catalog works without it.<ServerBadge on={caps?.tmdb} /></>} value={settings.tmdbKey} onChange={(v) => updateSettings({ tmdbKey: v })} />
           <KeyField label="OpenSubtitles API key" hint={<>Not needed. Adds more release-matched subtitles.<ServerBadge on={caps?.subtitles.opensubtitles} /></>} value={settings.openSubtitlesKey} onChange={(v) => updateSettings({ openSubtitlesKey: v })} />
-          <KeyField label="SubDL API key" hint={<>subdl.com/panel/api<ServerBadge on={caps?.subtitles.subdl} /></>} value={settings.subdlKey} onChange={(v) => updateSettings({ subdlKey: v })} />
+          <KeyField label="SubDL API key (recommended for Arabic)" hint={<>The largest collection of Arabic subtitles made by people (including the old Subscene archive), so fewer need machine translation. Free key: subdl.com/panel/api<ServerBadge on={caps?.subtitles.subdl} /></>} value={settings.subdlKey} onChange={(v) => updateSettings({ subdlKey: v })} />
         </div>
       </Disclosure>
 

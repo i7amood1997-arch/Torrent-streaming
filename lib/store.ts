@@ -22,6 +22,8 @@ export interface SubtitleStyle {
   autoTranslate: boolean;
   /** No subtitles at all: generate them from the speech (needs the relay). */
   autoGenerate: boolean;
+  /** Who translates: an AI model on the relay (better, uses its free daily allowance) or Google. */
+  translator: 'ai' | 'google';
 }
 
 export interface Settings {
@@ -122,7 +124,7 @@ export const DEFAULT_SETTINGS: Settings = {
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
-  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true, autoTranslate: true, autoGenerate: true },
+  subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true, autoTranslate: true, autoGenerate: true, translator: 'ai' },
 };
 
 export const useApp = create<AppState>()(

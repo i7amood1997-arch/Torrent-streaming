@@ -69,11 +69,178 @@ export const googleTranslate: TranslateFn = async (text, from, to, signal) => {
   return parseGoogle(await res.json()).text;
 };
 
+// ─── Sentences split across subtitle lines ──────────────────────────────────
+
+const ENDS_SENTENCE = /[.!?…:;"'”»)\]♪]$/;
+
+/**
+ * Group consecutive lines that form one sentence ("I told you" / "not to come here.")
+ * so the translator sees whole sentences. A new speaker ("- ...") always starts a group.
+ */
+export function sentenceGroups(lines: string[], max = 3): [number, number][] {
+  const out: [number, number][] = [];
+  for (let i = 0; i < lines.length; ) {
+    let j = i + 1;
+    while (j < lines.length && j - i < max && lines[j - 1].trim() && !ENDS_SENTENCE.test(lines[j - 1].trim()) && lines[j].trim() && !/^[-–—]/.test(lines[j].trim())) j++;
+    out.push([i, j]);
+    i = j;
+  }
+  return out;
+}
+
+/** Split a translated sentence back over `parts` lines, in proportion to the source lines' lengths. */
+export function splitTranslation(text: string, sources: string[]): string[] {
+  if (sources.length === 1) return [text];
+  const words = text.split(/\s+/).filter(Boolean);
+  const total = sources.reduce((n, x) => n + Math.max(1, x.length), 0);
+  const out: string[] = [];
+  let w = 0;
+  let acc = 0;
+  for (let k = 0; k < sources.length; k++) {
+    acc += Math.max(1, sources[k].length);
+    const end = k === sources.length - 1 ? words.length : Math.max(w + 1, Math.min(words.length - (sources.length - 1 - k), Math.round((acc / total) * words.length)));
+    out.push(words.slice(w, end).join(' '));
+    w = end;
+  }
+  return out;
+}
+
+// ─── LLM translation (relay) ────────────────────────────────────────────────
+
+const LANG_STYLE: Record<string, string> = {
+  ar: 'natural Modern Standard Arabic as used in professional Arabic subtitles (short, clear and conversational; correct gender and number; right-to-left punctuation)',
+  en: 'natural, idiomatic English as used in professional subtitles',
+};
+
+/** Chat messages asking a model to translate numbered subtitle lines, one output line per input line. */
+export function buildSubtitlePrompt(lines: string[], o: { from?: string; to: string; context?: string[]; title?: string }) {
+  const target = LANGUAGE_NAMES[o.to] ?? o.to;
+  const system = [
+    `You translate film and TV subtitles${o.from ? ` from ${LANGUAGE_NAMES[o.from] ?? o.from}` : ''} into ${target}.`,
+    `Write ${LANG_STYLE[o.to] ?? `natural ${target}`}.`,
+    'Keep names, keep the tone and register of each speaker, and translate idioms by meaning, not word for word.',
+    'A sentence may continue onto the next line: read the lines together for meaning, but keep exactly one output line per input line, with the same number.',
+    'Output only the numbered lines, as "N|translation". No notes, no explanations.',
+  ].join(' ');
+  const user = [
+    o.title ? `Title: ${o.title}` : '',
+    o.context?.length ? `Previous lines (context only, do not translate):\n${o.context.join('\n')}` : '',
+    `Lines:\n${lines.map((l, i) => `${i + 1}|${l}`).join('\n')}`,
+  ].filter(Boolean).join('\n\n');
+  return [{ role: 'system', content: system }, { role: 'user', content: user }];
+}
+
+/** The text of a Workers AI answer, whichever shape the model returns. */
+export function readLlmText(out: unknown): string {
+  const o = out as { response?: unknown; choices?: { message?: { content?: unknown } }[]; output?: { type?: string; content?: { type?: string; text?: string }[] }[] };
+  if (typeof out === 'string') return out;
+  if (typeof o?.response === 'string') return o.response;
+  const c = o?.choices?.[0]?.message?.content;
+  if (typeof c === 'string') return c;
+  const parts = o?.output?.filter((x) => x.type === 'message' || !x.type).flatMap((x) => x.content ?? []).filter((x) => x.type !== 'reasoning_text').map((x) => x.text ?? '');
+  return parts?.join('\n') ?? '';
+}
+
+/** Parse "N|text" lines into an array of `count` entries (missing ones undefined). */
+export function parseNumberedLines(text: string, count: number): (string | undefined)[] {
+  const out: (string | undefined)[] = new Array(count);
+  const clean = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+  for (const line of clean.split('\n')) {
+    const m = line.match(/^\s*(\d{1,3})\s*[|｜:.)\-–]\s*(.*)$/);
+    if (!m) continue;
+    const i = Number(m[1]) - 1;
+    const t = m[2].trim();
+    if (i >= 0 && i < count && t && out[i] === undefined) out[i] = t;
+  }
+  return out;
+}
+
+export type BatchTranslateFn = (lines: string[], context: string[], signal?: AbortSignal) => Promise<(string | undefined)[]>;
+
 /**
  * Translate lines, keeping a 1:1 mapping. `onBatch` reports progress as batches finish
  * (in order), so callers can show the first minutes while the rest is translated.
+ *
+ *  - With `ai` (an LLM on the relay): batches of ~40 lines with the previous lines as
+ *    context. Lines it misses fall back to Google; if it fails outright (e.g. the daily
+ *    allowance is used up), the rest is done with Google.
+ *  - Google: sentences split over several lines are translated whole, then split back.
  */
 export async function translateLines(
+  lines: string[],
+  from: string,
+  to: string,
+  opts: { translate?: TranslateFn; ai?: BatchTranslateFn; signal?: AbortSignal; onBatch?: (done: number, out: (string | undefined)[]) => void; onAiFailed?: (e: Error) => void } = {},
+): Promise<string[]> {
+  const out: (string | undefined)[] = new Array(lines.length);
+  let ai = opts.ai;
+  const google = (idx: number[]) => googleLines(idx.map((i) => lines[i]), from, to, opts).then((t) => idx.forEach((i, k) => { out[i] = t[k]; }));
+
+  const size = ai ? 40 : 0;
+  const plan: [number, number][] = ai ? Array.from({ length: Math.ceil(lines.length / size) }, (_, k) => [k * size, Math.min(lines.length, (k + 1) * size)]) : [];
+  if (!ai) {
+    await googleLines(lines, from, to, { ...opts, onBatch: (done, part) => { part.forEach((t, i) => { if (t !== undefined) out[i] = t; }); opts.onBatch?.(done, out); } }).then((t) => t.forEach((x, i) => { out[i] = x; }));
+    return out.map((x) => x ?? '');
+  }
+
+  let done = 0;
+  const run = async ([a, b]: [number, number]) => {
+    const idx = Array.from({ length: b - a }, (_, k) => a + k).filter((i) => lines[i].trim());
+    for (let i = a; i < b; i++) if (!lines[i].trim()) out[i] = '';
+    if (!idx.length) return;
+    if (ai) {
+      try {
+        const res = await ai(idx.map((i) => lines[i]), lines.slice(Math.max(0, a - 4), a).filter((l) => l.trim()), opts.signal);
+        idx.forEach((i, k) => { if (res[k]) out[i] = res[k]; });
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e;
+        ai = undefined; // stop asking the model; Google does the rest
+        opts.onAiFailed?.(e as Error);
+      }
+    }
+    const missing = idx.filter((i) => out[i] === undefined);
+    if (missing.length) await google(missing);
+  };
+  // Two batches in flight, reported in order.
+  for (let k = 0; k < plan.length; k += 2) {
+    await Promise.all(plan.slice(k, k + 2).map(run));
+    done = plan[Math.min(plan.length, k + 2) - 1][1];
+    opts.onBatch?.(done, out);
+  }
+  return out.map((x) => x ?? '');
+}
+
+/** Google path: whole sentences in, split back over their lines. */
+async function googleLines(
+  lines: string[],
+  from: string,
+  to: string,
+  opts: { translate?: TranslateFn; signal?: AbortSignal; onBatch?: (done: number, out: (string | undefined)[]) => void },
+): Promise<string[]> {
+  const groups = sentenceGroups(lines);
+  const units = groups.map(([a, b]) => lines.slice(a, b).join(' '));
+  const out: (string | undefined)[] = new Array(lines.length);
+  const spread = (unitOut: (string | undefined)[]) => {
+    groups.forEach(([a, b], g) => {
+      const t = unitOut[g];
+      if (t === undefined || out[a] !== undefined) return;
+      splitTranslation(t, lines.slice(a, b)).forEach((x, k) => { out[a + k] = x; });
+    });
+  };
+  const unitOut = await translateUnits(units, from, to, {
+    translate: opts.translate,
+    signal: opts.signal,
+    onBatch: (doneUnits, partial) => {
+      spread(partial);
+      opts.onBatch?.(doneUnits >= groups.length ? lines.length : groups[doneUnits]?.[0] ?? lines.length, out);
+    },
+  });
+  spread(unitOut);
+  return out.map((x) => x ?? '');
+}
+
+/** Translate independent units with newline-joined batches (1:1 mapping, bisect on mismatch). */
+async function translateUnits(
   lines: string[],
   from: string,
   to: string,
