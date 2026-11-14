@@ -100,10 +100,14 @@ export function SearchView({ active }: { active: boolean }) {
           placeholder={mode === 'catalog' ? 'Movies, shows and more' : 'Torrent name, or paste a magnet'}
           aria-label={mode === 'catalog' ? 'Search movies and shows' : 'Search torrents, or paste a magnet link'}
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => { setQuery(e.target.value); if (!e.target.value) submit(''); /* emptied by hand: back to Browse */ }}
           onPaste={(e) => { const text = e.clipboardData.getData('text'); if (parseMagnet(text)) { e.preventDefault(); tryDirectPlay(text); } }}
         />
-        {query && <button type="button" className="absolute right-3 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full bg-ink-600 text-ink-200" onClick={clear} aria-label="Clear search"><IconX size={12} /></button>}
+        {query && (
+          <button type="button" className="absolute right-1 top-1/2 grid h-10 w-10 -translate-y-1/2 place-items-center" onClick={clear} aria-label="Clear search">
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-ink-600 text-ink-200"><IconX size={12} /></span>
+          </button>
+        )}
       </form>
       <div className="flex justify-center">
         <Segmented label="Search in" value={mode} onChange={(m) => { setMode(m); if (query.trim()) submit(); }}

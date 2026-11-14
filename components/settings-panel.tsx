@@ -74,7 +74,7 @@ export function SettingsPanel() {
             <option value="webtorrent" disabled={!platform.webTorrent}>WebTorrent</option>
           </select>
         </Row>
-        <Row label="Service">
+        <Row label="Service" wrap>
           <Segmented label="Debrid service" size="sm" value={settings.debridProvider} onChange={(v) => updateSettings({ debridProvider: v })}
             options={PROVIDERS.map((p) => ({ value: p.id, label: p.name }))} />
         </Row>
@@ -117,7 +117,8 @@ export function SettingsPanel() {
         </div>
       </Disclosure>
 
-      <Section title="Android TV" footer={<>Updates install over the previous version. The app opens this site full screen, works with the remote, and plays files the TV’s browser can’t handle (for example MKV with Dolby audio) in the TV’s own player, with your subtitles.</>}>
+      <Disclosure title="Android TV app">
+      <Section footer={<>Updates install over the previous version. The app opens this site full screen, works with the remote, and plays files the TV’s browser can’t handle (for example MKV with Dolby audio) in the TV’s own player, with your subtitles.</>}>
         <div className="space-y-2 px-4 py-3 text-sm text-ink-200">
           <p>1. On the TV, install <b>Downloader</b> (by AFTVnews) from the Play Store.</p>
           <p>2. Open it and type this address:</p>
@@ -126,6 +127,7 @@ export function SettingsPanel() {
         </div>
         <Row label="Download the app here" onClick={() => { location.href = asset('/tv.apk'); }}><span className="text-xs text-white">.apk</span></Row>
       </Section>
+      </Disclosure>
 
       <Disclosure title={`Torrent sources · ${sourcesOn} on`}>
         <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">

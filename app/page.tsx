@@ -80,7 +80,9 @@ export default function App() {
   }, [setView]);
 
   const inPlayer = view === 'player';
-  const pane = (v: View) => `absolute inset-0 overflow-y-auto overscroll-contain scrollbar-thin pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 ${!inPlayer && !detail && listView === v ? '' : 'hidden'}`;
+  // Phones: room for the bottom bar, plus the now-playing bar when it shows.
+  const padBottom = nowPlaying ? 'pb-[calc(9.5rem+env(safe-area-inset-bottom))]' : 'pb-[calc(5.5rem+env(safe-area-inset-bottom))]';
+  const pane = (v: View) => `absolute inset-0 overflow-y-auto overscroll-contain scrollbar-thin ${padBottom} md:pb-8 ${!inPlayer && !detail && listView === v ? '' : 'hidden'}`;
   const paneOn = (v: View) => (!inPlayer && !detail && listView === v ? '' : undefined);
   const nowLabel = nowPlaying ? `${nowPlaying.title}${nowPlaying.season != null ? ` · S${nowPlaying.season} E${nowPlaying.episode}` : ''}` : '';
 
@@ -96,7 +98,7 @@ export default function App() {
           </div>
         </div>
         {detail && (
-          <div key={`${detail.type}-${detail.id}`} data-tv-pane={inPlayer ? undefined : ''} className={`fade absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
+          <div key={`${detail.type}-${detail.id}`} data-tv-pane={inPlayer ? undefined : ''} className={`fade absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin ${padBottom} md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
             <TitleDetail item={detail} />
           </div>
         )}

@@ -253,7 +253,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
               <h2 className="text-base font-semibold text-white">Filters</h2>
               <button className="btn-ghost" onClick={() => setFilters(DEFAULT_FILTERS)}>Reset</button>
             </div>
-            <div className="mb-4">{qualityPills}</div>
+            <div className="mb-4 [&>div]:flex-wrap">{qualityPills}</div>
             {filterControls}
             <button className="btn-primary mt-4 w-full" onClick={() => setDrawer(false)}>Show {visible.length} streams</button>
           </div>

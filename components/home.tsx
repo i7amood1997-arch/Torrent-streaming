@@ -139,8 +139,13 @@ function Hero({ items }: { items: TmdbItem[] }) {
           {it.rating ? <span className="inline-flex items-center gap-1 text-sm font-semibold text-white/80"><IconStar size={13} />{it.rating.toFixed(1)}</span> : null}
         </div>
         {items.length > 1 && (
-          <div className="mt-5 flex gap-1.5" aria-hidden>
-            {items.map((x, k) => <button key={x.id} tabIndex={-1} onClick={() => setI(k)} className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-white' : 'w-1.5 bg-white/35'}`} />)}
+          <div className="mt-3 flex gap-1.5">
+            {items.map((x, k) => (
+              // Small dot, finger-sized hit area.
+              <button key={x.id} tabIndex={-1} onClick={() => setI(k)} aria-label={`Show ${x.title}`} className="-mx-1 grid h-8 min-w-[1.25rem] place-items-center px-1">
+                <span className={`block h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-white' : 'w-1.5 bg-white/35'}`} />
+              </button>
+            ))}
           </div>
         )}
       </div>

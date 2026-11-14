@@ -11,9 +11,9 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-[26px] w-[44px] shrink-0 items-center rounded-full transition disabled:opacity-40 ${checked ? 'bg-on' : 'bg-ink-600'}`}
+      className={`relative inline-flex h-[31px] w-[51px] shrink-0 items-center rounded-full transition disabled:opacity-40 ${checked ? 'bg-on' : 'bg-ink-600'}`}
     >
-      <span className={`inline-block h-[22px] w-[22px] rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[20px]' : 'translate-x-[2px]'}`} />
+      <span className={`inline-block h-[27px] w-[27px] rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[22px]' : 'translate-x-[2px]'}`} />
     </button>
   );
 }
@@ -28,7 +28,7 @@ export function Segmented<T extends string>({ value, options, onChange, label, s
           role="radio"
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
-          className={`rounded-md font-medium transition ${size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'} ${value === o.value ? 'bg-ink-600 text-white shadow' : 'text-ink-400 hover:text-ink-200'}`}
+          className={`whitespace-nowrap rounded-md font-medium transition ${size === 'sm' ? 'min-h-[30px] px-3 py-1 text-xs' : 'min-h-[34px] px-3.5 py-1.5 text-sm'} ${value === o.value ? 'bg-ink-600 text-white shadow' : 'text-ink-400 hover:text-ink-200'}`}
         >
           {o.label}
         </button>
@@ -48,10 +48,10 @@ export function Section({ title, footer, children, className = '' }: { title?: R
   );
 }
 
-export function Row({ label, hint, children, onClick, htmlFor }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode; onClick?: () => void; htmlFor?: string }) {
+export function Row({ label, hint, children, onClick, htmlFor, wrap }: { label: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode; onClick?: () => void; htmlFor?: string; /** Let the control drop below the label on narrow screens. */ wrap?: boolean }) {
   const body = (
     <>
-      <span className="min-w-0 flex-1">
+      <span className={wrap ? 'min-w-[5rem] flex-1' : 'min-w-0 flex-1'}>
         <span className="block text-sm text-ink-200">{label}</span>
         {hint && <span className="mt-0.5 block text-xs leading-snug text-ink-400">{hint}</span>}
       </span>
@@ -60,7 +60,7 @@ export function Row({ label, hint, children, onClick, htmlFor }: { label: React.
   );
   if (onClick) return <button type="button" onClick={onClick} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-ink-800/60">{body}</button>;
   if (htmlFor) return <label htmlFor={htmlFor} className="flex items-center gap-3 px-4 py-3">{body}</label>;
-  return <div className="flex items-center gap-3 px-4 py-3">{body}</div>;
+  return <div className={`flex items-center gap-3 px-4 py-3 ${wrap ? 'flex-wrap gap-y-2' : ''}`}>{body}</div>;
 }
 
 /** Collapsible group (closed by default). */
