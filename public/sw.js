@@ -6,7 +6,7 @@
 importScripts('vendor/webtorrent/sw.min.js'); // resolved relative to this script
 
 const SCOPE = new URL(self.registration.scope).pathname; // e.g. "/Torrent-streaming/"
-const SHELL_CACHE = 'streamdeck-shell-v6';
+const SHELL_CACHE = 'streamdeck-shell-v7';
 const SHELL = ['', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'].map((p) => SCOPE + p);
 
 self.addEventListener('install', (event) => {
@@ -28,6 +28,7 @@ self.addEventListener('fetch', (event) => {
   if (req.headers.has('range')) return; // media
 
   const rel = url.pathname.slice(SCOPE.length);
+  if (rel.endsWith('.apk')) return; // downloads (Android TV app)
   // Immutable build assets: cache-first
   if (rel.startsWith('_next/static/') || rel.startsWith('vendor/') || rel.startsWith('icons/')) {
     event.respondWith(
@@ -47,8 +48,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(SHELL_CACHE).then((c) => c.put(SCOPE, copy));
+          if ((res.headers.get('content-type') || '').includes('text/html')) {
+            const copy = res.clone();
+            caches.open(SHELL_CACHE).then((c) => c.put(SCOPE, copy));
+          }
           return res;
         })
         .catch(() => caches.match(SCOPE).then((r) => r || Response.error())),

@@ -9,9 +9,20 @@ import { formatBytes } from '@/lib/release-parser';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbDetails, TmdbEpisode, TmdbItem, TorrentResult } from '@/lib/types';
+import { initialFocus } from '@/lib/tv';
 import { Shelf } from './home';
 import { IconBack, IconPlay, IconStar } from './icons';
 import { TorrentSearch } from './torrent-search';
+
+/** TV: once the Play button works, move focus to it (unless the viewer already moved on). */
+function FocusPlay({ ready }: { ready: boolean }) {
+  useEffect(() => {
+    if (!ready) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (!el || el === document.body || el.hasAttribute('data-tv-back')) initialFocus('[data-tv-play]', true);
+  }, [ready]);
+  return null;
+}
 
 interface StreamState { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number }
 
@@ -39,6 +50,8 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
     api.tmdbSeason(item.id, season).then((r) => { setEpisodes(r.episodes); setEpisode(r.episodes[0]?.episodeNumber); }).catch((e) => setError(e.message));
   }, [item, season]);
 
+  // TV: start on the back button, then move to Play once a stream is ready.
+  useEffect(() => { const t = setTimeout(() => initialFocus('[data-tv-back]', true), 120); return () => clearTimeout(t); }, [item]);
   const d = details ?? item;
   const series = item.type === 'series';
   const ready = !!details && (!series || episode != null);
@@ -54,7 +67,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/10" />
         <div className="absolute inset-0 hidden bg-gradient-to-r from-black/75 via-black/10 to-transparent md:block" />
-        <button className="glass absolute left-[var(--gutter)] top-[max(1rem,env(safe-area-inset-top))] z-10 grid h-10 w-10 place-items-center rounded-full text-white md:top-20" onClick={onBack} aria-label="Back"><IconBack size={20} /></button>
+        <button className="glass absolute left-[var(--gutter)] top-[max(1rem,env(safe-area-inset-top))] z-10 grid h-10 w-10 place-items-center rounded-full text-white md:top-20" onClick={onBack} aria-label="Back" data-tv-back><IconBack size={20} /></button>
         <div className="gutter rise absolute inset-x-0 bottom-0 flex flex-col items-center pb-6 text-center md:items-start md:pb-10 md:text-left">
           <h1 className="max-w-3xl text-balance text-4xl font-extrabold leading-[1.03] tracking-tight text-white drop-shadow-lg md:text-6xl xl:max-w-4xl xl:text-7xl" dir="auto">{d.title}</h1>
           <p className="mt-3 flex flex-wrap items-center justify-center gap-x-2 text-[13px] font-medium text-white/70 md:justify-start">
@@ -62,7 +75,8 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
             {d.rating ? <span className="inline-flex items-center gap-1 text-white/90"><IconStar size={12} />{d.rating.toFixed(1)}</span> : null}
           </p>
           <div className="mt-5 w-full max-w-sm">
-            <button className="btn-primary h-[52px] w-full rounded-2xl text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
+            <FocusPlay ready={!!stream?.best} />
+            <button data-tv-play className="btn-primary h-[52px] w-full rounded-2xl text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
               onClick={() => stream?.best && stream.play(stream.best)}>
               {stream?.best ? <><IconPlay size={18} /> Play{tag ? ` ${tag}` : ''}</> : !ready || !stream || stream.loading ? <span className="animate-pulse">Finding streams…</span> : 'No streams found'}
             </button>

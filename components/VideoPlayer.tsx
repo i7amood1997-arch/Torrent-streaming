@@ -30,11 +30,12 @@ import { openAudioSource } from '@/lib/speech/audio-source';
 import { SubtitleGenerator, type GeneratorStatus } from '@/lib/speech/generate';
 import { IconBack, IconBack10, IconCC, IconCopy, IconExpand, IconFwd10, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
 import { usePresync } from './use-presync';
+import { isTV, moveFocus, nativeTV, onTvBack, setTvKeyOverride } from '@/lib/tv';
 import { LANGS, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
 
 
 type Engine = 'debrid' | 'cloud' | 'webtorrent' | 'webtor' | 'direct';
-type Phase = 'idle' | 'resolving' | 'ready' | 'error';
+type Phase = 'idle' | 'resolving' | 'ready' | 'error' | 'native';
 
 interface Source {
   url: string;
@@ -86,6 +87,7 @@ const webtorUrl = (magnet: string) => `https://webtor.io/ext/magnet?url=${encode
 
 export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const req = useApp((s) => s.nowPlaying);
+  const view = useApp((s) => s.view);
   const settings = useApp((s) => s.settings);
   const caps = useApp((s) => s.caps);
 
@@ -330,9 +332,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => { syncState.current = {}; }, [req?.nonce]);
 
   // Up-front sync: fit subtitles to audio sampled from across the file, before the viewer needs them.
-  const presyncUrls = source && phase === 'ready' ? readableUrls(source) : undefined;
+  const presyncUrls = source ? readableUrls(source) : undefined;
   usePresync({
-    playKey: source && phase === 'ready' ? `${req?.nonce}|${source.url}` : '',
+    playKey: source ? `${req?.nonce}|${source.url}` : '',
     urls: presyncUrls,
     enabled: settings.subtitle.autoSync,
     ai: !!caps?.ai,
@@ -441,8 +443,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     let lastSave = 0;
     const on = (ev: string, fn: () => void) => { v.addEventListener(ev, fn); return () => v.removeEventListener(ev, fn); };
     const offs = [
-      on('play', () => setPlaying(true)),
-      on('pause', () => setPlaying(false)),
+      on('play', () => { setPlaying(true); nativeTV()?.setKeepScreenOn(true); }),
+      on('pause', () => { setPlaying(false); nativeTV()?.setKeepScreenOn(false); }),
       on('waiting', () => setWaiting(true)),
       on('playing', () => setWaiting(false)),
       on('canplay', () => setWaiting(false)),
@@ -588,6 +590,96 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     hideTimer.current = setTimeout(() => { if (videoRef.current && !videoRef.current.paused) setControls(false); }, 3000);
   }, []);
   useEffect(() => { if (!playing) setControls(true); else poke(); }, [playing, poke]);
+
+  // ── Android TV: remote keys, Back, and the TV's own player for files the WebView can't decode ──
+  const tv = useMemo(() => isTV(), []);
+  useEffect(() => {
+    if (!tv) return;
+    setTvKeyOverride((e) => {
+      if (useApp.getState().view !== 'player' || phase !== 'ready' || panel) return false;
+      const k = e.key;
+      if (k === 'MediaPlayPause' || k === 'MediaPlay' || k === 'MediaPause') { togglePlay(); poke(); return true; }
+      if (k === 'MediaFastForward') { seekBy(30); poke(); return true; }
+      if (k === 'MediaRewind') { seekBy(-30); poke(); return true; }
+      const el = document.activeElement as HTMLElement | null;
+      const free = !el || el === document.body || !containerRef.current?.contains(el);
+      if (!free) {
+        poke();
+        if (k === 'ArrowUp' && !moveFocus('up')) { el!.blur(); return true; }
+        return false;
+      }
+      if (k === 'ArrowLeft') { seekBy(-10); poke(); return true; }
+      if (k === 'ArrowRight') { seekBy(10); poke(); return true; }
+      if (k === 'Enter' || k === ' ') { togglePlay(); poke(); return true; }
+      if (k === 'ArrowUp') { poke(); return true; }
+      if (k === 'ArrowDown') {
+        poke();
+        setTimeout(() => (containerRef.current?.querySelector('[data-tv-controls] button') as HTMLElement | null)?.focus(), 40);
+        return true;
+      }
+      return false;
+    });
+    return () => setTvKeyOverride(undefined);
+  }, [tv, phase, panel, togglePlay, seekBy, poke]);
+
+  useEffect(() => onTvBack(() => {
+    if (useApp.getState().view !== 'player') return false;
+    if (panel) { setPanel(false); return true; }
+    const el = document.activeElement as HTMLElement | null;
+    if (el && el !== document.body && containerRef.current?.contains(el)) { el.blur(); setControls(false); return true; }
+    return false;
+  }), [panel]);
+
+  // Subtitle sheet opened from the remote: start on its first control.
+  useEffect(() => {
+    if (!tv || !panel) return;
+    const t = setTimeout(() => (containerRef.current?.querySelector('[role="dialog"] button, [role="dialog"] select') as HTMLElement | null)?.focus(), 60);
+    return () => clearTimeout(t);
+  }, [tv, panel]);
+
+  const nativeTried = useRef('');
+  const playInTvPlayer = useCallback(async () => {
+    const bridge = nativeTV();
+    const v = videoRef.current;
+    if (!bridge || !source || !req) return;
+    nativeTried.current = `${req.nonce}|${source.url}`;
+    v?.pause();
+    setPhase('native');
+    setStatus('Opening in the TV player…');
+    // Give subtitles a moment to load and sync, so they travel with the video.
+    for (let i = 0; i < 20; i++) {
+      const s = subsRef.current;
+      if (s?.searched && !LANGS.some((l) => s.syncPhase[l] === 'checking')) break;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    const s = subsRef.current;
+    const timelineShift = source.remux ? TIMELINE_OFFSET_MS : 0; // the TV player uses the file's own timeline
+    const subtitles = s ? LANGS.flatMap((l) => {
+      const t = s.loaded[l];
+      if (!t?.cues.length) return [];
+      const { shiftMs, scale } = s.timing(l);
+      return [{ lang: l, label: l === 'ar' ? 'العربية' : 'English', vtt: toVtt(t.cues, (shiftMs - timelineShift) / 1000, false, scale), primary: l === settings.subtitle.primaryLang }];
+    }) : [];
+    let position = v && v.currentTime > 1 ? v.currentTime - timelineShift / 1000 : 0;
+    if (!position && resumeId) { try { position = Number(localStorage.getItem(resumeKey(resumeId))) || 0; } catch { /* ignore */ } }
+    bridge.playNative(JSON.stringify({ url: source.url, title: `${req.title}${req.season != null ? ` · S${req.season} E${req.episode}` : ''}`, position, subtitles }));
+  }, [source, req, settings.subtitle.primaryLang, resumeId]);
+
+  // The WebView couldn't play this file: hand it to the TV's player automatically (once).
+  useEffect(() => {
+    if (!tv || phase !== 'error' || !source || !req || source.engine === 'webtor' || !nativeTV()) return;
+    if (nativeTried.current === `${req.nonce}|${source.url}`) return;
+    void playInTvPlayer();
+  }, [tv, phase, source, req, playInTvPlayer]);
+
+  useEffect(() => {
+    if (!tv) return;
+    (window as unknown as { __tvNativeClosed?: (pos: number) => void }).__tvNativeClosed = (pos: number) => {
+      if (resumeId && pos > 0) { try { localStorage.setItem(resumeKey(resumeId), String(Math.floor(pos))); } catch { /* ignore */ } }
+      const st = useApp.getState();
+      if (st.view === 'player') st.setView(st.listView);
+    };
+  }, [tv, resumeId]);
 
   // ── Keyboard ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -750,7 +842,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   ].filter(Boolean) as { label: string; engine: Engine }[] : [];
 
   const onCC = () => {
-    if (fullscreen) { setPanel((p) => !p); return; }
+    if (fullscreen || tv) { setPanel((p) => !p); return; }
     setSubsHidden((h) => { showFlash('center', h ? 'Subtitles on' : 'Subtitles off'); return !h; });
   };
 
@@ -760,6 +852,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         ref={containerRef}
         className="player relative aspect-video w-full select-none overflow-hidden bg-black lg:rounded-2xl [&:fullscreen]:aspect-auto [&:fullscreen]:rounded-none"
         data-controls={controls && phase === 'ready'}
+        data-tv-layer={tv && view === 'player' ? '' : undefined}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -802,6 +895,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 )}
               </div>
             )}
+            {phase === 'native' && (
+              <div className="max-w-sm space-y-3">
+                <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-ink-600 border-t-white" />
+                <p className="text-sm text-ink-200">{status || 'Playing in the TV player'}</p>
+              </div>
+            )}
             {phase === 'error' && (
               <div className="max-w-md space-y-3">
                 <p className="text-sm text-red-300">{error}</p>
@@ -829,7 +928,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           </div>
         )}
         {phase === 'ready' && !playing && !waiting && (
-          <button className="absolute left-1/2 top-1/2 hidden h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white backdrop-blur [@media(pointer:fine)]:grid" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
+          <button className="tv-grid absolute left-1/2 top-1/2 hidden h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white backdrop-blur [@media(pointer:fine)]:grid" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
             <IconPlay size={28} />
           </button>
         )}
@@ -857,10 +956,10 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
         {/* Bottom controls */}
         {phase === 'ready' && (
-          <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-6 transition-opacity ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          <div data-tv-controls className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent px-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] pt-6 transition-opacity ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); poke(); }}>
             <div className="flex items-center gap-1 text-white">
-              <button className="btn-ghost hidden p-2 text-white [@media(pointer:fine)]:inline-flex" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={20} /> : <IconPlay size={20} />}</button>
+              <button className="tv-flex btn-ghost hidden p-2 text-white [@media(pointer:fine)]:inline-flex" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={20} /> : <IconPlay size={20} />}</button>
               <span className="px-1 text-xs tabular-nums text-white/90">{fmtTime(shownTime)} <span className="text-white/50">/ {fmtTime(duration)}</span></span>
               <div className="flex-1" />
               <div className="group hidden items-center lg:flex">
@@ -870,8 +969,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
               <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
                 <IconCC size={20} />
               </button>
-              <button className="btn-ghost hidden p-2 text-white sm:inline-flex" onClick={togglePip} aria-label="Picture in picture"><IconPip size={18} /></button>
-              <button className="btn-ghost p-2 text-white" onClick={toggleFullscreen} aria-label="Fullscreen">{fullscreen ? <IconShrink size={20} /> : <IconExpand size={20} />}</button>
+              {tv ? (
+                nativeTV() && <button className="btn-ghost px-2.5 py-1.5 text-xs font-semibold text-white" onClick={() => void playInTvPlayer()}>TV player</button>
+              ) : (
+                <button className="btn-ghost hidden p-2 text-white sm:inline-flex" onClick={togglePip} aria-label="Picture in picture"><IconPip size={18} /></button>
+              )}
+              {!tv && <button className="btn-ghost p-2 text-white" onClick={toggleFullscreen} aria-label="Fullscreen">{fullscreen ? <IconShrink size={20} /> : <IconExpand size={20} />}</button>}
             </div>
             <div className="relative h-5">
               <div className="absolute inset-x-1 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
@@ -886,8 +989,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         )}
 
         {/* Subtitle sheet (fullscreen only: otherwise the settings sit under the video) */}
-        {panel && fullscreen && (
-          <div className="absolute inset-y-0 right-0 z-20 w-full max-w-sm overflow-y-auto bg-ink-950/95 p-4 backdrop-blur scrollbar-thin"
+        {panel && (fullscreen || tv) && (
+          <div role="dialog" aria-label="Subtitles" className="absolute inset-y-0 right-0 z-20 w-full max-w-sm overflow-y-auto bg-ink-950/95 p-4 backdrop-blur scrollbar-thin"
             onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
             <SubtitleSettings subs={subs} hidden={subsHidden} onHiddenChange={setSubsHidden} listening={syncListening} generate={generate} onClose={() => setPanel(false)} />
           </div>

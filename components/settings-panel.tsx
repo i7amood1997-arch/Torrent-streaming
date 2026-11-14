@@ -3,8 +3,9 @@
  * Settings: API keys (stored only in this browser's localStorage and sent per
  * request to this app's own API routes), engine preference, indexer info.
  */
+import { useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
-import { DEFAULT_API_BASE } from '@/lib/config';
+import { asset, DEFAULT_API_BASE } from '@/lib/config';
 import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
@@ -51,6 +52,8 @@ export function SettingsPanel() {
   const sub = settings.subtitle;
   const provider = PROVIDERS.find((p) => p.id === settings.debridProvider)!;
   const relay = !caps || caps.direct ? { text: 'Not set up', tone: 'bg-ink-700 text-ink-400' } : caps.offline ? { text: 'Not reachable', tone: 'bg-red-500/15 text-red-300' } : { text: 'Connected', tone: 'bg-hd/15 text-hd' };
+  const [apkAddress, setApkAddress] = useState(asset('/tv.apk'));
+  useEffect(() => setApkAddress(`${location.host}${asset('/tv.apk')}`), []);
   const sourcesOn = SOURCES.filter((s) => settings.indexers.includes(s.id)).length;
 
   return (
@@ -113,6 +116,16 @@ export function SettingsPanel() {
           <a className="btn-primary w-full" href={DEPLOY_URL} target="_blank" rel="noopener noreferrer">Deploy to Cloudflare</a>
         </div>
       </Disclosure>
+
+      <Section title="Android TV" footer={<>Updates install over the previous version. The app opens this site full screen, works with the remote, and plays files the TV’s browser can’t handle (for example MKV with Dolby audio) in the TV’s own player, with your subtitles.</>}>
+        <div className="space-y-2 px-4 py-3 text-sm text-ink-200">
+          <p>1. On the TV, install <b>Downloader</b> (by AFTVnews) from the Play Store.</p>
+          <p>2. Open it and type this address:</p>
+          <p className="select-all rounded-lg bg-ink-800 px-3 py-2 font-mono text-[13px] text-white">{apkAddress}</p>
+          <p>3. Allow Downloader to install apps when asked, then tap <b>Install</b>.</p>
+        </div>
+        <Row label="Download the app here" onClick={() => { location.href = asset('/tv.apk'); }}><span className="text-xs text-white">.apk</span></Row>
+      </Section>
 
       <Disclosure title={`Torrent sources · ${sourcesOn} on`}>
         <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">

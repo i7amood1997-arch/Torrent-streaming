@@ -15,6 +15,7 @@ import { VideoPlayer } from '@/components/VideoPlayer';
 import { api } from '@/lib/client-api';
 import { asset, BASE_PATH } from '@/lib/config';
 import { useApp, type View } from '@/lib/store';
+import { initialFocus, isTV, onTvBack, popFocus, pushFocus, startTvMode } from '@/lib/tv';
 
 const NAV: { id: Exclude<View, 'player'>; label: string; icon: typeof IconFilm }[] = [
   { id: 'discover', label: 'Home', icon: IconFilm },
@@ -27,6 +28,24 @@ export default function App() {
   const apiBaseSetting = useApp((s) => s.settings.apiBase);
   const accessToken = useApp((s) => s.settings.accessToken);
   const [hydrated, setHydrated] = useState(false);
+
+  // Android TV app: remote-control navigation, and Back walks back through the app before leaving it.
+  useEffect(() => {
+    startTvMode();
+    if (!isTV()) return;
+    // Remember the poster/button that opened a title or the player, to return to it.
+    const unsub = useApp.subscribe((s, prev) => {
+      if ((s.detail && s.detail !== prev.detail) || (s.view === 'player' && prev.view !== 'player')) pushFocus();
+    });
+    const off = onTvBack(() => {
+      const s = useApp.getState();
+      if (s.view === 'player') { s.setView(s.listView); popFocus(); return true; }
+      if (s.detail) { s.closeDetail(); popFocus(); return true; }
+      if (s.listView !== 'discover') { s.setView('discover'); setTimeout(() => initialFocus('[data-tv-start]', true), 80); return true; }
+      return false;
+    }, -1);
+    return () => { unsub(); off(); };
+  }, []);
 
   useEffect(() => {
     Promise.resolve(useApp.persist.rehydrate()).then(() => setHydrated(true));

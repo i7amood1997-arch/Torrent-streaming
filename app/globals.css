@@ -358,3 +358,46 @@ input[type='range'] {
     animation: none;
   }
 }
+
+/* ── Android TV (remote control) ────────────────────────────── */
+[data-tv] *:focus {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+[data-tv] .group:focus {
+  outline: none;
+}
+[data-tv] .group:focus .lift {
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 3px #fff,
+    0 24px 50px rgba(0, 0, 0, 0.7);
+}
+[data-tv] .btn-primary:focus,
+[data-tv] .btn-glass:focus {
+  transform: scale(1.05);
+  outline-offset: 4px;
+}
+[data-tv] .shelf {
+  padding-block: 1rem 1.25rem; /* room for the focus lift */
+}
+/* The player always fills the TV screen; its settings open as a sheet. */
+[data-tv] .player-shell[data-active='true'] .player {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+[data-tv] .player-title {
+  display: block;
+}
+[data-tv] .player-back {
+  display: none;
+}
+[data-tv] .tv-grid {
+  display: grid;
+}
+[data-tv] .tv-flex {
+  display: inline-flex;
+}

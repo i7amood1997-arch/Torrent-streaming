@@ -37,6 +37,29 @@ jobs:
           NEXT_PUBLIC_BASE_PATH: ${{ steps.pages.outputs.base_path }}
           # Repository variable (Settings → Secrets and variables → Actions → Variables)
           NEXT_PUBLIC_API_BASE: ${{ vars.API_BASE_URL }}
+      # Android TV app (android-tv/): a WebView shell around this site, published as /tv.apk.
+      # If it fails to build, the website still deploys.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Build Android TV app
+        id: tvapp
+        continue-on-error: true
+        working-directory: android-tv
+        env:
+          TV_APP_URL: ${{ steps.pages.outputs.base_url && format('{0}/', steps.pages.outputs.base_url) || '' }}
+        run: |
+          gradle --no-daemon assembleRelease
+          cp app/build/outputs/apk/release/app-release.apk ../out/tv.apk
+      - uses: actions/upload-artifact@v4
+        if: steps.tvapp.outcome == 'success'
+        with:
+          name: streamdeck-tv-apk
+          path: out/tv.apk
       - uses: actions/upload-pages-artifact@v3
         if: github.ref_name == github.event.repository.default_branch
         with:

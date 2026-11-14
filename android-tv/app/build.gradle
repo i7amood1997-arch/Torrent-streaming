@@ -1,0 +1,62 @@
+plugins {
+    id 'com.android.application'
+}
+
+// CI sets these: every build gets a higher version code, so the TV accepts it as an update.
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+def appUrl = System.getenv('TV_APP_URL') ?: 'https://i7amood1997-arch.github.io/Torrent-streaming/'
+
+android {
+    namespace 'app.streamdeck.tv'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.streamdeck.tv'
+        minSdk 21
+        targetSdk 34
+        versionCode runNumber
+        versionName "1.${runNumber}"
+        buildConfigField 'String', 'APP_URL', "\"${appUrl}\""
+    }
+
+    // A fixed key so each new build installs over the previous one. It only identifies
+    // this sideloaded app; it isn't used for any store.
+    signingConfigs {
+        release {
+            storeFile file('streamdeck-tv.jks')
+            storePassword 'streamdeck'
+            keyAlias 'streamdeck'
+            keyPassword 'streamdeck'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation 'androidx.media3:media3-exoplayer:1.4.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.4.1'
+    implementation 'androidx.media3:media3-ui:1.4.1'
+}

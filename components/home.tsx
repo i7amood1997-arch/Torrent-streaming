@@ -8,6 +8,7 @@ import { api } from '@/lib/client-api';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbItem } from '@/lib/types';
+import { initialFocus } from '@/lib/tv';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
 export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: number; wide?: boolean }) {
@@ -103,10 +104,16 @@ function Hero({ items }: { items: TmdbItem[] }) {
   const [i, setI] = useState(0);
   useEffect(() => {
     if (items.length < 2) return;
-    const t = setInterval(() => setI((x) => (x + 1) % items.length), 9000);
+    const t = setInterval(() => {
+      // Don't swap the title under the viewer's focus (TV remote / keyboard).
+      if (document.activeElement?.hasAttribute('data-tv-start')) return;
+      setI((x) => (x + 1) % items.length);
+    }, 9000);
     return () => clearInterval(t);
   }, [items.length]);
   const it = items[i % Math.max(1, items.length)];
+  // TV: start on the featured title's Play button.
+  useEffect(() => { if (items.length) setTimeout(() => initialFocus('[data-tv-start]'), 300); }, [items.length]);
   if (!it) return <div className="h-[68vh] min-h-[420px] animate-pulse bg-ink-900 md:h-[min(78vh,70vw)]" />;
   return (
     <section className="relative h-[68vh] min-h-[420px] overflow-hidden md:h-[min(78vh,70vw)]">
@@ -119,7 +126,7 @@ function Hero({ items }: { items: TmdbItem[] }) {
         <h1 className="max-w-3xl text-balance text-4xl font-extrabold leading-[1.02] tracking-tight text-white drop-shadow-lg md:text-6xl xl:max-w-4xl xl:text-7xl" dir="auto">{it.title}</h1>
         {it.overview && <p className="mt-3 line-clamp-2 max-w-xl text-sm leading-relaxed text-white/75 md:text-base xl:max-w-2xl xl:text-lg" dir="auto">{it.overview}</p>}
         <div className="mt-5 flex items-center gap-3">
-          <button className="btn-primary h-12 rounded-full px-8 text-base xl:h-14 xl:px-10 xl:text-lg" onClick={() => open(it)}><IconPlay size={18} /> Play</button>
+          <button data-tv-start className="btn-primary h-12 rounded-full px-8 text-base xl:h-14 xl:px-10 xl:text-lg" onClick={() => open(it)}><IconPlay size={18} /> Play</button>
           {it.rating ? <span className="inline-flex items-center gap-1 text-sm font-semibold text-white/80"><IconStar size={13} />{it.rating.toFixed(1)}</span> : null}
         </div>
         {items.length > 1 && (

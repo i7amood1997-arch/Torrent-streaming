@@ -167,3 +167,14 @@ Direct HTTP links appear in their own **Direct links** section above torrents. T
 - Keys stored as **Worker secrets** can be used by anyone who can reach the Worker. Set `ACCESS_TOKEN` (and enter it in Settings) before storing a Debrid key there. `ALLOWED_ORIGINS` stops other websites from calling the Worker from a browser, but it doesn't stop scripts.
 - A client-supplied Torznab URL is ignored unless `ALLOW_CLIENT_TORZNAB=true`, so the Worker isn't an open proxy.
 - The subtitle download token only accepts OpenSubtitles file ids or SubDL `/subtitle/*.zip` paths.
+
+
+## Android TV app
+
+`android-tv/` is a small native app (Java, Media3) that opens the site full screen on Android TV and phones:
+
+- WebView with the remote driving the page: `lib/tv.ts` does spatial focus navigation (arrow keys move to the nearest control, OK clicks, focused posters lift), and the TV's Back button steps back through sheets, the player and title pages before leaving the app.
+- On TV the player always fills the screen; ←/→ seek 10 s, OK plays/pauses, ↓ reaches the control bar, media keys work.
+- Files the WebView can't decode (e.g. MKV with Dolby/DTS audio) open in `PlayerActivity` (ExoPlayer) automatically, with the app's subtitles as already-synced WebVTT and the resume position; the position comes back when it closes.
+- Built by the Pages workflow (`gradle assembleRelease`, Gradle 8.14, AGP 8.7, JDK 17) and published as `/tv.apk` next to the site. `versionCode` is the workflow run number, so each build installs as an update. The signing key in `android-tv/app/streamdeck-tv.jks` only identifies this sideloaded app.
+- Install on the TV: Downloader (AFTVnews) from the Play Store → enter `<user>.github.io/<repo>/tv.apk`.
