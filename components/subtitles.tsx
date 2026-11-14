@@ -11,13 +11,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useApp, type PlayRequest } from '@/lib/store';
 import { activeCues, autoSelectTracks, decodeSubtitleBytes, hasRtlChars, isRtlLang, parseSubtitles, releaseSimilarity } from '@/lib/subtitle-parser';
-import { languageName, plainLine, translateLines, type BatchTranslateFn } from '@/lib/translate';
+import { languageName, plainLine, translateLines, upgradeLines, type BatchTranslateFn } from '@/lib/translate';
+import { getTranslation, putTranslation } from '@/lib/translation-cache';
 import type { SubtitleCue, SubtitleTrackInfo } from '@/lib/types';
 import type { GeneratorStatus } from '@/lib/speech/generate';
 import { IconUpload, IconX } from './icons';
 import { Disclosure, Row, Segmented, Switch } from './ui';
 
 export type Lang = 'ar' | 'en';
+
+/** Where playback is (media seconds), for translating the scene being watched first. Set by the player. */
+const playhead = { current: 0 };
+export const setSubtitlePlayhead = (t: number) => { playhead.current = t; };
 export const LANGS: Lang[] = ['ar', 'en'];
 
 export interface LoadedTrack {
@@ -99,6 +104,8 @@ export interface AutoJob {
   kind: 'translate' | 'generate';
   /** Which translator did the work (AI falls back to Google when its allowance runs out). */
   engine?: 'ai' | 'google';
+  /** A readable translation is on screen and the AI is improving it. */
+  upgrading?: boolean;
   status: 'working' | 'done' | 'error';
   from?: string;
   /** 0..1 while translating. */
@@ -170,15 +177,19 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     }
   }, []);
 
-  /** Machine-translate a downloaded track into `lang`; the first minutes show while the rest is translated. */
+  /**
+   * Translate a downloaded track into `lang`:
+   *  1. a saved AI translation from an earlier viewing shows at once;
+   *  2. otherwise Google translates the whole file in seconds, so subtitles appear straight away;
+   *  3. then the AI rewrites it in the background, starting at the scene being watched.
+   */
   const translateInto = useCallback(async (lang: Lang, src: SubtitleTrackInfo, parent?: AbortSignal) => {
     jobRef.current[lang]?.abort();
     const ac = new AbortController();
     jobRef.current[lang] = ac;
     parent?.addEventListener('abort', () => ac.abort(), { once: true });
     const ai = aiTranslator(src.lang, lang, titleRef.current);
-    let engine: 'ai' | 'google' = ai ? 'ai' : 'google';
-    const id = `tr-${lang}-${src.id}-${engine}`;
+    const id = `tr-${lang}-${src.id}`;
     const info: SubtitleTrackInfo = {
       id, provider: 'translated', lang, sourceLang: src.lang, token: '', score: src.score, hashMatch: src.hashMatch,
       label: `${lang.toUpperCase()} · Translated from ${languageName(src.lang)}`, releaseName: src.releaseName,
@@ -187,7 +198,8 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     const cached = translatedRef.current.get(id);
     if (cached) { setLoaded((l) => ({ ...l, [lang]: cached })); return; }
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
-    setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'working', from: src.lang, progress: 0 } }));
+    const status = (job: Partial<AutoJob>) => setAuto((a) => ({ ...a, [lang]: { kind: 'translate', from: src.lang, status: 'working', ...job } as AutoJob }));
+    status({ engine: 'google', progress: 0 });
     try {
       const srcCues = (await api.subtitleCues(src.token, ac.signal)).cues ?? [];
       if (!srcCues.length) throw new Error('the subtitle file is empty');
@@ -197,18 +209,39 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
         setLoaded((l) => (l[lang]?.info.id === id ? { ...l, [lang]: { info, cues } } : l));
         return cues;
       };
-      const out = await translateLines(lines, src.lang, lang, {
+      const finish = (out: (string | undefined)[], engine: 'ai' | 'google') => {
+        translatedRef.current.set(id, { info, cues: publish(out) });
+        setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'done', from: src.lang } }));
+      };
+
+      const cacheKey = `${src.token || src.id}|${lang}`;
+      const saved = ai ? getTranslation(cacheKey, lines.length) : undefined;
+      if (saved) { finish(saved, 'ai'); return; }
+
+      // 1) Fast, complete first pass.
+      const out: (string | undefined)[] = await translateLines(lines, src.lang, lang, {
         translate: api.translate,
-        ai,
         signal: ac.signal,
-        onAiFailed: () => { engine = 'google'; },
-        onBatch: (done, partial) => {
-          publish(partial);
-          setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'working', from: src.lang, progress: done / Math.max(1, lines.length) } }));
-        },
+        onBatch: (done, partial) => { publish(partial); status({ engine: 'google', progress: done / Math.max(1, lines.length) }); },
       });
-      translatedRef.current.set(id, { info, cues: publish(out) });
-      setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'done', from: src.lang } }));
+      publish(out);
+      if (!ai) { finish(out, 'google'); return; }
+
+      // 2) AI rewrite, nearest the viewer first; lines swap in as they're ready.
+      status({ engine: 'ai', upgrading: true, progress: 0 });
+      const startAt = () => {
+        const t = playhead.current;
+        let i = 0;
+        while (i < srcCues.length && srcCues[i].end < t) i++;
+        return i;
+      };
+      const complete = await upgradeLines(lines, out, ai, {
+        startAt,
+        signal: ac.signal,
+        onBatch: (done, total) => { publish(out); status({ engine: 'ai', upgrading: true, progress: done / total }); },
+      });
+      if (complete) putTranslation(cacheKey, out.map((x) => x ?? ''));
+      finish(out, complete ? 'ai' : 'google');
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
       setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'error', from: src.lang, message: `Couldn’t translate: ${(e as Error).message}` } }));
@@ -472,7 +505,10 @@ function syncText(subs: SubtitleState, lang: Lang, enabled: boolean, listening: 
   const info = tr?.info;
   if (!info) return undefined;
   const job = subs.auto[lang];
-  if (info.provider === 'translated' && job?.status === 'working') return { text: `${job.engine === 'ai' ? 'AI is translating' : 'Translating'} from ${languageName(job.from)}… ${Math.round((job.progress ?? 0) * 100)}%` };
+  if (info.provider === 'translated' && job?.status === 'working') {
+    const pct = Math.round((job.progress ?? 0) * 100);
+    return { text: job.upgrading ? `Improving the translation with AI… ${pct}% (the scene you’re watching first)` : `Translating from ${languageName(job.from)}… ${pct}%` };
+  }
   if (!tr.cues.length) return { text: info.provider === 'generated' ? 'Listening to the first minute…' : 'Downloading…' };
   if (info.provider === 'embedded') return { text: 'From the video file · always in sync', good: true };
   if (info.provider === 'generated') return { text: info.sourceLang === lang ? 'Made from the audio · in sync' : `Made from the audio · machine-translated from ${languageName(info.sourceLang)}`, good: true };

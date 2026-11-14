@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { batches, buildSubtitlePrompt, parseGoogle, parseNumberedLines, plainLine, readLlmText, sentenceGroups, splitTranslation, translateLines, type TranslateFn } from '@/lib/translate';
+import { batches, upgradeLines, buildSubtitlePrompt, parseGoogle, parseNumberedLines, plainLine, readLlmText, sentenceGroups, splitTranslation, translateLines, type TranslateFn } from '@/lib/translate';
 import { segmentsToCues } from '@/lib/speech/generate';
 import { adts, adtsParams, buildAudioFile, oggPage, xiphHeaders } from '@/lib/speech/elementary';
 import { handleApi } from '@/lib/server/handlers';
@@ -89,6 +89,38 @@ describe('better translation', () => {
     expect(readLlmText({ response: 'a' })).toBe('a');
     expect(readLlmText({ choices: [{ message: { content: 'b' } }] })).toBe('b');
     expect(readLlmText({ output: [{ type: 'reasoning', content: [{ type: 'reasoning_text', text: 'r' }] }, { type: 'message', content: [{ type: 'output_text', text: 'c' }] }] })).toBe('c');
+  });
+});
+
+describe('AI upgrade', () => {
+  it('starts at the scene being watched and spreads outwards', async () => {
+    const order: number[] = [];
+    const lines = Array.from({ length: 100 }, (_, i) => `L${i}.`);
+    const cur = lines.map((l) => `G:${l}`);
+    const ok = await upgradeLines(lines, cur, async (ls) => { order.push(Number(ls[0].slice(1, -1))); return ls.map((l) => `AI:${l}`); }, { startAt: () => 52, batchSize: 10, parallel: 1 });
+    expect(ok).toBe(true);
+    expect(order.slice(0, 3)).toEqual([50, 60, 70]); // the scene being watched, then what comes next
+    expect(order.indexOf(90)).toBeLessThan(order.indexOf(20)); // ahead before far behind
+    expect(order[order.length - 1]).toBe(0); // the start of the film last
+    expect(cur.every((x) => x.startsWith('AI:'))).toBe(true);
+  });
+
+  it('keeps the first translation where the AI stops', async () => {
+    const lines = Array.from({ length: 30 }, (_, i) => `L${i}.`);
+    const cur = lines.map((l) => `G:${l}`);
+    let calls = 0;
+    const ok = await upgradeLines(lines, cur, async (ls) => { if (++calls > 1) throw new Error('allowance'); return ls.map((l) => `AI:${l}`); }, { batchSize: 10, parallel: 1 });
+    expect(ok).toBe(false);
+    expect(cur[0]).toBe('AI:L0.');
+    expect(cur[29]).toBe('G:L29.');
+  });
+
+  it('runs several batches at once', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const lines = Array.from({ length: 100 }, (_, i) => `L${i}.`);
+    await upgradeLines(lines, [...lines], async (ls) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 5)); inFlight--; return ls; }, { batchSize: 10, parallel: 4 });
+    expect(peak).toBe(4);
   });
 });
 

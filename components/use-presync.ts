@@ -66,7 +66,8 @@ export function usePresync(opts: {
       const s = subs();
       const tr = s.loaded[lang];
       if (!tr?.cues.length || !downloadable(tr.info) || s.manual.has(lang) || done.get(lang) === tr.info.id) return [];
-      if (tr.info.provider === 'translated' && s.auto[lang]?.status === 'working') return []; // wait for all lines
+      // Wait for a complete first translation (the AI rewrite afterwards keeps the timing).
+      if (tr.info.provider === 'translated' && s.auto[lang]?.status === 'working' && !s.auto[lang]?.upgrading) return [];
       return [{ lang, info: tr.info, cues: tr.cues }];
     });
 

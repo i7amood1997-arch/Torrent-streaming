@@ -31,7 +31,7 @@ import { SubtitleGenerator, type GeneratorStatus } from '@/lib/speech/generate';
 import { IconBack, IconBack10, IconCC, IconCopy, IconExpand, IconFwd10, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
 import { usePresync } from './use-presync';
 import { isTV, moveFocus, nativeTV, onTvBack, setTvKeyOverride } from '@/lib/tv';
-import { LANGS, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
+import { LANGS, setSubtitlePlayhead, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
 
 
 type Engine = 'debrid' | 'cloud' | 'webtorrent' | 'webtor' | 'direct';
@@ -461,6 +461,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       on('timeupdate', () => {
         setTime(v.currentTime);
         genRef.current?.setTime(v.currentTime);
+        setSubtitlePlayhead(v.currentTime);
         if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
         if (resumeId && Math.abs(v.currentTime - lastSave) > 5) {
           lastSave = v.currentTime;

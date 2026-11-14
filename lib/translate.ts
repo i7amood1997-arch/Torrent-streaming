@@ -274,3 +274,57 @@ async function translateUnits(
   }
   return out.map((s) => s ?? '');
 }
+
+/**
+ * Improve an existing translation with the AI, in place: small batches, several at once,
+ * starting at `startAt` (the scene being watched) and spreading outwards. Each finished
+ * batch is reported so the subtitles on screen improve as they arrive. Returns false if
+ * the AI stopped (e.g. the daily allowance ran out); the lines it didn't reach keep the
+ * first translation.
+ */
+export async function upgradeLines(
+  lines: string[],
+  current: (string | undefined)[],
+  ai: BatchTranslateFn,
+  opts: { startAt?: () => number; batchSize?: number; parallel?: number; signal?: AbortSignal; onBatch?: (done: number, total: number) => void } = {},
+): Promise<boolean> {
+  const size = opts.batchSize ?? 25;
+  const pending = new Set<number>();
+  for (let a = 0; a < lines.length; a += size) pending.add(a);
+  const total = pending.size;
+  let failed = false;
+  let finished = 0;
+  /** Next batch: the one nearest the viewer, ahead of them first. */
+  const next = (): number | undefined => {
+    if (!pending.size) return undefined;
+    const at = Math.floor((opts.startAt?.() ?? 0) / size) * size;
+    let best: number | undefined;
+    let bestCost = Infinity;
+    for (const a of pending) {
+      const cost = a >= at ? a - at : (at - a) * 3; // behind the viewer matters less
+      if (cost < bestCost) { bestCost = cost; best = a; }
+    }
+    pending.delete(best!);
+    return best;
+  };
+  const worker = async () => {
+    for (let a = next(); a !== undefined && !failed; a = next()) {
+      const b = Math.min(lines.length, a + size);
+      const idx = Array.from({ length: b - a }, (_, k) => a + k).filter((i) => lines[i].trim());
+      if (idx.length) {
+        try {
+          const res = await ai(idx.map((i) => lines[i]), lines.slice(Math.max(0, a - 4), a).filter((l) => l.trim()), opts.signal);
+          idx.forEach((i, k) => { if (res[k]) current[i] = res[k]; });
+        } catch (e) {
+          if ((e as Error).name === 'AbortError') throw e;
+          failed = true;
+          return;
+        }
+      }
+      finished++;
+      opts.onBatch?.(finished, total);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(opts.parallel ?? 4, total) }, worker));
+  return !failed;
+}

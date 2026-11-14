@@ -275,7 +275,18 @@ async function translateAi(req: Request, b: ApiBindings) {
   let lastError = '';
   for (const model of TRANSLATORS) {
     try {
-      const out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+      let out: unknown;
+      if (model.includes('gpt-oss')) {
+        // Reasoning model: "low" effort is plenty for translation and several times faster than the default.
+        try {
+          out = await b.AI.run(model, { instructions: messages[0].content, input: messages[1].content, reasoning: { effort: 'low' }, max_output_tokens: 4096 });
+        } catch (e) {
+          if (/neuron|allocation|quota|4006/i.test(describeError(e))) throw e;
+          out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+        }
+      } else {
+        out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+      }
       const parsed = parseNumberedLines(readLlmText(out), lines.length);
       if (parsed.filter(Boolean).length >= Math.ceil(lines.length * 0.8)) return json({ lines: parsed, model });
       lastError = 'incomplete answer';
