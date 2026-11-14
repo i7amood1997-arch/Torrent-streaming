@@ -10,8 +10,8 @@ export const metadata: Metadata = {
   manifest: asset('/manifest.webmanifest'),
   appleWebApp: { capable: true, title: 'Streamdeck', statusBarStyle: 'black' },
   icons: {
-    icon: [{ url: asset('/icons/icon.svg'), type: 'image/svg+xml' }, { url: asset('/icons/icon-192.png'), sizes: '192x192' }],
-    apple: [{ url: asset('/icons/apple-touch-icon.png'), sizes: '180x180' }],
+    icon: [{ url: asset('/icons/icon.svg?v=2'), type: 'image/svg+xml' }, { url: asset('/icons/icon-192.png?v=2'), sizes: '192x192' }],
+    apple: [{ url: asset('/icons/apple-touch-icon.png?v=2'), sizes: '180x180' }],
   },
   formatDetection: { telephone: false },
 };
