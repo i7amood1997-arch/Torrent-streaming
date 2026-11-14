@@ -54,7 +54,8 @@ export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; pre
     const c = (r.container ?? r.fileName?.split('.').pop() ?? '').toLowerCase();
     return (
       (tier[r.quality] ?? 0.5) +
-      (r.url ? 2 : Math.min(2, Math.log10(r.seeders + 1) * 0.7) - (r.seeders < 3 ? 2 : 0)) +
+      // Direct links start instantly and don't depend on seeders: they win ties.
+      (r.url ? 2.3 : Math.min(2, Math.log10(r.seeders + 1) * 0.7) - (r.seeders < 3 ? 2 : 0)) +
       (opts.preferMp4 && ['mp4', 'm4v', 'mov'].includes(c) ? 0.6 : 0) -
       (r.remux ? 0.8 : 0) - // huge files
       ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0)

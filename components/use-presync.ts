@@ -117,7 +117,8 @@ export function usePresync(opts: {
         let best: { info: SubtitleTrackInfo; cues: SubtitleCue[]; fit: Fit } | undefined;
         for (const t of others) {
           try {
-            const alt = (await api.subtitleCues(t.token, signal)).cues;
+            const alt = (await api.subtitleCues(t.token, signal)).cues ?? [];
+            if (alt.length < 8) continue;
             const f = fitTrack(windows, alt);
             if (f && betterFit(f, best?.fit)) best = { info: t, cues: alt, fit: f };
             if (fits(f)) break;
@@ -157,6 +158,7 @@ export function usePresync(opts: {
           const length = cheap ? 60 : Math.floor(Math.min(60, MKV_BUDGET / src.costPerSecond));
           if (length < 30) throw new Error('bitrate too high to sample');
           const first = pending()[0];
+          if (!first) throw new Error('subtitle changed');
           const starts = planWindows(first.cues, src.duration, cheap ? 4 : 3, length);
           for (const start of starts) {
             const clip = await src.read(start, start + length, signal);

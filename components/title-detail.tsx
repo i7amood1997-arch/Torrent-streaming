@@ -47,7 +47,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
     if (item.type !== 'series' || season == null) return;
     setEpisodes([]);
     setEpisode(undefined);
-    api.tmdbSeason(item.id, season).then((r) => { setEpisodes(r.episodes); setEpisode(r.episodes[0]?.episodeNumber); }).catch((e) => setError(e.message));
+    api.tmdbSeason(item.id, season).then((r) => { const eps = r?.episodes ?? []; setEpisodes(eps); setEpisode(eps[0]?.episodeNumber); }).catch((e) => setError(e.message));
   }, [item, season]);
 
   // TV: start on the back button, then move to Play once a stream is ready.

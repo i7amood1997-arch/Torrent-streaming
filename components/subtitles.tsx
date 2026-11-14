@@ -150,7 +150,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const loadCues = useCallback(async (lang: Lang, info: SubtitleTrackInfo, signal?: AbortSignal) => {
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
     try {
-      const { cues } = await api.subtitleCues(info.token, signal);
+      const cues = (await api.subtitleCues(info.token, signal)).cues ?? [];
       setLoaded((l) => (l[lang]?.info.id === info.id ? { ...l, [lang]: { info, cues } } : l));
     } catch (e) {
       if ((e as Error).name === 'AbortError') return;
@@ -176,7 +176,8 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
     setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'working', from: src.lang, progress: 0 } }));
     try {
-      const { cues: srcCues } = await api.subtitleCues(src.token, ac.signal);
+      const srcCues = (await api.subtitleCues(src.token, ac.signal)).cues ?? [];
+      if (!srcCues.length) throw new Error('the subtitle file is empty');
       const lines = srcCues.map((c) => plainLine(c.text));
       const publish = (out: (string | undefined)[]) => {
         const cues = srcCues.flatMap((c, i) => (out[i] ? [{ start: c.start, end: c.end, text: out[i]! }] : []));
@@ -225,7 +226,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     const autoTranslate = useApp.getState().settings.subtitle.autoTranslate;
     api
       .subtitles({ imdb: req.imdbId, tmdb: req.tmdbId, type: req.type, season: req.season, episode: req.episode, release: releaseName ?? req.result?.title, q: req.imdbId || req.tmdbId ? undefined : req.title, langs: autoTranslate ? 'ar,en,*' : 'ar,en', hash: file.hash, size: file.size, file: file.name }, ac.signal)
-      .then(({ tracks, errors }) => {
+      .then(({ tracks = [], errors = [] }) => {
         setTracks((prev) => [...prev.filter((t) => t.provider === 'embedded' || t.provider === 'local' || t.provider === 'generated'), ...tracks]);
         setErrors(errors.map((e) => `${e.provider}: ${e.message}`));
         const best = autoSelectTracks(tracks, LANGS);

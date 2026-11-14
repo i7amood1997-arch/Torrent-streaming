@@ -90,7 +90,7 @@ function LazyShelf({ title, type, genre }: { title: string; type: 'movie' | 'ser
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
-      api.shelf(type, genre).then((r) => setItems(r.results)).catch(() => setFailed(true));
+      api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed(true));
     }, { rootMargin: '400px' });
     io.observe(el);
     return () => io.disconnect();
@@ -154,7 +154,7 @@ function Hero({ items }: { items: TmdbItem[] }) {
 }
 
 function ContinueWatching() {
-  const history = useApp((s) => s.history);
+  const history = useApp((s) => s.history) ?? [];
   const play = useApp((s) => s.play);
   const forget = useApp((s) => s.forget);
   if (!history.length) return null;
@@ -208,7 +208,7 @@ export function Home({ active }: { active: boolean }) {
     if (!active || !ready || items.length) return;
     const ac = new AbortController();
     setError(undefined);
-    api.tmdbTrending(ac.signal).then(({ results }) => setItems(results)).catch((e) => { if (e.name !== 'AbortError') setError(e.message); });
+    api.tmdbTrending(ac.signal).then((r) => setItems(r?.results ?? [])).catch((e) => { if (e.name !== 'AbortError') setError(e.message); });
     return () => ac.abort();
   }, [active, ready, items.length]);
 

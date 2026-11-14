@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { ErrorBoundary } from '@/components/error-boundary';
 import { asset } from '@/lib/config';
 
 import './globals.css';
@@ -34,7 +35,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700&family=Inter:wght@400;500;600;700&family=Tajawal:wght@500;700&display=swap"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <ErrorBoundary>{children}</ErrorBoundary>
+      </body>
     </html>
   );
 }

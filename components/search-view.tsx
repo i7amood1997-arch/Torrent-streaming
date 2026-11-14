@@ -73,7 +73,7 @@ export function SearchView({ active }: { active: boolean }) {
     const ac = new AbortController();
     setLoading(true); setError(undefined); setItems([]);
     (q ? api.tmdbSearch(q, ac.signal) : api.shelf(browse!.type, browse!.genre, ac.signal))
-      .then(({ results }) => setItems(results))
+      .then((r) => setItems(r?.results ?? []))
       .catch((e) => { if (e.name !== 'AbortError') setError(e.message); })
       .finally(() => { if (!ac.signal.aborted) setLoading(false); });
     return () => ac.abort();

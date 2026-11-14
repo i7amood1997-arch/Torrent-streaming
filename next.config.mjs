@@ -11,6 +11,8 @@ const nextConfig = {
   trailingSlash: true,
   reactStrictMode: true,
   images: { unoptimized: true },
+  // Debug builds only (DEBUG_SOURCEMAPS=1): readable stack traces in the browser.
+  productionBrowserSourceMaps: process.env.DEBUG_SOURCEMAPS === '1',
 };
 
 export default nextConfig;
