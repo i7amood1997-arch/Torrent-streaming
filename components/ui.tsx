@@ -11,7 +11,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-[26px] w-[44px] shrink-0 items-center rounded-full transition disabled:opacity-40 ${checked ? 'bg-accent' : 'bg-ink-600'}`}
+      className={`relative inline-flex h-[26px] w-[44px] shrink-0 items-center rounded-full transition disabled:opacity-40 ${checked ? 'bg-on' : 'bg-ink-600'}`}
     >
       <span className={`inline-block h-[22px] w-[22px] rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-[20px]' : 'translate-x-[2px]'}`} />
     </button>
@@ -42,7 +42,7 @@ export function Section({ title, footer, children, className = '' }: { title?: R
   return (
     <section className={className}>
       {title && <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-ink-400">{title}</h3>}
-      <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">{children}</div>
+      <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">{children}</div>
       {footer && <p className="mt-2 px-1 text-xs leading-relaxed text-ink-400">{footer}</p>}
     </section>
   );

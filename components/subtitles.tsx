@@ -543,12 +543,12 @@ export function SubtitleSettings({ subs, hidden, onHiddenChange, listening, gene
         {onClose && <button className="btn-ghost -mr-2 p-2" onClick={onClose} aria-label="Close"><IconX size={18} /></button>}
       </div>
 
-      <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+      <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
         {LANGS.map((lang) => <LanguageCard key={lang} subs={subs} lang={lang} enabled={style.autoSync} listening={!!listening} />)}
       </div>
 
       {generate && (none || generate.running || gs) && (
-        <div className="space-y-2 rounded-2xl bg-ink-900 p-4 ring-1 ring-ink-700/70">
+        <div className="space-y-2 rounded-2xl bg-ink-900 p-4 ring-1 ring-white/[0.06]">
           <p className="font-medium text-white">Make subtitles from the audio</p>
           <p className="text-xs leading-relaxed text-ink-400">Speech recognition on your relay listens a few minutes ahead and writes subtitles, translated into Arabic and English.</p>
           {gs && (
@@ -566,7 +566,7 @@ export function SubtitleSettings({ subs, hidden, onHiddenChange, listening, gene
       {subs.errors.length > 0 && none && !generate?.running && <p className="text-xs text-ink-400">{subs.errors.join(' · ')}</p>}
 
       <Disclosure title="Appearance">
-        <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+        <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
           <Row label="Main language">
             <Segmented label="Main subtitle language" size="sm" value={style.primaryLang} onChange={(v) => update({ primaryLang: v })}
               options={[{ value: 'ar', label: 'العربية' }, { value: 'en', label: 'English' }]} />
@@ -590,7 +590,7 @@ export function SubtitleSettings({ subs, hidden, onHiddenChange, listening, gene
       </Disclosure>
 
       <Disclosure title="Automatic">
-        <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+        <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
           <Row label="Sync to the audio" hint="Lines subtitles up with the dialogue, including speed differences.">
             <Switch checked={style.autoSync} onChange={(v) => update({ autoSync: v })} label="Sync to the audio" />
           </Row>

@@ -76,6 +76,9 @@ interface Video {
 
 export const cinemeta = {
   search: (query: string) => both((k) => `/catalog/${k}/top/search=${encodeURIComponent(query)}.json`).then((r) => r.slice(0, 40)),
+  /** A shelf: popular titles of one type, optionally in a genre. */
+  shelf: (type: MediaType, genre?: string) =>
+    get<{ metas?: any[] }>(`/catalog/${kind(type)}/top${genre ? `/genre=${encodeURIComponent(genre)}` : ''}.json`).then((r) => list(r.metas, type).slice(0, 30)),
   trending: () => both((k) => `/catalog/${k}/top.json`).then((r) => r.slice(0, 40)),
 
   async details(type: MediaType, id: number): Promise<TmdbDetails> {

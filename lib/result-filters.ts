@@ -42,3 +42,23 @@ export function countByQuality(results: TorrentResult[]): Record<QualityTier, nu
   for (const r of results) out[r.quality]++;
   return out;
 }
+
+/**
+ * The stream a "Play" button should start: good quality that will actually play smoothly.
+ * 1080p first (4K only with a Debrid account, which has the bandwidth), healthy seeders,
+ * MP4 preferred on devices that can't open MKV directly; direct links beat torrents.
+ */
+export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; preferMp4?: boolean } = {}): TorrentResult | undefined {
+  const tier: Record<string, number> = { '4K': opts.debrid ? 3.2 : 1.2, '1080p': 3, '720p': 2, SD: 0.8, Unknown: 0.5 };
+  const score = (r: TorrentResult) => {
+    const c = (r.container ?? r.fileName?.split('.').pop() ?? '').toLowerCase();
+    return (
+      (tier[r.quality] ?? 0.5) +
+      (r.url ? 2 : Math.min(2, Math.log10(r.seeders + 1) * 0.7) - (r.seeders < 3 ? 2 : 0)) +
+      (opts.preferMp4 && ['mp4', 'm4v', 'mov'].includes(c) ? 0.6 : 0) -
+      (r.remux ? 0.8 : 0) - // huge files
+      ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0)
+    );
+  };
+  return applyFilters(results, DEFAULT_FILTERS).reduce<TorrentResult | undefined>((best, r) => (!best || score(r) > score(best) ? r : best), undefined);
+}

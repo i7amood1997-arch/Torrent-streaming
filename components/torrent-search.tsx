@@ -12,8 +12,9 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
-import { applyFilters, countByQuality, DEFAULT_FILTERS, type ResultFilters, type SortKey } from '@/lib/result-filters';
-import { useApp } from '@/lib/store';
+import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, type ResultFilters, type SortKey } from '@/lib/result-filters';
+import { canPlayMkv } from '@/lib/platform';
+import { hasDebrid, useApp } from '@/lib/store';
 import type { IndexerError, MediaType, QualityTier, TorrentResult } from '@/lib/types';
 import { IconCopy, IconFilter, IconLeech, IconPlay, IconSeed } from './icons';
 
@@ -25,6 +26,8 @@ export interface SearchContext {
   episode?: number;
   title?: string;
   year?: number;
+  poster?: string;
+  backdrop?: string;
 }
 
 interface Props {
@@ -32,6 +35,8 @@ interface Props {
   context?: SearchContext;
   /** Rendered above the results (e.g. the selected title's header). */
   header?: React.ReactNode;
+  /** Like `header`, with the best stream for a one-tap Play button. */
+  renderHeader?: (h: { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number }) => React.ReactNode;
 }
 
 const TIERS: QualityTier[] = ['4K', '1080p', '720p', 'SD'];
@@ -59,7 +64,8 @@ function seedColor(n: number) {
   return 'text-red-400';
 }
 
-export function TorrentSearch({ query, context, header }: Props) {
+export function TorrentSearch({ query, context, header, renderHeader }: Props) {
+  const debrid = useApp((s) => hasDebrid(s.settings, s.caps));
   const play = useApp((s) => s.play);
   const playingId = useApp((s) => s.nowPlaying?.result?.id);
   const [results, setResults] = useState<TorrentResult[]>([]);
@@ -108,7 +114,8 @@ export function TorrentSearch({ query, context, header }: Props) {
     set({ qualities: filters.qualities.includes(q) ? filters.qualities.filter((x) => x !== q) : [...filters.qualities, q] });
 
   const onPlay = (r: TorrentResult) =>
-    play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode });
+    play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, poster: context?.poster, backdrop: context?.backdrop });
+  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv() }) : undefined), [results, debrid, renderHeader]);
 
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
@@ -159,6 +166,7 @@ export function TorrentSearch({ query, context, header }: Props) {
   return (
     <section className="flex min-h-0 flex-col gap-3">
       {header}
+      {renderHeader?.({ best, play: onPlay, loading, count: results.length })}
 
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-3">
@@ -168,7 +176,7 @@ export function TorrentSearch({ query, context, header }: Props) {
           {activeFilterCount > 0 && <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-accent text-[10px] font-bold text-ink-950">{activeFilterCount}</span>}
         </button>
       </div>
-      <div className="hidden rounded-2xl bg-ink-900 p-3 ring-1 ring-ink-700/70 md:block">{filterControls}</div>
+      <div className="hidden max-w-6xl rounded-2xl bg-ink-900 p-3 ring-1 ring-white/[0.06] md:block">{filterControls}</div>
 
       {/* Status line */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-400">
@@ -182,7 +190,7 @@ export function TorrentSearch({ query, context, header }: Props) {
         )}
       </div>
       {showProblems && (
-        <ul className="space-y-1 rounded-xl bg-ink-900 p-3 text-xs text-ink-400 ring-1 ring-ink-700/70">
+        <ul className="space-y-1 rounded-xl bg-ink-900 p-3 text-xs text-ink-400 ring-1 ring-white/[0.06]">
           {errors.map((e) => <li key={e.indexer}><b className="text-ink-200">{sourceName(e.indexer)}</b>: {e.message}</li>)}
           {skipped.length > 0 && <li><b className="text-ink-200">{skipped.map(sourceName).join(', ')}</b>: failed a few minutes ago, skipped for now.</li>}
         </ul>
@@ -197,7 +205,7 @@ export function TorrentSearch({ query, context, header }: Props) {
       ) : (
         // One row component; layout adapts to the *pane* width via a container query (.results in globals.css),
         // so it works in the narrow iPad/desktop list pane as well as full-width.
-        <ul className="results grid grid-cols-[minmax(0,1fr)] gap-2">
+        <ul className="results grid max-w-6xl grid-cols-[minmax(0,1fr)] gap-2">
           {visible.some((r) => r.url) && (
             <li className="flex items-center gap-2 px-1 pt-1 text-xs font-semibold uppercase tracking-wide text-hd">
               Direct links <span className="font-normal normal-case text-ink-400">· start instantly, no seeders needed</span>

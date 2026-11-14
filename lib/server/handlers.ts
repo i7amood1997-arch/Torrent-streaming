@@ -158,6 +158,8 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
       }
       case 'trending':
         return json({ results: await client.trending() }, 200, { 'Cache-Control': 'public, max-age=3600' });
+      case 'shelf':
+        return json({ results: await client.shelf(type, sp.get('genre')?.slice(0, 30) || undefined) }, 200, { 'Cache-Control': 'public, max-age=3600' });
       case 'details':
         if (!id) return err('id required', 400);
         return json(await client.details(type, id), 200, { 'Cache-Control': 'public, max-age=3600' });

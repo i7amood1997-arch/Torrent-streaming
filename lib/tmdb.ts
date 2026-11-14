@@ -47,6 +47,14 @@ export function createTmdbClient({ apiKey, language = 'en-US' }: TmdbClientOptio
       return data.results.filter((r) => r.media_type === 'movie' || r.media_type === 'tv').map(toItem);
     },
 
+    /** A shelf: popular titles of one type, optionally in a genre (Cinemeta genre names). */
+    async shelf(type: MediaType, genre?: string): Promise<TmdbItem[]> {
+      const kind = type === 'movie' ? 'movie' : 'tv';
+      const id = genre ? GENRES[genre]?.[type === 'movie' ? 0 : 1] : undefined;
+      const data = await get<{ results: any[] }>(`/discover/${kind}`, { sort_by: 'popularity.desc', include_adult: 'false', ...(id ? { with_genres: id } : {}) });
+      return data.results.map((r) => toItem({ ...r, media_type: kind }));
+    },
+
     async details(type: MediaType, id: number): Promise<TmdbDetails> {
       const path = type === 'movie' ? `/movie/${id}` : `/tv/${id}`;
       const d = await get<any>(path, { append_to_response: 'external_ids' });
@@ -78,6 +86,12 @@ export function createTmdbClient({ apiKey, language = 'en-US' }: TmdbClientOptio
     },
   };
 }
+
+/** Genre name → TMDB ids [movie, tv]. */
+const GENRES: Record<string, [number, number]> = {
+  Action: [28, 10759], Comedy: [35, 35], Drama: [18, 18], 'Sci-Fi': [878, 10765], Animation: [16, 16], Thriller: [53, 9648],
+  Crime: [80, 80], Documentary: [99, 99], Family: [10751, 10751], Horror: [27, 9648], Romance: [10749, 10749], Fantasy: [14, 10765],
+};
 
 export type TmdbClient = ReturnType<typeof createTmdbClient>;
 

@@ -5,14 +5,16 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: { 950: '#07080b', 900: '#0d0f14', 800: '#151821', 700: '#1f2330', 600: '#2c3142', 400: '#7d8499', 200: '#c9cdd8' },
-        accent: { DEFAULT: '#e8b04a', soft: '#e8b04a22' },
+        // Neutral greys on true black (tvOS-like materials)
+        ink: { 950: '#000000', 900: '#161618', 800: '#232326', 700: '#2f2f33', 600: '#45454a', 400: '#98989f', 200: '#e6e6eb' },
+        accent: { DEFAULT: '#ffffff', soft: '#ffffff1f' },
+        on: '#30d158',
         uhd: '#b48cff',
         fhd: '#4ab3e8',
-        hd: '#5fd38d',
+        hd: '#30d158',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', 'Inter', 'system-ui', 'sans-serif'],
         arabic: ['Cairo', 'Tajawal', 'system-ui', 'sans-serif'],
       },
       spacing: {

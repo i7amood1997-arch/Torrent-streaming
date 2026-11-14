@@ -72,6 +72,7 @@ async function get<T>(path: string, params: Record<string, string | number | und
 export const api = {
   tmdbSearch: (q: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'search', q }, signal),
   tmdbTrending: (signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'trending' }, signal),
+  shelf: (type: string, genre?: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'shelf', type, genre }, signal),
   tmdbDetails: (type: string, id: number) => get<TmdbDetails>('/api/tmdb', { action: 'details', type, id }),
   tmdbSeason: (id: number, season: number) => get<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
 

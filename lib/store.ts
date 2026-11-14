@@ -2,7 +2,7 @@
 import { create } from 'zustand';
 import { unlockAudio } from './audio-tap';
 import { createJSONStorage, persist } from 'zustand/middleware';
-import type { DebridProvider, MediaType, TorrentResult } from './types';
+import type { DebridProvider, MediaType, TmdbItem, TorrentResult } from './types';
 
 export type View = 'discover' | 'search' | 'player' | 'settings';
 export type SearchMode = 'catalog' | 'torrent';
@@ -57,6 +57,9 @@ export interface PlayRequest {
   type?: MediaType;
   season?: number;
   episode?: number;
+  /** Artwork for Continue Watching. */
+  poster?: string;
+  backdrop?: string;
   /** Bumps on every request so re-playing the same item restarts it. */
   nonce: number;
 }
@@ -86,6 +89,13 @@ interface AppState {
   query: string;
   submittedQuery: string;
   nowPlaying?: PlayRequest;
+  /** Title page shown over the current view. */
+  detail?: TmdbItem;
+  openDetail: (item: TmdbItem) => void;
+  closeDetail: () => void;
+  /** Recently played, newest first (Continue Watching). */
+  history: Omit<PlayRequest, 'nonce'>[];
+  forget: (index: number) => void;
   settings: Settings;
   caps?: ServerCaps;
   setView: (v: View) => void;
@@ -124,17 +134,21 @@ export const useApp = create<AppState>()(
       query: '',
       submittedQuery: '',
       settings: DEFAULT_SETTINGS,
-      setView: (view) => set(view === 'player' ? { view } : { view, listView: view }),
-      setMode: (mode) => { const v = mode === 'torrent' ? 'search' : 'discover'; set({ mode, view: v, listView: v }); },
+      history: [],
+      forget: (index) => set({ history: get().history.filter((_, i) => i !== index) }),
+      openDetail: (detail) => set(get().view === 'player' ? { detail, view: get().listView } : { detail }),
+      closeDetail: () => set({ detail: undefined }),
+      setView: (view) => set(view === 'player' ? { view } : { view, listView: view, detail: get().view === 'player' ? get().detail : undefined }),
+      setMode: (mode) => set({ mode }),
       setQuery: (query) => set({ query }),
       submit: (q) => {
         const query = (q ?? get().query).trim();
-        const v = get().mode === 'torrent' ? 'search' : 'discover';
-        set({ query, submittedQuery: query, view: v, listView: v });
+        set({ query, submittedQuery: query, view: 'search', listView: 'search', detail: undefined });
       },
       play: (r) => {
         unlockAudio(); // called from a tap: lets subtitle auto-sync listen to the audio later
-        set({ nowPlaying: { ...r, nonce: Date.now() }, view: 'player' });
+        const same = (h: Omit<PlayRequest, 'nonce'>) => (r.imdbId ? h.imdbId === r.imdbId && h.season === r.season && h.episode === r.episode : (h.result?.id ?? h.url) === (r.result?.id ?? r.url));
+        set({ nowPlaying: { ...r, nonce: Date.now() }, view: 'player', history: [r, ...get().history.filter((h) => !same(h))].slice(0, 12) });
       },
       updateSettings: (p) => set({ settings: { ...get().settings, ...p } }),
       updateSubtitleStyle: (p) => set({ settings: { ...get().settings, subtitle: { ...get().settings.subtitle, ...p } } }),
@@ -160,7 +174,7 @@ export const useApp = create<AppState>()(
       },
       skipHydration: true, // rehydrated in a client effect to avoid SSR mismatch
       storage: createJSONStorage(() => localStorage),
-      partialize: (s) => ({ settings: s.settings, mode: s.mode }),
+      partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history }),
       merge: (persisted: any, current) => ({
         ...current,
         ...persisted,

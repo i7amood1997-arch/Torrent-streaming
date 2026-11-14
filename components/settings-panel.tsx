@@ -103,7 +103,7 @@ export function SettingsPanel() {
         <Row label="Test the connection" onClick={() => api.loadCaps()}><span className="text-xs text-accent">Test</span></Row>
       </Section>
       <Disclosure title="Set up a relay (5 minutes, free)">
-        <div className="space-y-3 rounded-2xl bg-ink-900 p-4 text-sm ring-1 ring-ink-700/70">
+        <div className="space-y-3 rounded-2xl bg-ink-900 p-4 text-sm ring-1 ring-white/[0.06]">
           <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-ink-200">
             <li>Tap <b>Deploy to Cloudflare</b>.</li>
             <li>Create a free Cloudflare account (or log in) and allow it to use your GitHub.</li>
@@ -115,7 +115,7 @@ export function SettingsPanel() {
       </Disclosure>
 
       <Disclosure title={`Torrent sources · ${sourcesOn} on`}>
-        <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+        <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
           {SOURCES.map((src) => {
             const on = settings.indexers.includes(src.id);
             const offered = !caps || caps.indexers.includes(src.id) || (src.id === 'torznab' && caps.clientTorznab);
@@ -133,13 +133,13 @@ export function SettingsPanel() {
           )}
         </div>
         {settings.indexers.includes('torznab') && (caps?.clientTorznab ? (
-          <div className="mt-3 divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+          <div className="mt-3 divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
             <label className="block px-4 py-3"><span className="block text-sm text-ink-200">Jackett / Prowlarr Torznab URL</span>
               <input className="input mt-2 font-mono text-xs" value={settings.torznabUrl} onChange={(e) => updateSettings({ torznabUrl: e.target.value.trim() })} /></label>
             <KeyField label="Torznab API key" value={settings.torznabKey} onChange={(v) => updateSettings({ torznabKey: v })} />
           </div>
         ) : <p className="mt-2 px-1 text-xs text-ink-400">Torznab is configured on the relay (<code>TORZNAB_URL</code>).</p>)}
-        <label className="mt-3 block rounded-2xl bg-ink-900 px-4 py-3 ring-1 ring-ink-700/70">
+        <label className="mt-3 block rounded-2xl bg-ink-900 px-4 py-3 ring-1 ring-white/[0.06]">
           <span className="block text-sm text-ink-200">Your Stremio add-ons</span>
           <span className="mt-0.5 block text-xs text-ink-400">One manifest link per line (AIOStreams, Comet, MediaFusion…). Their results join every catalog search.</span>
           <textarea className="input mt-2 min-h-[72px] font-mono text-xs" spellCheck={false} placeholder="https://…/manifest.json" value={settings.stremioAddons} onChange={(e) => updateSettings({ stremioAddons: e.target.value })} />
@@ -147,7 +147,7 @@ export function SettingsPanel() {
       </Disclosure>
 
       <Disclosure title="Optional keys">
-        <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-ink-700/70">
+        <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 ring-1 ring-white/[0.06]">
           <KeyField label="TMDB API key" hint={<>Not needed: the catalog works without it.<ServerBadge on={caps?.tmdb} /></>} value={settings.tmdbKey} onChange={(v) => updateSettings({ tmdbKey: v })} />
           <KeyField label="OpenSubtitles API key" hint={<>Not needed. Adds more release-matched subtitles.<ServerBadge on={caps?.subtitles.opensubtitles} /></>} value={settings.openSubtitlesKey} onChange={(v) => updateSettings({ openSubtitlesKey: v })} />
           <KeyField label="SubDL API key" hint={<>subdl.com/panel/api<ServerBadge on={caps?.subtitles.subdl} /></>} value={settings.subdlKey} onChange={(v) => updateSettings({ subdlKey: v })} />

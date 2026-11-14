@@ -755,10 +755,10 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   };
 
   return (
-    <div className="player-shell" data-active={!!req}>
+    <div className="player-shell mx-auto max-w-[1700px] lg:grid lg:grid-cols-[minmax(0,1fr)_400px] lg:items-start lg:gap-8 lg:p-8" data-active={!!req}>
       <div
         ref={containerRef}
-        className="player relative aspect-video w-full select-none overflow-hidden bg-black md:rounded-2xl [&:fullscreen]:aspect-auto [&:fullscreen]:rounded-none"
+        className="player relative aspect-video w-full select-none overflow-hidden bg-black lg:rounded-2xl [&:fullscreen]:aspect-auto [&:fullscreen]:rounded-none"
         data-controls={controls && phase === 'ready'}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
@@ -807,7 +807,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 <p className="text-sm text-red-300">{error}</p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {alternatives.slice(0, 2).map((a) => <button key={a.engine} className="btn-ghost bg-white/10" onClick={() => setEngineOverride(a.engine)}>{a.label}</button>)}
-                  {onBack && <button className="btn-ghost bg-white/10 md:hidden" onClick={onBack}>Back</button>}
+                  {onBack && <button className="btn-ghost bg-white/10" onClick={onBack}>Back</button>}
                 </div>
               </div>
             )}
@@ -850,7 +850,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         {req && (
           <div className={`absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pb-6 pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity ${controls || phase !== 'ready' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             onPointerUp={(e) => e.stopPropagation()}>
-            {onBack && <button className="player-back grid h-9 w-9 place-items-center rounded-full text-white md:hidden" onClick={onBack} aria-label="Back"><IconBack size={22} /></button>}
+            {onBack && <button className="player-back grid h-9 w-9 place-items-center rounded-full text-white" onClick={onBack} aria-label="Back"><IconBack size={22} /></button>}
             <p className="player-title hidden min-w-0 flex-1 truncate px-1 text-sm font-semibold text-white">{req.title}{epTag ? ` · ${epTag}` : ''}</p>
           </div>
         )}
@@ -895,7 +895,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       </div>
 
       {req && (
-        <div className="player-details space-y-6 px-4 pb-6 pt-4 md:px-0">
+        <div className="player-details mx-auto w-full max-w-2xl space-y-6 px-5 pb-10 pt-4 lg:px-0 lg:pt-0">
           <div className="space-y-1.5">
             <h1 className="text-lg font-semibold leading-snug text-white" dir="auto">{req.title}</h1>
             <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-ink-400">
@@ -932,7 +932,7 @@ function StreamInfo({ req, source, engineName, alternatives, onEngine }: {
   return (
     <section>
       <h3 className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wider text-ink-400">Stream</h3>
-      <div className="divide-y divide-ink-700/70 overflow-hidden rounded-2xl bg-ink-900 text-sm ring-1 ring-ink-700/70">
+      <div className="divide-y divide-white/[0.07] overflow-hidden rounded-2xl bg-ink-900 text-sm ring-1 ring-white/[0.06]">
         {engineName && (
           <div className="flex justify-between gap-4 px-4 py-3"><span className="text-ink-400">Playing via</span><span className="text-right text-ink-200">{engineName}{source?.remux ? ' · MKV converted' : ''}</span></div>
         )}
