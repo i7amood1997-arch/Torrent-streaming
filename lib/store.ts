@@ -218,6 +218,12 @@ export const useApp = create<AppState>()(
   ),
 );
 
+/** True when a torrent will stream through the user's relay (same choice the player makes). */
+export function usesRelayStreaming(s: Settings, caps?: ServerCaps): boolean {
+  if (!caps?.stream) return false;
+  return s.engine === 'cloud' || (s.engine === 'auto' && !hasDebrid(s, caps));
+}
+
 /** True if a debrid key is usable for the selected provider (user key or server key). */
 export function hasDebrid(s: Settings, caps?: ServerCaps) {
   return !!s.debridKeys[s.debridProvider] || !!caps?.debrid[s.debridProvider];

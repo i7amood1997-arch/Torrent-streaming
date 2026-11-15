@@ -9,12 +9,13 @@
  * Live client-side filtering by quality tier, minimum seeders, HDR, text and
  * size, with a filter drawer on phones and an inline bar on iPad/desktop.
  */
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '@/lib/client-api';
 import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
 import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, type ResultFilters, type SortKey } from '@/lib/result-filters';
 import { audioPlayable, canPlayMkv } from '@/lib/platform';
-import { hasDebrid, useApp } from '@/lib/store';
+import { hasDebrid, useApp, usesRelayStreaming } from '@/lib/store';
 import type { IndexerError, MediaType, QualityTier, TorrentResult } from '@/lib/types';
 import { IconCopy, IconFilter, IconLeech, IconPlay, IconSeed } from './icons';
 
@@ -116,6 +117,21 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
   const onPlay = (r: TorrentResult) =>
     play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, poster: context?.poster, backdrop: context?.backdrop });
   const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable }) : undefined), [results, debrid, renderHeader]);
+
+  // Title page, streaming through the relay: open the torrent there now, so peers are connected and
+  // the start of the file is downloading before Play is pressed (the relay drops it if unused).
+  const warmed = useRef('');
+  useEffect(() => {
+    if (!best || best.url || !best.infoHash) return;
+    const st = useApp.getState();
+    if (!usesRelayStreaming(st.settings, st.caps)) return;
+    const season = context?.season ?? best.season;
+    const episode = context?.episode ?? best.episode;
+    const k = `${best.infoHash}|${season}|${episode}`;
+    if (warmed.current === k) return;
+    const t = setTimeout(() => { warmed.current = k; api.streamPrepare(best, { season, episode }).catch(() => undefined); }, 1200); // results settle first
+    return () => clearTimeout(t);
+  }, [best, context?.season, context?.episode]);
 
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
