@@ -91,6 +91,9 @@ export class AudioTranscoder {
   private queue: MkvFrame[] = [];
   private gen = 0;
   private rate = 48000;
+  /** Sample-accurate output clock (µs); re-anchored to the file's timestamps after a jump. */
+  private clock?: number;
+  private resampler = new Resampler();
   private failed = false;
 
   constructor(
@@ -146,13 +149,20 @@ export class AudioTranscoder {
     const n = out.channelData[0]?.length ?? 0;
     if (!n) return;
     let [l, r] = downmix(out.channelData);
-    if (out.sampleRate && out.sampleRate !== 48000) [l, r] = [resample(l, out.sampleRate), resample(r, out.sampleRate)];
+    if (out.sampleRate && out.sampleRate !== 48000) [l, r] = this.resampler.run(l, r, out.sampleRate);
     this.rate = 48000;
     const frames = l.length;
+    if (!frames) return;
+    // Timestamps from a running sample count, so they line up exactly however the file stores them
+    // (laced frames, rounding); follow the file again if it jumps (gap, seek) by more than 150 ms.
+    const fileTime = Math.round(f.pts * 1000);
+    if (this.clock === undefined || Math.abs(this.clock - fileTime) > 150_000) this.clock = fileTime;
+    const timestamp = this.clock;
+    this.clock += (frames / 48000) * 1e6;
     const planar = new Float32Array(frames * 2);
     planar.set(l, 0);
     planar.set(r, frames);
-    const data = new AudioData({ format: 'f32-planar', sampleRate: this.rate, numberOfFrames: frames, numberOfChannels: 2, timestamp: Math.round(f.pts * 1000), data: planar });
+    const data = new AudioData({ format: 'f32-planar', sampleRate: this.rate, numberOfFrames: frames, numberOfChannels: 2, timestamp: Math.round(timestamp), data: planar });
     try {
       this.encoder.encode(data);
     } catch (e) {
@@ -166,6 +176,8 @@ export class AudioTranscoder {
   reset() {
     this.gen++;
     this.queue = [];
+    this.clock = undefined;
+    this.resampler = new Resampler();
     if (this.failed || !this.encoder) return; // not started yet: init() makes the encoder
     try { this.encoder.close(); } catch { /* already closed */ }
     this.makeEncoder();
@@ -185,15 +197,30 @@ export class AudioTranscoder {
   }
 }
 
-/** Linear resampling to 48 kHz (44.1 kHz sources; good enough for speech and film audio). */
-function resample(x: Float32Array, from: number): Float32Array {
-  const ratio = from / 48000;
-  const out = new Float32Array(Math.floor(x.length / ratio));
-  for (let i = 0; i < out.length; i++) {
-    const p = i * ratio;
-    const k = Math.floor(p);
-    const t = p - k;
-    out[i] = x[k] * (1 - t) + (x[Math.min(k + 1, x.length - 1)] ?? 0) * t;
+/**
+ * Linear resampling to 48 kHz that carries its position across frames, so no samples are
+ * lost to rounding at frame edges (that would add up to seconds of drift over a film).
+ */
+export class Resampler {
+  private pos = 0; // read position in the next input (may be -1..0: between the previous frame's last sample and this one)
+  private lastL = 0;
+  private lastR = 0;
+
+  run(l: Float32Array, r: Float32Array, from: number): [Float32Array, Float32Array] {
+    const step = from / 48000;
+    const outL: number[] = [];
+    const outR: number[] = [];
+    for (; this.pos < l.length - 1; this.pos += step) {
+      const k = Math.floor(this.pos);
+      const t = this.pos - k;
+      const l0 = k < 0 ? this.lastL : l[k];
+      const r0 = k < 0 ? this.lastR : r[k];
+      outL.push(l0 * (1 - t) + l[k + 1] * t);
+      outR.push(r0 * (1 - t) + r[k + 1] * t);
+    }
+    this.pos -= l.length;
+    this.lastL = l[l.length - 1];
+    this.lastR = r[r.length - 1];
+    return [Float32Array.from(outL), Float32Array.from(outR)];
   }
-  return out;
 }

@@ -386,7 +386,11 @@ export class MkvDemuxer {
     const durationMs = durationTicks !== undefined ? durationTicks * scale : undefined;
 
     const frames = unlace(data, tn.len + 3, (flags >> 1) & 3);
-    const per = durationMs !== undefined && frames.length > 1 ? durationMs / frames.length : undefined;
+    // Laced frames share the block's timestamp: give each its own, from the block duration, the
+    // track's DefaultDuration, or the audio frame itself. (Same timestamps squeeze the audio
+    // together and it drifts away from the picture.)
+    let per = durationMs !== undefined && frames.length > 1 ? durationMs / frames.length : undefined;
+    if (per === undefined && frames.length > 1) per = track.defaultDurationNs ? track.defaultDurationNs / 1e6 : audioFrameMs(track, frames[0]);
     frames.forEach((f, i) => {
       let payload = f;
       const comp = track.compression;
@@ -409,6 +413,32 @@ export class MkvDemuxer {
       });
     });
   }
+}
+
+/** Duration of one audio frame, read from the codec when the container doesn't say. */
+export function audioFrameMs(track: MkvTrack, frame: Uint8Array): number | undefined {
+  const rate = track.sampleRate || 48000;
+  const id = track.codecId;
+  const ms = (samples: number) => (samples / rate) * 1000;
+  if (id.startsWith('A_AAC')) return ms(1024);
+  if (id === 'A_MPEG/L3' || id === 'A_MPEG/L2') return ms(1152);
+  if (id === 'A_AC3') return ms(1536);
+  if (id === 'A_EAC3' && frame.length > 4 && frame[0] === 0x0b && frame[1] === 0x77) {
+    const fscod = frame[4] >> 6;
+    const blocks = fscod === 3 ? 6 : [1, 2, 3, 6][(frame[4] >> 4) & 3];
+    return ms(blocks * 256);
+  }
+  if (id.startsWith('A_DTS') && frame.length > 6 && frame[0] === 0x7f && frame[1] === 0xfe && frame[2] === 0x80 && frame[3] === 0x01) {
+    const nblks = ((frame[4] & 0x01) << 6) | (frame[5] >> 2);
+    return ms((nblks + 1) * 32);
+  }
+  if (id === 'A_OPUS' && frame.length) {
+    const config = frame[0] >> 3;
+    const size = config < 12 ? [10, 20, 40, 60][config & 3] : config < 16 ? [10, 20][config & 1] : [2.5, 5, 10, 20][config & 3];
+    const count = (frame[0] & 3) === 0 ? 1 : (frame[0] & 3) === 3 ? (frame[1] ?? 1) & 0x3f : 2;
+    return size * count;
+  }
+  return undefined;
 }
 
 /** Split a block payload into frames (no lacing, Xiph, fixed-size or EBML lacing). */

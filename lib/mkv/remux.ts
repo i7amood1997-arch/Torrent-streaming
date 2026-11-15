@@ -189,7 +189,8 @@ class TrackMuxer {
     const dts = frames.map((f) => this.ticks(f.pts + TIMELINE_OFFSET_MS));
     for (let i = 0; i < dts.length; i++) {
       const prev = i ? dts[i - 1] : this.lastDts;
-      if (dts[i] <= prev) dts[i] = prev + 1;
+      // A frame without its own time (or overlapping the previous one) follows on from it.
+      if (dts[i] <= prev) dts[i] = prev + Math.max(1, this.lastDuration);
     }
     const samples: FragSample[] = frames.map((f, i) => {
       const duration = i + 1 < frames.length ? dts[i + 1] - dts[i] : this.lastDuration;
