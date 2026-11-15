@@ -10,6 +10,7 @@
  */
 import { MkvDemuxer, type CuePoint, type MkvFrame, type MkvHeader } from './ebml';
 import { MkvRemuxer, selectTracks, TIMELINE_OFFSET_MS, type Selection, type SubtitleCue } from './remux';
+import { AudioTranscoder, transcodeCodec, transcodeSupported } from './transcode';
 
 type Kind = 'video' | 'audio';
 
@@ -65,6 +66,10 @@ export class MkvMsePlayer {
   private queuedBytes = 0;
   private demux?: MkvDemuxer;
   private remux?: MkvRemuxer;
+  private transcoder?: AudioTranscoder;
+  private audioKicked = false;
+  private kicks = 0;
+  private lastKick = 0;
   private header?: MkvHeader;
   private selection?: Selection;
   private cues?: CuePoint[];
@@ -99,6 +104,7 @@ export class MkvMsePlayer {
     });
     this.video.addEventListener('seeking', this.onSeeking);
     this.video.addEventListener('waiting', this.onWaiting);
+    this.video.addEventListener('timeupdate', this.onTime);
     this.evictTimer = setInterval(() => this.evict(), 5000);
     void this.load(0, this.gen);
     // Fetch the seek index in the background once playback is under way.
@@ -113,6 +119,8 @@ export class MkvMsePlayer {
     clearInterval(this.evictTimer);
     this.video.removeEventListener('seeking', this.onSeeking);
     this.video.removeEventListener('waiting', this.onWaiting);
+    this.video.removeEventListener('timeupdate', this.onTime);
+    this.transcoder?.destroy();
     if (this.objectUrl) URL.revokeObjectURL(this.objectUrl);
   }
 
@@ -128,7 +136,8 @@ export class MkvMsePlayer {
   private onHeader(h: MkvHeader) {
     if (this.header) return;
     this.header = h;
-    const sel = (this.selection = selectTracks(h, { isSupported: (t) => this.MS.isTypeSupported(t), audioLanguages: this.opts.audioLanguages }));
+    const isSupported = (t: string) => this.MS.isTypeSupported(t);
+    const sel = (this.selection = selectTracks(h, { isSupported, audioLanguages: this.opts.audioLanguages, transcode: transcodeSupported(isSupported) }));
     const problems = [...new Set(sel.problems.map(codecName))];
     if (!sel.video) {
       this.fail(`This MKV can't be played on this device (${problems.join(', ') || 'no video track'}). Choose another release, e.g. an 8-bit H.264 or HEVC one, or an MP4.`);
@@ -151,10 +160,23 @@ export class MkvMsePlayer {
       const t = subTracks.get(cue.track);
       if (t) this.opts.onSubtitle?.(t.language, t.name ?? '', cue);
     });
-    this.opts.onTracks?.({ video: codecName(sel.video.plan.codec), audio: sel.audio && codecName(sel.audio.plan.codec), subtitles: sel.subtitles.length });
+    const from = sel.audio?.transcodeFrom;
+    if (from && sel.audio) {
+      const audioTrack = sel.audio.track.number;
+      this.transcoder = new AudioTranscoder(transcodeCodec(from)!, audioTrack, (f) => this.pushToRemux(f), (m) => this.fail(m));
+    }
+    const audioName = from ? `${from.codecId.startsWith('A_DTS') ? 'DTS' : from.codecId === 'A_EAC3' ? 'Dolby Digital Plus' : 'Dolby Digital'} → converted for this browser` : sel.audio && codecName(sel.audio.plan.codec);
+    this.opts.onTracks?.({ video: codecName(sel.video.plan.codec), audio: audioName, subtitles: sel.subtitles.length });
   }
 
   private onFrame(f: MkvFrame) {
+    if (!this.remux || this.failed) return;
+    // Converted audio goes through the transcoder; its Opus frames come back via pushToRemux.
+    if (this.transcoder && f.track === this.selection?.audio?.track.number) { this.transcoder.push(f); return; }
+    this.pushToRemux(f);
+  }
+
+  private pushToRemux(f: MkvFrame) {
     if (!this.remux || this.failed) return;
     const r = this.remux.push(f);
     if (!r) return;
@@ -195,14 +217,32 @@ export class MkvMsePlayer {
     }
   }
 
+  private onTime = () => { if (this.transcoder && !this.audioKicked) this.afterAppend(); };
+
   /** Jump over the small gap at the very start (timeline offset) or tiny gaps between fragments. */
   private afterAppend() {
     const v = this.video;
     const b = this.sb.video?.buffered;
     if (!b?.length) return;
-    if (!this.startJumped && v.currentTime < b.start(0) && b.start(0) - v.currentTime < 3) {
+    // Start where both video and audio have data (converted audio can begin a little later).
+    const ab = this.sb.audio?.buffered;
+    const start = Math.max(b.start(0), ab?.length ? ab.start(0) : 0);
+    if (!this.startJumped && v.currentTime < start && start - v.currentTime < 3) {
       this.startJumped = true;
-      v.currentTime = b.start(0);
+      v.currentTime = start;
+    }
+    // Chrome can leave the audio idle when playback started just before the audio data; one tiny
+    // seek inside the buffer wakes it up (only for audio converted in the page).
+    if (this.transcoder && !this.audioKicked && !v.paused && Date.now() - this.lastKick > 2000) {
+      const decoded = (v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number }).webkitAudioDecodedByteCount;
+      let covered = false;
+      if (ab) for (let i = 0; i < ab.length; i++) if (ab.start(i) <= v.currentTime + 0.05 && ab.end(i) > v.currentTime + 0.5) covered = true;
+      if (decoded) this.audioKicked = true; // sound is flowing
+      else if (covered) {
+        this.lastKick = Date.now();
+        if (++this.kicks >= 5 || decoded === undefined) this.audioKicked = true; // no counter (Firefox): one nudge is enough
+        v.currentTime = v.currentTime + 0.001;
+      }
     }
     if (this.ended && !this.queue.video.length && !this.queue.audio.length && !this.sb.video?.updating && !this.sb.audio?.updating && this.ms?.readyState === 'open') {
       debug('endOfStream');
@@ -278,6 +318,7 @@ export class MkvMsePlayer {
             // Corrupt or misaligned data: drop what's pending and resync at the next cluster.
             debug('parse error, resyncing', (e as Error).message);
             this.remux?.reset();
+            this.transcoder?.reset();
             this.demux!.seekTo(pos, true);
           }
           if (this.failed) { reader.cancel().catch(() => undefined); return; }
@@ -286,6 +327,7 @@ export class MkvMsePlayer {
         }
         debug('load finished at', pos, 'of', this.fileSize, 'gen', gen);
         if (this.fileSize && pos >= this.fileSize) {
+          await this.transcoder?.flush();
           for (const s of this.remux?.flush() ?? []) this.enqueue(s.kind, s.data);
           this.ended = true;
           this.afterAppend();
@@ -365,6 +407,7 @@ export class MkvMsePlayer {
     this.fetchCtl?.abort();
     this.ended = false;
     this.remux?.reset();
+    this.transcoder?.reset();
     // Drop queued fragments for the old position (an in-progress append finishes on its own).
     for (const kind of ['video', 'audio'] as Kind[]) {
       for (const d of this.queue[kind]) this.queuedBytes -= d.length;
@@ -396,4 +439,10 @@ export class MkvMsePlayer {
     this.demux!.seekTo(pos, resync);
     void this.load(pos, gen);
   }
+}
+
+/** True if MKV files with Dolby/DTS audio can play here with the audio converted in the page. */
+export function mkvAudioConvertSupported(): boolean {
+  const MS = mediaSourceCtor();
+  return !!MS && transcodeSupported((t) => MS.isTypeSupported(t));
 }

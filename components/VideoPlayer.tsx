@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type Hls from 'hls.js';
 import { api, apiBase, type StreamStats } from '@/lib/client-api';
-import { MkvMsePlayer, mkvRemuxSupported } from '@/lib/mkv/player';
+import { MkvMsePlayer, mkvAudioConvertSupported, mkvRemuxSupported } from '@/lib/mkv/player';
 import { TIMELINE_OFFSET_MS } from '@/lib/mkv/remux';
 import { agrees, alignSubtitles, confident, type Alignment } from '@/lib/autosync';
 import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
@@ -172,7 +172,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         const hls = isHlsUrl(link) || ext === 'm3u8';
         const mkv = ext === 'mkv' || (ext === 'webm' && isIOS());
         if (headers && !viaRelay) throw new Error('This link needs your own relay to play (Settings → Advanced: own backend).');
-        if (mkv && !canPlayMkv()) {
+        // MKV the browser can't open, or whose audio (Dolby/DTS) it can't play: the in-page converter.
+        if (mkv && (!canPlayMkv() || (!audioPlayable(req.result?.audio) && mkvAudioConvertSupported()))) {
           // The converter reads the file itself, which most hosts only allow through the relay (CORS).
           if (!mkvRemuxSupported()) throw new Error('Playing MKV files on iPhone/iPad needs iOS 17.1 or later.');
           setSource({ url: viaRelay ?? link, engine: 'direct', fileName, mime: 'video/x-matroska', remux: true });
@@ -199,7 +200,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           if (res.status === 'error') throw new Error(res.message);
           if (res.status === 'ready') {
             const ext = res.fileName.split('.').pop()?.toLowerCase() ?? '';
-            const native = ['mp4', 'm4v', 'mov'].includes(ext) || (ext === 'mkv' && canPlayMkv()) || (ext === 'webm' && !isIOS());
+            const silentHere = ext === 'mkv' && !audioPlayable(r.audio) && mkvAudioConvertSupported();
+            const native = ['mp4', 'm4v', 'mov'].includes(ext) || (ext === 'mkv' && canPlayMkv() && !silentHere) || (ext === 'webm' && !isIOS());
             const remux = !native && (ext === 'mkv' || ext === 'webm') && mkvRemuxSupported();
             if (!native && !remux) {
               throw new Error(
@@ -243,9 +245,11 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         if (res.status === 'ready' && res.url) {
           // Real-Debrid's HLS version has AAC audio: use it on iPhone, for MKV the browser can't open, and when
           // the file's audio (Dolby / DTS) wouldn't play in this browser — otherwise the video plays in silence.
-          const preferHls = !!res.hlsUrl && (isIOS() || (res.mimeType === 'video/x-matroska' && !canPlayMkv()) || !audioPlayable(r.audio));
           const mkv = res.mimeType === 'video/x-matroska' || /\.(mkv|webm)$/i.test(res.fileName ?? '');
-          if (!preferHls && mkv && !canPlayMkv()) {
+          // Dolby/DTS audio in an MKV: convert the audio in the page (original video quality) rather than the HLS copy.
+          const convertAudio = mkv && !isIOS() && !audioPlayable(r.audio) && mkvAudioConvertSupported();
+          const preferHls = !!res.hlsUrl && !convertAudio && (isIOS() || (res.mimeType === 'video/x-matroska' && !canPlayMkv()) || !audioPlayable(r.audio));
+          if (!preferHls && mkv && (!canPlayMkv() || convertAudio)) {
             // No iPhone-friendly (HLS) version from the Debrid service: convert the MKV in the page instead.
             if (!mkvRemuxSupported()) throw new Error('This release is an MKV file. Playing MKV on iPhone/iPad needs iOS 17.1 or later, or choose an MP4 release.');
             setSource({ url: res.url, alt: api.proxyUrl(res.url), engine, fileName: res.fileName, mime: 'video/x-matroska', remux: true });
@@ -513,6 +517,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !source || phase !== 'ready' || source.remux || isHlsUrl(source.url, source.mime)) return;
+    const isMkv = /\.(mkv|webm)$/i.test(source.fileName ?? '') || source.mime === 'video/x-matroska';
     const t = setInterval(() => {
       if (v.paused || v.currentTime < 3 || v.readyState < 3) return;
       const x = v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number; mozHasAudio?: boolean; webkitVideoDecodedByteCount?: number };
@@ -520,7 +525,14 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         : x.mozHasAudio !== undefined ? !x.mozHasAudio : false;
       clearInterval(t);
       if (!silent) return;
-      if (source.alt && isHlsUrl(source.alt)) {
+      if (isMkv && mkvAudioConvertSupported() && source.engine !== 'webtor' && source.engine !== 'webtorrent') {
+        // Convert the audio in the page and continue from here.
+        try { if (resumeId) localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
+        setStatus('Converting this file’s audio for this browser…');
+        const viaRelay = source.engine !== 'cloud' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined;
+        if (isTapped(v)) setVideoKey((k) => k + 1);
+        setSource({ ...source, alt: source.alt && !isHlsUrl(source.alt) ? source.alt : viaRelay, remux: true });
+      } else if (source.alt && isHlsUrl(source.alt)) {
         // Same video from the Debrid service, transcoded with AAC audio: continue from here.
         try { if (resumeId) localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
         setStatus('This file’s audio doesn’t play in this browser; switching to a version that does…');

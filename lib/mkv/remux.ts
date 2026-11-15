@@ -9,11 +9,14 @@
 import { planTrack, type TrackPlan } from './codecs';
 import type { MkvFrame, MkvHeader, MkvTrack } from './ebml';
 import { fragment, initSegment, type FragSample } from './fmp4';
+import { opusTrack, transcodeCodec } from './transcode';
 
 export interface OutputTrack {
   kind: 'video' | 'audio';
   track: MkvTrack;
   plan: TrackPlan;
+  /** Audio converted in the page (Dolby/DTS → Opus): the original track. */
+  transcodeFrom?: MkvTrack;
 }
 
 export interface Segment {
@@ -50,6 +53,8 @@ export interface SelectOptions {
   isSupported?: (mime: string) => boolean;
   /** Preferred audio languages, ISO 639-2 or IETF, in order. */
   audioLanguages?: string[];
+  /** The page can convert Dolby/DTS audio to Opus (lib/mkv/transcode). */
+  transcode?: boolean;
 }
 
 export interface Selection {
@@ -85,6 +90,18 @@ export function selectTracks(header: MkvHeader, opts: SelectOptions = {}): Selec
     return (li < 0 ? 100 : li) * 2 + (o.track.isDefault ? 0 : 1);
   };
   audios.sort((a, b) => rank(a) - rank(b));
+  // Audio the device can't decode but the page can convert: used when it's the only audio,
+  // or in a better language than anything playable as-is.
+  if (opts.transcode) {
+    const convertible = header.tracks
+      .filter((t) => t.type === 'audio' && !t.encrypted && transcodeCodec(t))
+      .map((t): OutputTrack => {
+        const out = opusTrack(t);
+        return { kind: 'audio', track: out, plan: planTrack(out) as TrackPlan, transcodeFrom: t };
+      })
+      .sort((a, b) => rank(a) - rank(b));
+    if (convertible[0] && (!audios[0] || rank(convertible[0]) < rank(audios[0]))) audios.unshift(convertible[0]);
+  }
   return {
     video: videos.sort((a, b) => Number(b.track.isDefault) - Number(a.track.isDefault))[0],
     audio: audios[0],

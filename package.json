@@ -13,6 +13,8 @@
     "deploy": "wrangler deploy"
   },
   "dependencies": {
+    "@audio/decode-dts": "^1.0.0",
+    "@audio/decode-eac3": "^1.0.0",
     "fast-xml-parser": "5.3.0",
     "fflate": "0.8.2",
     "hls.js": "1.6.13",
