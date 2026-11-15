@@ -55,6 +55,8 @@ export class Peer {
   handshakeAt = 0;
   /** Smoothed download rate in bytes/s (updated by the session every second). */
   rate = 0;
+  /** Bytes received in the last second (sizes the pipeline before the smoothed rate catches up). */
+  recent = 0;
   lastDownloaded = 0;
   private bitfield?: Uint8Array;
   private chunks: Uint8Array[] = [];
@@ -75,7 +77,7 @@ export class Peer {
   }
 
   /** Connect, handshake, then pump messages until the connection ends. Never throws. */
-  async run(connectTimeoutMs = 5000): Promise<void> {
+  async run(connectTimeoutMs = 3000, handshakeTimeoutMs = 4000): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
@@ -94,7 +96,7 @@ export class Peer {
       this.write(hs);
       this.sendExt(0, bencode({ m: { ut_metadata: EXT_METADATA, ut_pex: EXT_PEX }, v: 'Streamdeck 0.1', reqq: 250 }));
 
-      timer = setTimeout(() => { if (!this.handshook) this.close('handshake timeout'); }, 8000);
+      timer = setTimeout(() => { if (!this.handshook) this.close('handshake timeout'); }, handshakeTimeoutMs);
       const reader = (this.reader = this.sock.readable.getReader());
       for (;;) {
         const { value, done } = await reader.read();

@@ -18,6 +18,8 @@ import { BLOCK, Peer, type Connect, type PeerHandler } from './wire';
 const MAX_PEERS = 40; // established + connecting
 const MAX_CONNECTING = 5; // Cloudflare allows ~6 connections in their opening phase at once
 const MAX_TRACKERS_INFLIGHT = 3;
+/** With this many addresses waiting, trackers get one connection slot at most: peers come first. */
+const ENOUGH_CANDIDATES = 40;
 const PIPELINE_MIN = 16; // outstanding block requests per peer (16 KB each)…
 const PIPELINE_START = 32;
 const PIPELINE_MAX = 192; // …scaled to each peer's measured speed (~1.5 s of data in flight)
@@ -40,6 +42,11 @@ const PROGRESSIVE_MIN_RUN = 64 << 10;
 const WARM_MS = 25_000; // start-of-file / end-of-file prefetch, until the player takes over
 const WARM_HEAD = 8 << 20;
 const WARM_TAIL = 2 << 20;
+/** Candidate priority: another peer vouching for an address (PEX), and peers that served us before. */
+const PEX_BONUS = 2;
+const KNOWN_BONUS = 10;
+const GOOD_PEERS_MAX = 16;
+const GOOD_PEER_MIN_BYTES = 256 << 10;
 /** Public .torrent caches: the file list without waiting for peers (verified against the info-hash). */
 const TORRENT_CACHES = [(hash: string) => `https://itorrents.org/torrent/${hash.toUpperCase()}.torrent`];
 
@@ -51,6 +58,15 @@ export interface SessionOptions {
   /** Previously fetched raw info dictionary (skips the metadata exchange). */
   infoBytes?: Uint8Array;
   onInfo?: (raw: Uint8Array) => void;
+  /** Peers that delivered data in an earlier session: tried first. */
+  knownPeers?: PeerAddr[];
+  /** Called (at most every 15 s) when the set of peers worth remembering changes. */
+  onGoodPeers?: (peers: PeerAddr[]) => void;
+}
+
+interface Candidate extends PeerAddr {
+  /** Higher = tried sooner: +1 for each extra tracker listing it, PEX and known-good bonuses. */
+  score: number;
 }
 
 export interface SessionStats {
@@ -124,8 +140,15 @@ export class TorrentSession implements PeerHandler {
 
   private peers = new Set<Peer>();
   private connecting = 0;
-  private candidates: PeerAddr[] = [];
+  private candidates: Candidate[] = [];
+  /** Addresses waiting in `candidates`, by key. */
+  private candIndex = new Map<string, Candidate>();
+  /** Addresses already tried (connected or failed). */
   private seen = new Set<string>();
+  /** Peers that delivered data, with bytes received: tried first after a restart. */
+  private good = new Map<string, { addr: PeerAddr; bytes: number }>();
+  private goodSaved = '';
+  private lastGoodCheck = 0;
   private peersTried = 0;
 
   private trackerQueue: string[] = [];
@@ -170,6 +193,7 @@ export class TorrentSession implements PeerHandler {
     if (opts.infoBytes) {
       try { this.info = parseInfo(opts.infoBytes); } catch { /* refetch from peers */ }
     }
+    for (const a of opts.knownPeers ?? []) this.good.set(`${a.host}:${a.port}`, { addr: { host: a.host, port: a.port }, bytes: 0 });
   }
 
   // ── public API ────────────────────────────────────────────────────────────
@@ -181,6 +205,8 @@ export class TorrentSession implements PeerHandler {
     if (this.destroyed) return;
     if (!this.timer) {
       this.timer = setInterval(() => this.tick(), 1000);
+      // Peers that served this torrent before go first: no waiting for trackers.
+      this.addCandidates([...this.good.values()].map((g) => g.addr), KNOWN_BONUS);
       this.queueAnnounce();
     }
     if (!this.info && !this.cacheFetchStarted) this.fetchCachedTorrent();
@@ -302,6 +328,7 @@ export class TorrentSession implements PeerHandler {
   // ── lifecycle ─────────────────────────────────────────────────────────────
 
   private sleep() {
+    if (this.info) this.rememberGoodPeers(); // before the connections go: saved for the next session
     clearInterval(this.timer);
     this.timer = undefined;
     for (const p of [...this.peers]) p.close('session idle');
@@ -310,6 +337,7 @@ export class TorrentSession implements PeerHandler {
     this.cache.clear();
     this.cacheBytes = 0;
     this.candidates = [];
+    this.candIndex.clear();
     this.seen.clear();
     this.metaTried.clear();
   }
@@ -319,9 +347,11 @@ export class TorrentSession implements PeerHandler {
     this.downSpeed = this.downSpeed * 0.6 + this.speedBytes * 0.4;
     this.speedBytes = 0;
     for (const p of this.peers) {
-      p.rate = p.rate * 0.6 + (p.downloaded - p.lastDownloaded) * 0.4;
+      p.recent = p.downloaded - p.lastDownloaded;
+      p.rate = p.rate * 0.6 + p.recent * 0.4;
       p.lastDownloaded = p.downloaded;
     }
+    if (now - this.lastGoodCheck > 15_000) { this.lastGoodCheck = now; this.rememberGoodPeers(); }
 
     for (const r of [...this.readers]) if (r.warm && now > r.warm.until) this.readers.delete(r);
     if (!this.readers.size && now - this.lastActive > IDLE_SLEEP_MS) { this.sleep(); return; }
@@ -369,7 +399,11 @@ export class TorrentSession implements PeerHandler {
     // Keep the candidate list topped up from the trackers.
     const established = [...this.peers].filter((p) => p.handshook).length;
     if (this.candidates.length < 30 && established < MAX_PEERS / 2 && !this.trackerQueue.length && !this.trackersInFlight && now - this.lastAnnounce > REANNOUNCE_MS) {
-      if (!this.candidates.length && established < 3) this.seen = new Set([...this.peers].map((p) => p.key)); // retry old addresses too
+      if (!this.candidates.length && established < 3) {
+        // Retry old addresses too, the ones that served us before first.
+        this.seen = new Set([...this.peers].map((p) => p.key));
+        this.addCandidates([...this.good.values()].map((g) => g.addr), KNOWN_BONUS);
+      }
       this.queueAnnounce();
     }
     this.pump();
@@ -387,9 +421,11 @@ export class TorrentSession implements PeerHandler {
     if (this.destroyed || !this.timer) return;
     // `peers` includes connections still being opened; only a few may be opening at once.
     while (this.budget > 0 && this.candidates.length && this.peers.size < MAX_PEERS && this.connecting + this.trackersInFlight < MAX_CONNECTING) {
-      this.connectPeer(this.candidates.pop()!);
+      this.connectPeer(this.takeCandidate());
     }
-    while (this.budget > 0 && this.trackerQueue.length && this.trackersInFlight < MAX_TRACKERS_INFLIGHT && this.candidates.length < 200) {
+    // Trackers only add addresses: with plenty waiting, one at a time so peers keep the slots.
+    const trackerSlots = this.candidates.length >= ENOUGH_CANDIDATES ? 1 : MAX_TRACKERS_INFLIGHT;
+    while (this.budget > 0 && this.trackerQueue.length && this.trackersInFlight < trackerSlots && this.candidates.length < 150 && this.connecting + this.trackersInFlight < MAX_CONNECTING) {
       this.announceTo(this.trackerQueue.shift()!);
     }
   }
@@ -404,17 +440,53 @@ export class TorrentSession implements PeerHandler {
       .finally(() => { this.trackersInFlight--; this.pump(); });
   }
 
-  private addCandidates(list: PeerAddr[]) {
+  private addCandidates(list: PeerAddr[], bonus = 0) {
     for (const a of list) {
       const key = `${a.host}:${a.port}`;
       if (this.seen.has(key) || this.banned.has(key) || a.port < 1 || a.port > 65535) continue;
-      this.seen.add(key);
-      // Random insertion so one tracker's ordering doesn't dominate.
-      const i = Math.floor(Math.random() * (this.candidates.length + 1));
-      this.candidates.splice(i, 0, a);
+      const known = this.candIndex.get(key);
+      // Listed again (another tracker, PEX): more likely to be online.
+      if (known) { known.score += 1 + bonus; continue; }
+      // A little randomness so one tracker's ordering doesn't dominate among equals.
+      const c: Candidate = { host: a.host, port: a.port, score: bonus + Math.random() * 0.5 };
+      this.candidates.push(c);
+      this.candIndex.set(key, c);
     }
-    if (this.candidates.length > 500) this.candidates.length = 500;
+    if (this.candidates.length > 500) {
+      this.candidates.sort((x, y) => y.score - x.score);
+      for (const c of this.candidates.splice(500)) this.candIndex.delete(`${c.host}:${c.port}`);
+    }
     this.pump();
+  }
+
+  /** The most promising address not tried yet. */
+  private takeCandidate(): PeerAddr {
+    let best = 0;
+    for (let i = 1; i < this.candidates.length; i++) if (this.candidates[i].score > this.candidates[best].score) best = i;
+    const c = this.candidates[best];
+    this.candidates[best] = this.candidates[this.candidates.length - 1];
+    this.candidates.pop();
+    const key = `${c.host}:${c.port}`;
+    this.candIndex.delete(key);
+    this.seen.add(key);
+    return c;
+  }
+
+  /** Keep the peers that delivered the most; report them when the set changes (saved for next time). */
+  private rememberGoodPeers() {
+    for (const p of this.peers) {
+      if (p.downloaded < GOOD_PEER_MIN_BYTES) continue;
+      const g = this.good.get(p.key);
+      if (g) g.bytes = Math.max(g.bytes, p.downloaded);
+      else this.good.set(p.key, { addr: { host: p.host, port: p.port }, bytes: p.downloaded });
+    }
+    if (this.good.size > GOOD_PEERS_MAX) {
+      const keep = [...this.good.entries()].sort((a, b) => b[1].bytes - a[1].bytes).slice(0, GOOD_PEERS_MAX);
+      this.good = new Map(keep);
+    }
+    const list = [...this.good.values()].map((g) => g.addr);
+    const sig = list.map((a) => `${a.host}:${a.port}`).sort().join(',');
+    if (sig && sig !== this.goodSaved) { this.goodSaved = sig; this.opts.onGoodPeers?.(list); }
   }
 
   private connectPeer(a: PeerAddr) {
@@ -449,10 +521,16 @@ export class TorrentSession implements PeerHandler {
     this.schedule();
   }
 
-  pex(_p: Peer, peers: PeerAddr[]) { this.addCandidates(peers.slice(0, 100)); }
+  pex(_p: Peer, peers: PeerAddr[]) { this.addCandidates(peers.slice(0, 100), PEX_BONUS); }
 
   closed(p: Peer, reason: string) {
     if ((p as any)._connecting) { (p as any)._connecting = false; this.connecting--; }
+    // A peer that served us well and then left: worth trying first next time.
+    if (p.downloaded >= GOOD_PEER_MIN_BYTES) {
+      const g = this.good.get(p.key);
+      if (!g) this.good.set(p.key, { addr: { host: p.host, port: p.port }, bytes: p.downloaded });
+      else g.bytes = Math.max(g.bytes, p.downloaded);
+    }
     if (!p.handshook || p.downloaded === 0) this.lastPeerError = `${p.key}: ${reason}`;
     this.peers.delete(p);
     this.release(p);
@@ -536,8 +614,10 @@ export class TorrentSession implements PeerHandler {
 
   /** Requests to keep in flight for a peer: about 1.5 s of its measured speed. */
   private pipeline(p: Peer): number {
-    if (!p.rate) return PIPELINE_START;
-    return Math.max(PIPELINE_MIN, Math.min(PIPELINE_MAX, Math.ceil((p.rate * 1.5) / BLOCK)));
+    // The last second counts at once, so a fast new peer is used fully within a second or two.
+    const rate = Math.max(p.rate, p.recent);
+    if (!rate) return PIPELINE_START;
+    return Math.max(PIPELINE_MIN, Math.min(PIPELINE_MAX, Math.ceil((rate * 1.5) / BLOCK)));
   }
 
   /** First piece each reader is waiting for. */

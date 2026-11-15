@@ -15,7 +15,7 @@ import { connect } from 'cloudflare:sockets';
 import { DurableObject } from 'cloudflare:workers';
 import { mimeFor, parseRange } from '../lib/bt/http';
 import { TorrentSession } from '../lib/bt/session';
-import { trackerList } from '../lib/bt/tracker';
+import { trackerList, type PeerAddr } from '../lib/bt/tracker';
 import type { TorrentFile, TorrentInfo } from '../lib/bt/bencode';
 import { pickFileForPlayback } from '../lib/webtorrent-pick';
 
@@ -24,6 +24,11 @@ const json = (body: unknown, status = 200) =>
 
 interface StreamEnv {
   BT_TRACKERS?: string;
+}
+
+interface StoredTorrent {
+  trackers: string[];
+  info?: Uint8Array;
 }
 
 export class TorrentStream extends DurableObject<StreamEnv> {
@@ -37,18 +42,23 @@ export class TorrentStream extends DurableObject<StreamEnv> {
     }
     this.loading ??= (async () => {
       // Restore what an earlier (evicted) instance learned, so playback can resume quickly.
-      const stored = await this.ctx.storage.get<{ trackers: string[]; info?: Uint8Array }>('torrent').catch(() => undefined);
+      const stored = await this.ctx.storage.get<StoredTorrent>('torrent').catch(() => undefined);
+      const knownPeers = await this.ctx.storage.get<PeerAddr[]>('peers').catch(() => undefined);
       const extra = (this.env.BT_TRACKERS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
       const trackers = trackerList([...magnetTrackers, ...(stored?.trackers ?? [])], extra);
-      const save = (info?: Uint8Array) =>
-        this.ctx.storage.put('torrent', { trackers: [...magnetTrackers, ...(stored?.trackers ?? [])].slice(0, 40), info }).catch(() => undefined);
-      if (magnetTrackers.length && !stored) save();
+      const record: StoredTorrent = { trackers: [...new Set([...magnetTrackers, ...(stored?.trackers ?? [])])].slice(0, 40), info: stored?.info };
+      const save = (patch: Partial<StoredTorrent>) => { Object.assign(record, patch); this.ctx.storage.put('torrent', record).catch(() => undefined); };
+      if (magnetTrackers.length && !stored) save({});
       this.session = new TorrentSession({
         infoHash: hash,
         trackers,
         connect: (host, port) => connect({ hostname: host, port }),
         infoBytes: stored?.info,
-        onInfo: (raw) => { if (raw.length < 1_900_000) save(raw); },
+        onInfo: (raw) => { if (raw.length < 1_900_000) save({ info: raw }); },
+        // Peers that delivered data: the next session (after a pause, or watching again) starts with them.
+        knownPeers,
+        // Small, separate key: rewritten when the set changes, without touching the stored file list.
+        onGoodPeers: (peers) => { this.ctx.storage.put('peers', peers).catch(() => undefined); },
       });
       return this.session;
     })();

@@ -10,20 +10,22 @@ export interface PeerAddr {
   port: number;
 }
 
-/** Public trackers that serve HTTP(S) announces. Extend with the BT_TRACKERS variable (comma-separated). */
+/**
+ * Public trackers that serve HTTP(S) announces, checked from a Cloudflare Worker (Nov 2026):
+ * each answered with peers. Dead ones cost a connection slot and seconds at every start, so
+ * keep this list short and current. Extend with the BT_TRACKERS variable (comma-separated).
+ */
 export const DEFAULT_HTTP_TRACKERS = [
   'http://tracker.opentrackr.org:1337/announce',
-  'https://tracker.tamersunion.org:443/announce',
-  'http://tracker.openbittorrent.com:80/announce',
-  'http://open.stealth.si:80/announce',
-  'https://tracker.gbitt.info:443/announce',
-  'http://tracker.bt4g.com:2095/announce',
-  'http://open.tracker.cl:1337/announce',
-  'http://tracker.files.fm:6969/announce',
+  'http://t.overflow.biz:6969/announce',
+  'http://tracker.qu.ax:6969/announce',
+  'http://tracker2.dler.org:80/announce',
   'http://tracker.dler.org:6969/announce',
-  'https://tracker.lilithraws.org:443/announce',
-  'http://bt.endpot.com:80/announce',
   'http://tracker.renfei.net:8080/announce',
+  'http://tracker.waaa.moe:6969/announce',
+  'http://tracker.mywaifu.best:6969/announce',
+  'http://tracker.tryhackx.org:6969/announce',
+  'http://tracker.moxing.party:6969/announce',
 ];
 
 const pct = (b: Uint8Array) => {
@@ -64,7 +66,7 @@ export async function announce(
   peerId: Uint8Array,
   left: number,
   fetchFn: typeof fetch = fetch,
-  timeoutMs = 7000,
+  timeoutMs = 4000, // a tracker that hasn't answered by now rarely does; it holds a connection slot meanwhile
 ): Promise<PeerAddr[]> {
   const q = `info_hash=${pct(infoHash)}&peer_id=${pct(peerId)}&port=6881&uploaded=0&downloaded=0&left=${left}&compact=1&numwant=200&event=started`;
   const res = await fetchFn(url + (url.includes('?') ? '&' : '?') + q, {
