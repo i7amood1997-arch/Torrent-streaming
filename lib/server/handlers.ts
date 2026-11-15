@@ -26,12 +26,16 @@ import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
 import { buildSubtitlePrompt, googleTranslate, parseNumberedLines, readLlmText } from '../translate';
 import type { DebridProvider, SearchQuery } from '../types';
+// Type only: the Claude client is made in the Worker (worker/index.ts), keeping the SDK out of the web app.
+import type Anthropic from '@anthropic-ai/sdk';
 
 export type Env = Record<string, string | undefined>;
 
 /** Non-string bindings (Cloudflare): Workers AI for speech recognition. */
 export interface ApiBindings {
   AI?: { run(model: string, input: unknown): Promise<unknown> };
+  /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
+  claude?: Pick<Anthropic, 'messages'>;
 }
 
 const ALLOWED_HEADERS = [
@@ -93,6 +97,7 @@ function config(env: Env, b: ApiBindings) {
     accessToken: !!env.ACCESS_TOKEN,
     stream: env.STREAM_ENABLED === 'true',
     ai: !!b.AI,
+    claude: !!b.claude,
   });
 }
 
@@ -262,9 +267,28 @@ async function translate(req: Request) {
 /** Strongest multilingual models on Workers AI first; each costs ~1,200 of the 10,000 free daily units per episode. */
 const TRANSLATORS = ['@cf/openai/gpt-oss-120b', '@cf/meta/llama-4-scout-17b-16e-instruct'];
 
+/** Last-resort translator (Claude API): used only when the app says every other translator refused. */
+const CLAUDE_MODEL = 'claude-haiku-5-5';
+
+async function claudeTranslate(client: Pick<Anthropic, 'messages'>, system: string, user: string, count: number) {
+  const msg = await client.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 16000,
+    output_config: { effort: 'low' }, // translation needs little deliberation; keeps it fast and cheap
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+  if (msg.stop_reason === 'refusal') throw new Error('Claude declined this text');
+  const text = msg.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+  return parseNumberedLines(text, count);
+}
+
 async function translateAi(req: Request, b: ApiBindings) {
-  if (!b.AI) return err('AI translation isn’t set up on this relay.', 501);
-  const body = (await req.json().catch(() => ({}))) as { lines?: unknown; context?: unknown; from?: unknown; to?: unknown; title?: unknown };
+  const claude = b.claude;
+  const body = (await req.json().catch(() => ({}))) as { lines?: unknown; context?: unknown; from?: unknown; to?: unknown; title?: unknown; lastResort?: unknown };
+  // Claude is allowed only when the app has already been refused by Google (lastResort).
+  const mayUseClaude = body.lastResort === true && !!claude;
+  if (!b.AI && !mayUseClaude) return err('AI translation isn’t set up on this relay.', 501);
   const strings = (v: unknown, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 300)).slice(0, max) : []);
   const lines = strings(body.lines, 60);
   const context = strings(body.context, 6);
@@ -272,30 +296,45 @@ async function translateAi(req: Request, b: ApiBindings) {
   const to = code(body.to);
   if (!lines.length || !to) return err('lines and to required', 400);
   const messages = buildSubtitlePrompt(lines, { from: code(body.from), to, context, title: typeof body.title === 'string' ? body.title.slice(0, 120) : undefined });
-  let lastError = '';
-  for (const model of TRANSLATORS) {
+  let lastError = b.AI ? '' : 'no Workers AI';
+  let quotaUsed = false;
+  for (const model of b.AI ? TRANSLATORS : []) {
     try {
       let out: unknown;
       if (model.includes('gpt-oss')) {
         // Reasoning model: "low" effort is plenty for translation and several times faster than the default.
         try {
-          out = await b.AI.run(model, { instructions: messages[0].content, input: messages[1].content, reasoning: { effort: 'low' }, max_output_tokens: 4096 });
+          out = await b.AI!.run(model, { instructions: messages[0].content, input: messages[1].content, reasoning: { effort: 'low' }, max_output_tokens: 4096 });
         } catch (e) {
           if (/neuron|allocation|quota|4006/i.test(describeError(e))) throw e;
-          out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+          out = await b.AI!.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
         }
       } else {
-        out = await b.AI.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
+        out = await b.AI!.run(model, { messages, max_tokens: 4096, temperature: 0.2 });
       }
       const parsed = parseNumberedLines(readLlmText(out), lines.length);
       if (parsed.filter(Boolean).length >= Math.ceil(lines.length * 0.8)) return json({ lines: parsed, model });
       lastError = 'incomplete answer';
     } catch (e) {
       lastError = describeError(e);
-      if (/neuron|allocation|quota|4006/i.test(lastError)) {
-        return json({ error: 'Today’s free AI allowance on your relay is used up; standard translation is used until it resets.', fatal: true }, 429);
-      }
+      if (/neuron|allocation|quota|4006/i.test(lastError)) { quotaUsed = true; break; }
     }
+  }
+  if (mayUseClaude) {
+    try {
+      const parsed = await claudeTranslate(claude!, messages[0].content, messages[1].content, lines.length);
+      if (parsed.filter(Boolean).length >= Math.ceil(lines.length * 0.8)) return json({ lines: parsed, model: CLAUDE_MODEL });
+      lastError = 'incomplete answer from Claude';
+    } catch (e) {
+      // The SDK's APIError carries the HTTP status (its classes aren't imported here; see the import note).
+      const status = (e as { status?: number }).status;
+      if (status === 401 || status === 403) return json({ error: 'The Claude API key on your relay was rejected.', fatal: true }, 502);
+      if (status === 429) return json({ error: 'Claude is rate-limited right now.', fatal: true }, 429);
+      lastError = `Claude: ${describeError(e)}`;
+    }
+  }
+  if (quotaUsed && !mayUseClaude) {
+    return json({ error: 'Today’s free AI allowance on your relay is used up; standard translation is used until it resets.', fatal: true }, 429);
   }
   return err(`AI translation failed: ${lastError}`, 502);
 }

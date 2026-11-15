@@ -77,6 +77,8 @@ export interface ServerCaps {
   stream?: boolean;
   /** Relay can turn speech into subtitles (Workers AI). */
   ai?: boolean;
+  /** The relay has a Claude API key: last-resort translator when everything else refused. */
+  claude?: boolean;
   /** True when running without a backend (API code runs in the browser). */
   direct?: boolean;
   /** Set when a configured backend could not be reached or rejected us. */

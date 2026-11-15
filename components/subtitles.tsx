@@ -100,6 +100,13 @@ function aiTranslator(from: string, to: string, title?: string): BatchTranslateF
   return (lines, context, signal) => api.translateAI(lines, context, from, to, title, signal);
 }
 
+/** Only once Google has refused: the relay's AI, then Claude if the relay has a Claude key. */
+function lastResortTranslator(from: string, to: string, title?: string): BatchTranslateFn | undefined {
+  const st = useApp.getState();
+  if (!(st.caps?.ai || st.caps?.claude) || st.caps.offline || st.settings.subtitle.translator === 'google') return undefined;
+  return (lines, context, signal) => api.translateAI(lines, context, from, to, title, signal, true);
+}
+
 export interface AutoJob {
   kind: 'translate' | 'generate';
   /** Which translator did the work (AI falls back to Google when its allowance runs out). */
@@ -228,14 +235,14 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       let engine: 'google' | 'ai' = 'google';
       const first = await firstPassLines(lines, src.lang, lang, {
         translate: api.translate,
-        ai,
+        ai: lastResortTranslator(src.lang, lang, titleRef.current),
         signal: ac.signal,
         onBatch: (done, partial) => { publish(partial); status({ engine, progress: done / Math.max(1, lines.length) }); },
         onFallback: () => { engine = 'ai'; status({ engine, progress: 0 }); },
       });
       const out: (string | undefined)[] = first.out;
       publish(out);
-      if (first.engine === 'ai') { putTranslation(cacheKey, out.map((x) => x ?? '')); finish(out, 'ai'); return; }
+      if (first.engine === 'ai') { putTranslation(cacheKey, Array.from(out, (x) => x ?? '')); finish(out, 'ai'); return; }
       if (!ai) { finish(out, 'google'); return; }
 
       // 2) AI rewrite, nearest the viewer first; lines swap in as they're ready.

@@ -6,6 +6,7 @@
 #   npx wrangler secret put OPENSUBTITLES_API_KEY | SUBDL_API_KEY
 #   npx wrangler secret put TORZNAB_URL | TORZNAB_API_KEY
 #   npx wrangler secret put ACCESS_TOKEN   # strongly recommended if you store Debrid keys here
+#   npx wrangler secret put ANTHROPIC_API_KEY   # optional: Claude translates subtitles only when every other translator refused
 name = "streamdeck-api"
 main = "worker/index.ts"
 compatibility_date = "2025-09-01"

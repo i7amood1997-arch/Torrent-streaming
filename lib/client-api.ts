@@ -97,11 +97,12 @@ export const api = {
   },
 
   /** Subtitle lines translated by an AI model on the relay (context-aware, better Arabic). */
-  async translateAI(lines: string[], context: string[], from: string, to: string, title: string | undefined, signal?: AbortSignal): Promise<(string | undefined)[]> {
+  async translateAI(lines: string[], context: string[], from: string, to: string, title: string | undefined, signal?: AbortSignal, lastResort = false): Promise<(string | undefined)[]> {
     const base = apiBase();
     if (!base) throw Object.assign(new Error('AI translation needs your relay.'), { fatal: true });
     const res = await fetch(`${base}/api/translate-ai`, {
-      method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ lines, context, from, to, title }), signal,
+      // lastResort: Google already refused, so the relay may use Claude if Workers AI can't help.
+      method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ lines, context, from, to, title, ...(lastResort ? { lastResort: true } : {}) }), signal,
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !Array.isArray(body.lines)) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { fatal: !!body.fatal || res.status === 501 });
