@@ -11,7 +11,7 @@
  * Readers (HTTP range requests) each have a position; the scheduler requests
  * blocks in order just ahead of the readers and verifies every piece (SHA-1).
  */
-import { parseInfo, type TorrentFile, type TorrentInfo } from './bencode';
+import { bdecode, bdict, bencode, parseInfo, type BIn, type TorrentFile, type TorrentInfo } from './bencode';
 import { announce, type PeerAddr } from './tracker';
 import { BLOCK, Peer, type Connect, type PeerHandler } from './wire';
 
@@ -33,6 +33,15 @@ const PEER_IDLE_MS = 25_000;
 const READER_STALL_MS = 60_000;
 const IDLE_SLEEP_MS = 120_000;
 const MAX_METADATA = 8 << 20;
+const ENDGAME_AFTER_MS = 700; // a block the reader waits on, outstanding this long, is also asked of other peers
+const ENDGAME_COPIES = 2; // extra peers asked for the same block
+const PROGRESSIVE_MIN_PIECE = 1 << 20; // pieces this big are played block by block as they arrive
+const PROGRESSIVE_MIN_RUN = 64 << 10;
+const WARM_MS = 25_000; // start-of-file / end-of-file prefetch, until the player takes over
+const WARM_HEAD = 8 << 20;
+const WARM_TAIL = 2 << 20;
+/** Public .torrent caches: the file list without waiting for peers (verified against the info-hash). */
+const TORRENT_CACHES = [(hash: string) => `https://itorrents.org/torrent/${hash.toUpperCase()}.torrent`];
 
 export interface SessionOptions {
   infoHash: string; // 40 hex chars
@@ -71,12 +80,20 @@ interface ActivePiece {
   reqAt: number[];
   done: number;
   verifying: boolean;
+  /** Extra peers asked for a block the reader is waiting on (endgame). */
+  dups: Map<number, Set<Peer>>;
+  /** Who delivered each block (to drop peers that sent bad data). */
+  src: (string | undefined)[];
+  /** Some of it was played before verification. */
+  served: boolean;
 }
 
 interface Reader {
   pos: number; // absolute torrent offset of the next byte to deliver
   end: number; // inclusive
   lastProgress: number;
+  /** Prefetch reader (start/end of the file before the player asks); removed after `until`. */
+  warm?: { until: number; tail: boolean };
 }
 
 const hexToBytes = (hex: string) => Uint8Array.from(hex.match(/../g)!, (h) => parseInt(h, 16));
@@ -132,6 +149,10 @@ export class TorrentSession implements PeerHandler {
   private cacheBytes = 0;
   private readers = new Set<Reader>();
   private waiters: (() => void)[] = [];
+  private notifyQueued = false;
+  private banned = new Set<string>();
+  private strikes = new Map<string, number>();
+  private cacheFetchStarted = false;
 
   private budget = REQUEST_BUDGET;
   private timer?: ReturnType<typeof setInterval>;
@@ -162,6 +183,7 @@ export class TorrentSession implements PeerHandler {
       this.timer = setInterval(() => this.tick(), 1000);
       this.queueAnnounce();
     }
+    if (!this.info && !this.cacheFetchStarted) this.fetchCachedTorrent();
     this.pump();
   }
 
@@ -196,11 +218,30 @@ export class TorrentSession implements PeerHandler {
     };
   }
 
+  /**
+   * Start fetching what a player asks for first: the beginning of the file and its last few MB
+   * (MP4 index / MKV cues), so playback starts sooner. Undone after a short while or when the
+   * player starts reading elsewhere.
+   */
+  prefetch(file: TorrentFile) {
+    if (!this.info || !file.length) return;
+    const until = Date.now() + WARM_MS;
+    for (const r of [...this.readers]) if (r.warm) this.readers.delete(r);
+    this.readers.add({ pos: file.offset, end: file.offset + Math.min(file.length, WARM_HEAD) - 1, lastProgress: Date.now(), warm: { until, tail: false } });
+    if (file.length > WARM_HEAD + WARM_TAIL) {
+      this.readers.add({ pos: file.offset + file.length - WARM_TAIL, end: file.offset + file.length - 1, lastProgress: Date.now(), warm: { until, tail: true } });
+    }
+    this.lastActive = Date.now();
+    this.schedule();
+  }
+
   /** Stream bytes [start, end] (inclusive) of a file. Download is driven by how fast the consumer reads. */
   createStream(file: TorrentFile, start: number, end: number): ReadableStream<Uint8Array> {
     const info = this.info;
     if (!info) throw new Error('metadata not ready');
     const r: Reader = { pos: file.offset + start, end: file.offset + end, lastProgress: Date.now() };
+    // The player is reading: start-of-file prefetch is only kept if it's where the player is.
+    for (const w of [...this.readers]) if (w.warm && !w.warm.tail && Math.abs(w.pos - r.pos) > WARM_HEAD) this.readers.delete(w);
     this.readers.add(r);
     this.lastActive = Date.now();
     this.schedule();
@@ -220,6 +261,23 @@ export class TorrentSession implements PeerHandler {
               r.lastProgress = this.lastActive = Date.now();
               this.schedule();
               return;
+            }
+            // Big pieces: play the blocks already here instead of waiting for the whole piece.
+            const ap = this.active.get(idx);
+            if (ap && ap.buf.length >= PROGRESSIVE_MIN_PIECE) {
+              const off = r.pos - idx * pl;
+              let b = Math.floor(off / BLOCK);
+              while (b < ap.nBlocks && ap.state[b] === 2) b++;
+              const ready = Math.min(b * BLOCK, ap.buf.length) - off;
+              const n = Math.min(ready, r.end - r.pos + 1, 1 << 20);
+              if (n > 0 && (n >= PROGRESSIVE_MIN_RUN || off + n >= ap.buf.length || r.pos + n > r.end)) {
+                ap.served = true;
+                ctrl.enqueue(ap.buf.slice(off, off + n));
+                r.pos += n;
+                r.lastProgress = this.lastActive = Date.now();
+                this.schedule();
+                return;
+              }
             }
             if (this.destroyed) throw new Error('stream closed');
             if (Date.now() - r.lastProgress > READER_STALL_MS) {
@@ -265,6 +323,7 @@ export class TorrentSession implements PeerHandler {
       p.lastDownloaded = p.downloaded;
     }
 
+    for (const r of [...this.readers]) if (r.warm && now > r.warm.until) this.readers.delete(r);
     if (!this.readers.size && now - this.lastActive > IDLE_SLEEP_MS) { this.sleep(); return; }
 
     // Metadata exchange stuck on one peer → try another.
@@ -278,9 +337,12 @@ export class TorrentSession implements PeerHandler {
       for (let b = 0; b < ap.nBlocks; b++) {
         if (ap.state[b] === 1 && now - ap.reqAt[b] > limit) {
           const owner = ap.owner[b];
+          if (owner) { owner.inflight.delete(ap.index * 65536 + b); owner.stale++; }
+          const dup = ap.dups.get(b);
+          const next = dup && [...dup].find((q) => !q.closed);
+          if (next) { dup!.delete(next); ap.owner[b] = next; ap.reqAt[b] = now; continue; }
           ap.state[b] = 0;
           ap.owner[b] = undefined;
-          if (owner) { owner.inflight.delete(ap.index * 65536 + b); owner.stale++; }
         }
       }
     }
@@ -345,7 +407,7 @@ export class TorrentSession implements PeerHandler {
   private addCandidates(list: PeerAddr[]) {
     for (const a of list) {
       const key = `${a.host}:${a.port}`;
-      if (this.seen.has(key) || a.port < 1 || a.port > 65535) continue;
+      if (this.seen.has(key) || this.banned.has(key) || a.port < 1 || a.port > 65535) continue;
       this.seen.add(key);
       // Random insertion so one tracker's ordering doesn't dominate.
       const i = Math.floor(Math.random() * (this.candidates.length + 1));
@@ -412,13 +474,9 @@ export class TorrentSession implements PeerHandler {
       sha1(raw).then((h) => {
         if (this.info) return;
         if (!equalBytes(h, this.infoHash)) { this.metaPeer = undefined; p.close('metadata hash mismatch'); return; }
-        try { this.info = parseInfo(raw); } catch (e) { this.lastPeerError = `metadata: ${(e as Error).message}`; this.metaPeer = undefined; return; }
         this.metaPeer = undefined;
         this.metaBuf = undefined;
-        this.opts.onInfo?.(raw);
-        for (const q of this.peers) if (q.handshook) q.interested();
-        this.notify();
-        this.schedule();
+        this.acceptInfo(raw);
       });
     }
   }
@@ -451,12 +509,18 @@ export class TorrentSession implements PeerHandler {
     if (ap && !ap.verifying && Number.isInteger(b) && b < ap.nBlocks && ap.state[b] !== 2) {
       const expected = b === ap.nBlocks - 1 ? ap.buf.length - begin : BLOCK;
       if (data.length === expected) {
-        const prev = ap.owner[b];
-        if (prev && prev !== p) prev.inflight.delete(index * 65536 + b);
+        // Everyone else asked for this block can stop.
+        for (const q of [ap.owner[b], ...(ap.dups.get(b) ?? [])]) {
+          if (!q || q === p) continue;
+          if (q.inflight.delete(index * 65536 + b)) q.cancel(index, begin, data.length);
+        }
+        ap.dups.delete(b);
         ap.buf.set(data, begin);
         ap.state[b] = 2;
         ap.owner[b] = undefined;
+        ap.src[b] = p.key;
         if (++ap.done === ap.nBlocks) this.verify(ap);
+        else if (ap.buf.length >= PROGRESSIVE_MIN_PIECE) this.notifySoon();
       }
     }
     // Refill this peer's pipeline in batches rather than per block.
@@ -520,7 +584,7 @@ export class TorrentSession implements PeerHandler {
           const len = this.pieceLen(idx);
           if (this.activeBytes + len > ACTIVE_MAX && !heads.has(idx)) continue;
           const nBlocks = Math.ceil(len / BLOCK);
-          ap = { index: idx, buf: new Uint8Array(len), nBlocks, state: new Uint8Array(nBlocks), owner: new Array(nBlocks), reqAt: new Array(nBlocks).fill(0), done: 0, verifying: false };
+          ap = { index: idx, buf: new Uint8Array(len), nBlocks, state: new Uint8Array(nBlocks), owner: new Array(nBlocks), reqAt: new Array(nBlocks).fill(0), done: 0, verifying: false, dups: new Map(), src: new Array(nBlocks), served: false };
           this.active.set(idx, ap);
           this.activeBytes += len;
         }
@@ -538,6 +602,43 @@ export class TorrentSession implements PeerHandler {
       }
       if (reqs.length) p.request(reqs);
     }
+    this.endgame(heads, now);
+  }
+
+  /**
+   * The piece a reader is waiting on: blocks still outstanding after ENDGAME_AFTER_MS are also
+   * requested from the fastest other peers that have it; the first copy wins, the rest are
+   * cancelled. One slow peer can no longer freeze playback.
+   */
+  private endgame(heads: Set<number>, now: number) {
+    for (const idx of heads) {
+      const ap = this.active.get(idx);
+      if (!ap || ap.verifying) continue;
+      const late: number[] = [];
+      for (let b = 0; b < ap.nBlocks; b++) if (ap.state[b] === 1 && now - ap.reqAt[b] > ENDGAME_AFTER_MS) late.push(b);
+      if (!late.length) continue;
+      const helpers = [...this.peers]
+        .filter((p) => p.handshook && !p.choked && !p.closed && p.has(idx) && p.inflight.size < this.pipeline(p) + 16)
+        .sort((a, b) => b.rate - a.rate)
+        .slice(0, 4);
+      if (!helpers.length) continue;
+      const reqs = new Map<Peer, [number, number, number][]>();
+      for (const b of late) {
+        const asked = ap.dups.get(b) ?? new Set<Peer>();
+        for (const p of helpers) {
+          if (asked.size >= ENDGAME_COPIES) break;
+          if (p === ap.owner[b] || asked.has(p)) continue;
+          asked.add(p);
+          p.inflight.add(idx * 65536 + b);
+          const begin = b * BLOCK;
+          const list = reqs.get(p) ?? [];
+          list.push([idx, begin, Math.min(BLOCK, ap.buf.length - begin)]);
+          reqs.set(p, list);
+        }
+        if (asked.size) ap.dups.set(b, asked);
+      }
+      for (const [p, list] of reqs) p.request(list);
+    }
   }
 
   /** Give back the blocks a peer was asked for (choked or disconnected). */
@@ -545,7 +646,16 @@ export class TorrentSession implements PeerHandler {
     for (const key of p.inflight) {
       const ap = this.active.get(Math.floor(key / 65536));
       const b = key % 65536;
-      if (ap && ap.state[b] === 1 && ap.owner[b] === p) { ap.state[b] = 0; ap.owner[b] = undefined; }
+      if (!ap) continue;
+      const dup = ap.dups.get(b);
+      dup?.delete(p);
+      if (ap.state[b] === 1 && ap.owner[b] === p) {
+        // Another peer was also asked: it takes over instead of starting again.
+        const next = dup && [...dup].find((q) => !q.closed);
+        if (next) { dup!.delete(next); ap.owner[b] = next; }
+        else { ap.state[b] = 0; ap.owner[b] = undefined; }
+      }
+      if (dup && !dup.size) ap.dups.delete(b);
     }
     p.inflight.clear();
   }
@@ -562,8 +672,19 @@ export class TorrentSession implements PeerHandler {
         this.evict();
         this.notify();
       } else {
+        // Bad data: a peer involved in two bad pieces is dropped for good (one glitch can happen).
+        for (const k of new Set(ap.src.filter((x): x is string => !!x))) {
+          const n = (this.strikes.get(k) ?? 0) + 1;
+          this.strikes.set(k, n);
+          if (n < 2) continue;
+          this.banned.add(k);
+          for (const q of [...this.peers]) if (q.key === k) q.close('sent corrupt data');
+        }
         ap.state.fill(0);
         ap.owner.fill(undefined);
+        ap.src.fill(undefined);
+        ap.dups.clear();
+        ap.served = false;
         ap.done = 0;
         ap.verifying = false;
       }
@@ -599,6 +720,43 @@ export class TorrentSession implements PeerHandler {
       const t = setTimeout(fin, ms);
       this.waiters.push(fin);
     });
+  }
+
+  /** Wake readers soon (coalesced: blocks can arrive hundreds of times a second). */
+  private notifySoon() {
+    if (this.notifyQueued) return;
+    this.notifyQueued = true;
+    setTimeout(() => { this.notifyQueued = false; this.notify(); }, 40);
+  }
+
+  /** Get the file list from a public .torrent cache while peers are still being found. */
+  private fetchCachedTorrent() {
+    this.cacheFetchStarted = true;
+    for (const url of TORRENT_CACHES) {
+      if (this.budget <= 0) return;
+      this.budget--;
+      this.fetchFn(url(this.infoHashHex), { signal: AbortSignal.timeout(6000) })
+        .then(async (res) => {
+          if (!res.ok || this.info) return;
+          const top = bdict(bdecode(new Uint8Array(await res.arrayBuffer())).value);
+          const info = top?.info;
+          if (!info) return;
+          const raw = bencode(info as BIn);
+          if (!equalBytes(await sha1(raw), this.infoHash) || this.info) return;
+          this.acceptInfo(raw);
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  private acceptInfo(raw: Uint8Array) {
+    try { this.info = parseInfo(raw); } catch (e) { this.lastPeerError = `metadata: ${(e as Error).message}`; return false; }
+    if (this.metaPeer) { this.metaPeer = undefined; this.metaBuf = undefined; }
+    this.opts.onInfo?.(raw);
+    for (const q of this.peers) if (q.handshook) q.interested();
+    this.notify();
+    this.schedule();
+    return true;
   }
 
   private notify() {

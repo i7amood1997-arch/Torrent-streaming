@@ -70,6 +70,7 @@ export class TorrentStream extends DurableObject<StreamEnv> {
         if (!info) return json({ status: 'pending', stats: session.stats() });
         const file = chooseFile(info, body.fileIdx, body.season, body.episode);
         if (!file) return json({ status: 'error', message: 'No video file found in this torrent.' });
+        session.prefetch(file); // start downloading what the player will ask for first
         return json({
           status: 'ready',
           fileIdx: file.index,

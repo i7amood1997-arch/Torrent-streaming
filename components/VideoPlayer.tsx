@@ -343,7 +343,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => { syncState.current = {}; }, [req?.nonce]);
 
   // Up-front sync: fit subtitles to audio sampled from across the file, before the viewer needs them.
-  const presyncUrls = source ? readableUrls(source) : undefined;
+  // Relay torrent streams: sampling audio across the file would pull tens of MB from peers while the
+  // video is starting, so they rely on listening to the audio (and the other subtitle) instead.
+  const presyncUrls = source && source.engine !== 'cloud' ? readableUrls(source) : undefined;
   usePresync({
     playKey: source ? `${req?.nonce}|${source.url}` : '',
     urls: presyncUrls,

@@ -136,6 +136,18 @@ export class Peer {
     this.write(buf);
   }
 
+  /** Withdraw a block request (another peer delivered it first). */
+  cancel(index: number, begin: number, length: number) {
+    const buf = new Uint8Array(17);
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(0, 13);
+    buf[4] = 8;
+    dv.setUint32(5, index);
+    dv.setUint32(9, begin);
+    dv.setUint32(13, length);
+    this.write(buf);
+  }
+
   requestMetadata(piece: number) {
     if (this.utMetadata) this.sendExt(this.utMetadata, bencode({ msg_type: 0, piece }));
   }

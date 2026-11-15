@@ -174,6 +174,18 @@ Direct HTTP links appear in their own **Direct links** section above torrents. T
 - The subtitle download token only accepts OpenSubtitles file ids or SubDL `/subtitle/*.zip` paths.
 
 
+## Relay streaming engine (`lib/bt/session.ts`)
+
+Download-only BitTorrent client in a Durable Object, tuned for playback:
+
+- **Endgame on the piece being watched**: blocks still outstanding after 700 ms are also requested from up to two of the fastest other peers that have the piece; the first copy wins and the others are cancelled (`cancel` message). One slow or stuck peer no longer freezes playback.
+- **Progressive large pieces**: for pieces ≥ 1 MB, blocks already received are played before the whole piece is verified (it's still SHA-1 checked; a peer involved in two bad pieces is dropped for good).
+- **Prefetch on open**: as soon as the file is chosen, the first 8 MB and last 2 MB (MP4 index / MKV cues) are fetched before the player asks; this is dropped after 25 s or when the player reads elsewhere.
+- **Metadata from a .torrent cache** (itorrents.org) in parallel with the peer exchange, verified against the info-hash.
+- The app skips up-front audio sampling for relay streams so it doesn't compete with playback for peer bandwidth.
+
+Simulated swarm (fast, medium and an unreliable seeder; playback read at 2 MB/s): first bytes 3.8 s → 0.25–0.8 s, longest freeze 3.8 s → ~1 s.
+
 ## Android TV app
 
 `android-tv/` is a small native app (Java, Media3) that opens the site full screen on Android TV and phones:
