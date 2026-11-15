@@ -158,6 +158,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     if (!req) { setPhase('idle'); return; }
 
     const ac = new AbortController();
+    // Results that arrive after the viewer moved on (another video, another engine) are dropped.
+    const live = <T,>(set: (v: T) => void) => (v: T) => { if (!ac.signal.aborted) set(v); };
     const engine = chooseEngine();
     setEngineUsed(engine);
     setNotice(undefined);
@@ -177,11 +179,11 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         if (mkv && (!canPlayMkv() || (!audioPlayable(req.result?.audio) && mkvAudioConvertSupported()))) {
           // The converter reads the file itself, which most hosts only allow through the relay (CORS).
           if (!mkvRemuxSupported()) throw new Error('Playing MKV files on iPhone/iPad needs iOS 17.1 or later.');
-          setSource({ url: viaRelay ?? link, engine: 'direct', fileName, mime: 'video/x-matroska', remux: true });
+          live(setSource)({ url: viaRelay ?? link, engine: 'direct', fileName, mime: 'video/x-matroska', remux: true });
           return;
         }
         // Try the link as-is first (fastest); fall back to the relay if the host refuses.
-        setSource({
+        live(setSource)({
           url: headers ? viaRelay! : link,
           alt: headers ? undefined : viaRelay,
           engine: 'direct',
@@ -194,7 +196,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       const r = req.result!;
 
       if (engine === 'cloud') {
-        setStatus('Opening the torrent on your relay…');
+        live(setStatus)('Opening the torrent on your relay…');
         const deadline = Date.now() + 120_000;
         for (;;) {
           const res = await api.streamPrepare(r, { season: req.season, episode: req.episode }, ac.signal);
@@ -211,12 +213,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                   : `This release is a .${ext} file, which this browser can’t play. Pick an MP4 or MKV release, or use the free online player.`,
               );
             }
-            setCloudStats(res.stats);
-            setSource({ url: api.streamUrl(res.path), engine, fileName: res.fileName, mime: res.mime, remux });
+            live(setCloudStats)(res.stats);
+            live(setSource)({ url: api.streamUrl(res.path), engine, fileName: res.fileName, mime: res.mime, remux });
             return;
           }
           const s = res.stats;
-          setStatus(s.peers ? `Connected to ${s.peers} peer${s.peers > 1 ? 's' : ''}, reading the file list…` : `Finding peers… (${s.candidates + s.peersTried} found, ${s.trackersOk} tracker${s.trackersOk === 1 ? '' : 's'} answered)`);
+          live(setStatus)(s.peers ? `Connected to ${s.peers} peer${s.peers > 1 ? 's' : ''}, reading the file list…` : `Finding peers… (${s.candidates + s.peersTried} found, ${s.trackersOk} tracker${s.trackersOk === 1 ? '' : 's'} answered)`);
           if (Date.now() > deadline) {
             throw new Error(`Couldn’t reach any peers for this torrent through your relay (${s.trackersOk} trackers answered, ${s.peersTried} peers tried${s.lastPeerError ? `, last: ${s.lastPeerError}` : s.lastTrackerError ? `, last: ${s.lastTrackerError}` : ''}). Try a result with more seeders.`);
           }
@@ -225,21 +227,21 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       }
 
       if (engine === 'webtor') {
-        setSource({ url: r.magnet, engine, fileName: r.fileName ?? r.title });
+        live(setSource)({ url: r.magnet, engine, fileName: r.fileName ?? r.title });
         setPhase('ready');
         return;
       }
 
       if (engine === 'webtorrent') {
-        setStatus('Connecting to WebRTC peers…');
+        live(setStatus)('Connecting to WebRTC peers…');
         const session = await startWebTorrent(r.magnet, { fileIdx: r.fileIdx, season: req.season, episode: req.episode, onStats: setWtStats, signal: ac.signal });
         if (ac.signal.aborted) { session.destroy(); return; }
         wtRef.current = session;
-        setSource({ url: session.url, engine, fileName: session.fileName });
+        live(setSource)({ url: session.url, engine, fileName: session.fileName });
         return;
       }
 
-      setStatus(`Sending to ${settings.debridProvider}…`);
+      live(setStatus)(`Sending to ${settings.debridProvider}…`);
       for (let attempt = 0; attempt < 180; attempt++) {
         const res = await api.resolveDebrid(r, { season: req.season, episode: req.episode }, ac.signal);
         if (res.status === 'error') throw new Error(res.message ?? 'Debrid error');
@@ -253,26 +255,26 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           if (!preferHls && mkv && (!canPlayMkv() || convertAudio)) {
             // No iPhone-friendly (HLS) version from the Debrid service: convert the MKV in the page instead.
             if (!mkvRemuxSupported()) throw new Error('This release is an MKV file. Playing MKV on iPhone/iPad needs iOS 17.1 or later, or choose an MP4 release.');
-            setSource({ url: res.url, alt: api.proxyUrl(res.url), engine, fileName: res.fileName, mime: 'video/x-matroska', remux: true });
+            live(setSource)({ url: res.url, alt: api.proxyUrl(res.url), engine, fileName: res.fileName, mime: 'video/x-matroska', remux: true });
             return;
           }
-          setSource({
+          live(setSource)({
             url: preferHls ? res.hlsUrl! : res.url,
             alt: preferHls ? res.url : res.hlsUrl,
             engine,
             fileName: res.fileName,
             mime: preferHls ? 'application/vnd.apple.mpegurl' : res.mimeType,
           });
-          if (res.message) setStatus(res.message);
+          if (res.message) live(setStatus)(res.message);
           return;
         }
-        setProgress(res.progress);
-        setStatus(res.message ?? 'Caching torrent on debrid…');
+        live(setProgress)(res.progress);
+        live(setStatus)(res.message ?? 'Caching torrent on debrid…');
         await sleep(attempt < 5 ? 2000 : 5000, ac.signal);
       }
       throw new Error('Timed out waiting for the debrid service to cache this torrent.');
     })().catch((e) => {
-      if (e?.name === 'AbortError') return;
+      if (e?.name === 'AbortError' || ac.signal.aborted) return;
       setError(e?.message ?? String(e));
       setPhase('error');
     });
@@ -293,12 +295,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     if (source.engine === 'webtor' || hlsOnly) { setPlayingFile({ name, ready: true }); return; }
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 7000); // don't hold subtitles back for long
+    let left = false; // switched to another file: this result no longer applies
     hashRemoteVideo(readableUrls(source) ?? [], ac.signal)
-      .then((h) => setPlayingFile({ name, hash: h?.hash, size: h?.size, ready: true }))
-      .catch(() => setPlayingFile({ name, ready: true }))
+      .then((h) => { if (!left) setPlayingFile({ name, hash: h?.hash, size: h?.size, ready: true }); })
+      .catch(() => { if (!left) setPlayingFile({ name, ready: true }); })
       .finally(() => clearTimeout(timer));
     setPlayingFile({ name, ready: false });
-    return () => { clearTimeout(timer); ac.abort(); };
+    return () => { left = true; clearTimeout(timer); ac.abort(); };
   }, [hashKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The MKV converter shifts the media timeline; downloaded subtitles need the same shift.
@@ -444,7 +447,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       }
       setPhase('ready');
       video.play().catch(() => setControls(true)); // autoplay may be blocked; big play button stays visible
-    })().catch((e) => { setError(e.message); setPhase('error'); });
+    })().catch((e) => { if (!cancelled) { setError(e.message); setPhase('error'); } }); // a late failure of a source already left behind must not cover the new one
     return () => { cancelled = true; };
   }, [source]);
 
