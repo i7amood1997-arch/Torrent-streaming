@@ -76,6 +76,8 @@ export interface SubtitleState {
   /** Add cues recognised from the audio (`src` = spoken language). */
   addGenerated: (src: string, cues: SubtitleCue[]) => void;
   errors: string[];
+  /** Why a language's subtitle couldn't be loaded (shown under its picker). */
+  failed: Partial<Record<Lang, string>>;
   select: (lang: Lang, track: SubtitleTrackInfo | null) => void;
   loadFile: (file: File, lang: Lang) => Promise<void>;
   setOffset: (lang: Lang, ms: number) => void;
@@ -145,6 +147,12 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const [manual, setManual] = useState<Set<Lang>>(new Set());
   const [autoSynced, setAutoSynced] = useState<Partial<Record<Lang, AutoSyncInfo>>>({});
   const [auto, setAuto] = useState<Partial<Record<Lang, AutoJob>>>({});
+  const [failed, setFailed] = useState<Partial<Record<Lang, string>>>({});
+  /** Translation of subtitles embedded in the video file, which arrive as the file is read. */
+  const embTr = useRef<Partial<Record<Lang, { src: Lang; info: SubtitleTrackInfo; done: Set<number>; cues: SubtitleCue[]; busy: boolean; ac: AbortController }>>>({});
+  /** Languages waiting for embedded subtitles in another language to translate from. */
+  const wantEmbTr = useRef<Set<Lang>>(new Set());
+  const onEmbeddedFlush = useRef<() => void>(() => undefined);
   const [syncPhase, setPhases] = useState<Partial<Record<Lang, SyncPhase>>>({});
   const setSyncPhase = useCallback((lang: Lang, phase: SyncPhase | undefined) => setPhases((p) => (p[lang] === phase ? p : { ...p, [lang]: phase })), []);
   const prevIds = useRef<Partial<Record<Lang, string>>>({});
@@ -181,10 +189,12 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       const cues = (await api.subtitleCues(info.token, signal)).cues ?? [];
       if (!cues.length) throw new Error('the subtitle file is empty');
       setLoaded((l) => (l[lang]?.info.id === info.id ? { ...l, [lang]: { info, cues } } : l));
+      setFailed((f) => { if (!f[lang]) return f; const n = { ...f }; delete n[lang]; return n; });
       return true;
     } catch (e) {
       if ((e as Error).name === 'AbortError') return false;
       setErrors((x) => [...x, `${lang.toUpperCase()}: ${(e as Error).message}`]);
+      setFailed((f) => ({ ...f, [lang]: (e as Error).message }));
       setLoaded((l) => (l[lang]?.info.id === info.id ? { ...l, [lang]: null } : l));
       return false;
     }
@@ -267,6 +277,77 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     }
   }, []);
 
+  /** Translate subtitles that are inside the video file, batch by batch as the file is read. */
+  const pumpEmbedded = useCallback(async (lang: Lang) => {
+    const job = embTr.current[lang];
+    const e = job && embeddedRef.current[job.src];
+    if (!job || !e || job.busy) return;
+    job.busy = true;
+    let todo: SubtitleCue[] = [];
+    try {
+      for (;;) {
+        if (job.ac.signal.aborted) return;
+        todo = e.cues.filter((c) => !job.done.has(c.start)).slice(0, 80);
+        if (!todo.length) break;
+        todo.forEach((c) => job.done.add(c.start));
+        const { out, engine } = await firstPassLines(todo.map((c) => plainLine(c.text)), job.src, lang, {
+          translate: api.translate, ai: lastResortTranslator(job.src, lang, titleRef.current), signal: job.ac.signal,
+        });
+        if (job.ac.signal.aborted || embTr.current[lang] !== job) return;
+        job.cues = [...job.cues, ...todo.flatMap((c, i) => (out[i] ? [{ ...c, text: out[i] }] : []))].sort((a, b) => a.start - b.start);
+        const cues = job.cues;
+        setLoaded((l) => {
+          const cur = l[lang];
+          if (cur?.info.id === job.info.id || (!userPickedRef.current.has(lang) && !cur?.cues.length)) return { ...l, [lang]: { info: job.info, cues } };
+          return l;
+        });
+        setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'done', from: job.src } }));
+      }
+    } catch (err) {
+      todo.forEach((c) => job.done.delete(c.start)); // tried again with the next batch of cues
+      if ((err as Error).name !== 'AbortError') setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'error', from: job.src, message: `Couldn’t translate: ${(err as Error).message}` } }));
+    } finally {
+      job.busy = false;
+    }
+  }, []);
+
+  const startEmbTr = useCallback((lang: Lang, src: Lang) => {
+    wantEmbTr.current.delete(lang);
+    if (!embTr.current[lang]) {
+      const info: SubtitleTrackInfo = {
+        id: `tr-${lang}-embedded`, provider: 'translated', lang, sourceLang: src, token: '', score: 1,
+        label: `${lang.toUpperCase()} · Translated from ${languageName(src)} (in the video file)`, releaseName: 'In the video file',
+      };
+      embTr.current[lang] = { src, info, done: new Set(), cues: [], busy: false, ac: new AbortController() };
+      setTracks((ts) => (ts.some((t) => t.id === info.id) ? ts : [...ts, info]));
+      setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine: 'google', status: 'working', from: src, progress: 0 } }));
+    }
+    void pumpEmbedded(lang);
+  }, [pumpEmbedded]);
+
+  /**
+   * No usable subtitle in `lang` (none found, or none would load): translate one from another
+   * language — a downloaded track first (whole file at once), else the one inside the video file.
+   */
+  const fallbackTranslate = useCallback((lang: Lang, list: SubtitleTrackInfo[], signal?: AbortSignal) => {
+    if (!useApp.getState().settings.subtitle.autoTranslate || userPickedRef.current.has(lang)) return;
+    const src = pickTranslationSource(list, lang);
+    if (src) { void translateInto(lang, src, signal); return; }
+    const other = LANGS.find((l) => l !== lang && embeddedRef.current[l]);
+    if (other) startEmbTr(lang, other);
+    else wantEmbTr.current.add(lang); // starts when subtitles show up in the video file
+  }, [translateInto, startEmbTr]);
+
+  onEmbeddedFlush.current = () => {
+    for (const lang of LANGS) {
+      if (embTr.current[lang]) void pumpEmbedded(lang);
+      else if (wantEmbTr.current.has(lang) && !userPickedRef.current.has(lang) && !embeddedRef.current[lang]) {
+        const other = LANGS.find((l) => l !== lang && embeddedRef.current[l]);
+        if (other) startEmbTr(lang, other);
+      }
+    }
+  };
+
   // Reset everything when a new item starts playing.
   useEffect(() => {
     abortRef.current?.abort();
@@ -274,7 +355,10 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     genAbort.current.abort();
     genAbort.current = new AbortController();
     setTracks([]); setLoaded({}); setErrors([]); setOffsets({ ar: 0, en: 0 }); setScales({ ar: 1, en: 1 });
-    setManual(new Set()); setAutoSynced({}); setAuto({}); setSearched(false); setPhases({});
+    setManual(new Set()); setAutoSynced({}); setAuto({}); setSearched(false); setPhases({}); setFailed({});
+    for (const l of LANGS) embTr.current[l]?.ac.abort();
+    embTr.current = {};
+    wantEmbTr.current = new Set();
     embeddedRef.current = {};
     userPickedRef.current = new Set();
     translatedRef.current = new Map();
@@ -300,19 +384,20 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
           if (userPickedRef.current.has(lang) || embeddedRef.current[lang]) continue;
           const ranked = rankTracks(tracks, lang);
           if (ranked.length) {
-            // The best track first; if it won't download (or is empty), the next ones.
-            void firstWorking(ranked, (t: SubtitleTrackInfo) => (userPickedRef.current.has(lang) ? Promise.resolve(true) : loadCues(lang, t, ac.signal)), 3, ac.signal);
+            // The best track first; if it won't download (or is empty), the next ones;
+            // if none of them works, translate from another language as if there were none.
+            void firstWorking(ranked, (t: SubtitleTrackInfo) => (userPickedRef.current.has(lang) ? Promise.resolve(true) : loadCues(lang, t, ac.signal)), 3, ac.signal)
+              .then((ok) => { if (!ok && !ac.signal.aborted) fallbackTranslate(lang, tracks, ac.signal); });
             continue;
           }
           // Missing language: translate the best other track (English first).
-          const src = autoTranslate ? pickTranslationSource(tracks, lang) : undefined;
-          if (src) void translateInto(lang, src, ac.signal);
+          fallbackTranslate(lang, tracks, ac.signal);
         }
       })
       .catch((e) => { if (e.name !== 'AbortError') setErrors([e.message]); })
       .finally(() => { if (!ac.signal.aborted) { setLoading(false); setSearched(true); } });
     return () => ac.abort();
-  }, [req?.nonce, file.ready, file.hash, releaseName, loadCues, translateInto]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [req?.nonce, file.ready, file.hash, releaseName, loadCues, translateInto, fallbackTranslate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const select = useCallback((lang: Lang, t: SubtitleTrackInfo | null) => {
     userPickedRef.current.add(lang);
@@ -322,7 +407,13 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     if (!t) setLoaded((l) => ({ ...l, [lang]: null }));
     else if (t.provider === 'embedded' && emb) setLoaded((l) => ({ ...l, [lang]: { info: emb.info, cues: [...emb.cues] } }));
     else if (t.provider === 'generated' && gen) setLoaded((l) => ({ ...l, [lang]: { info: gen.info, cues: [...gen.cues] } }));
-    else if (t.provider === 'translated') {
+    else if (t.provider === 'translated' && embTr.current[lang]?.info.id === t.id) {
+      const j = embTr.current[lang]!;
+      setLoaded((l) => ({ ...l, [lang]: { info: j.info, cues: [...j.cues] } }));
+    } else if (t.provider === 'embedded' && t.lang !== lang) {
+      const other = appLang(t.lang);
+      if (other) startEmbTr(lang, other); // subtitles in the video file, in the other language: translate them
+    } else if (t.provider === 'translated') {
       const cached = translatedRef.current.get(t.id);
       if (cached) setLoaded((l) => ({ ...l, [lang]: cached }));
       else {
@@ -332,7 +423,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       }
     } else if (t.lang !== lang) void translateInto(lang, t); // another language picked: translate it
     else loadCues(lang, t);
-  }, [loadCues, translateInto]);
+  }, [loadCues, translateInto, startEmbTr]);
 
   /** Cues recognised from the audio (language `src`): shown directly or translated into Arabic/English. */
   const addGenerated = useCallback((src: string, cues: SubtitleCue[]) => {
@@ -384,7 +475,13 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
         if (userPickedRef.current.has(lang) || cur?.info.provider === 'local') return l;
         return { ...l, [lang]: { info: e.info, cues } };
       });
+      if (!userPickedRef.current.has(lang)) {
+        // The file's own subtitles took over: earlier download/translation problems no longer apply.
+        setAuto((a) => { if (a[lang]?.kind !== 'translate') return a; const n = { ...a }; delete n[lang]; return n; });
+        setFailed((f) => { if (!f[lang]) return f; const n = { ...f }; delete n[lang]; return n; });
+      }
     }
+    onEmbeddedFlush.current();
   }, []);
 
   const addEmbedded = useCallback((code: string, label: string, cue: SubtitleCue) => {
@@ -455,7 +552,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     return { shiftMs: (embedded ? 0 : baseShiftMs) + offsets[lang], scale: embedded ? 1 : scales[lang] };
   }, [loaded, baseShiftMs, offsets, scales]);
 
-  return { tracks, loaded, offsets, scales, baseShiftMs, setBaseShift, manual, autoSynced, applyAutoSync, syncPhase, setSyncPhase, autoSwitch, resetSync, timing, loading, searched, errors, auto, select, loadFile, setOffset, addEmbedded, addGenerated };
+  return { tracks, loaded, offsets, scales, baseShiftMs, setBaseShift, manual, autoSynced, applyAutoSync, syncPhase, setSyncPhase, autoSwitch, resetSync, timing, loading, searched, errors, failed, auto, select, loadFile, setOffset, addEmbedded, addGenerated };
 }
 
 // ─── Overlay renderer ───────────────────────────────────────────────────────
@@ -589,6 +686,7 @@ function LanguageCard({ subs, lang, enabled, listening }: { subs: SubtitleState;
       </select>
       {status && <p className={`text-xs ${status.good ? 'text-hd' : 'text-ink-400'}`}>{status.good && '✓ '}{status.text}</p>}
       {job?.status === 'error' && <p className="text-xs text-red-300">{job.message}</p>}
+      {!cur && job?.status !== 'working' && subs.failed[lang] && <p className="text-xs text-red-300">Couldn’t load that subtitle ({subs.failed[lang]}). Pick another, or one under “Translate from another language”.</p>}
       {lang === 'ar' && cur?.info.provider === 'translated' && !hasSubdl && (
         <p className="text-[11px] leading-snug text-ink-400">Tip: a free SubDL key (Settings → Optional keys) finds many more Arabic subtitles made by people.</p>
       )}
