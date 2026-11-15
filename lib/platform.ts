@@ -47,3 +47,19 @@ export function usePlatform(): PlatformInfo {
   useEffect(() => setP({ ios: isIOS(), mac: isMac(), webTorrent: supportsWebTorrent(), standalone: matchMedia('(display-mode: standalone)').matches || (navigator as { standalone?: boolean }).standalone === true }), []);
   return p;
 }
+
+/** Can this browser decode Dolby Digital (Plus)? Safari yes; Chrome and Firefox on computers no. */
+export function canDecodeDolby(): boolean {
+  if (typeof document === 'undefined') return true;
+  const v = document.createElement('video');
+  const MS = (window as unknown as { MediaSource?: { isTypeSupported(t: string): boolean } }).MediaSource;
+  return !!v.canPlayType('audio/mp4; codecs="ec-3"') || !!MS?.isTypeSupported?.('audio/mp4; codecs="ec-3"');
+}
+
+/** Whether a release's audio (from its name) will play here. Unknown audio counts as playable. */
+export function audioPlayable(audio: string[] | undefined): boolean {
+  if (!audio?.length) return true;
+  if (audio.some((a) => a === 'AAC' || a === 'Opus' || a === 'MP3' || a === 'FLAC')) return true;
+  if (audio.some((a) => a === 'DDP' || a === 'AC3' || a === 'Atmos')) return canDecodeDolby();
+  return false; // DTS / TrueHD: no browser plays these
+}

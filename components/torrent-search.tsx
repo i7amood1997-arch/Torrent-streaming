@@ -13,7 +13,7 @@ import { Fragment, useEffect, useMemo, useState } from 'react';
 import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
 import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, type ResultFilters, type SortKey } from '@/lib/result-filters';
-import { canPlayMkv } from '@/lib/platform';
+import { audioPlayable, canPlayMkv } from '@/lib/platform';
 import { hasDebrid, useApp } from '@/lib/store';
 import type { IndexerError, MediaType, QualityTier, TorrentResult } from '@/lib/types';
 import { IconCopy, IconFilter, IconLeech, IconPlay, IconSeed } from './icons';
@@ -115,7 +115,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
 
   const onPlay = (r: TorrentResult) =>
     play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, poster: context?.poster, backdrop: context?.backdrop });
-  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv() }) : undefined), [results, debrid, renderHeader]);
+  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable }) : undefined), [results, debrid, renderHeader]);
 
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 

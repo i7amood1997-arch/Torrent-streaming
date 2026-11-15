@@ -21,7 +21,7 @@ import { TIMELINE_OFFSET_MS } from '@/lib/mkv/remux';
 import { agrees, alignSubtitles, confident, type Alignment } from '@/lib/autosync';
 import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
 import { hashRemoteVideo } from '@/lib/subtitle-hash';
-import { canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
+import { audioPlayable, canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
 import { toVtt } from '@/lib/subtitle-parser';
@@ -107,6 +107,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [wtStats, setWtStats] = useState<WebTorrentStats>();
   const [cloudStats, setCloudStats] = useState<StreamStats>();
   const [engineOverride, setEngineOverride] = useState<Engine>();
+  /** Engine the current attempt used (so a failed Debrid attempt doesn't offer "Use Debrid" again). */
+  const [engineUsed, setEngineUsed] = useState<string>();
+  const [notice, setNotice] = useState<string>();
 
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -155,6 +158,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
     const ac = new AbortController();
     const engine = chooseEngine();
+    setEngineUsed(engine);
+    setNotice(undefined);
     setPhase('resolving');
 
     (async () => {
@@ -236,7 +241,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         const res = await api.resolveDebrid(r, { season: req.season, episode: req.episode }, ac.signal);
         if (res.status === 'error') throw new Error(res.message ?? 'Debrid error');
         if (res.status === 'ready' && res.url) {
-          const preferHls = !!res.hlsUrl && (isIOS() || (res.mimeType === 'video/x-matroska' && !canPlayMkv()));
+          // Real-Debrid's HLS version has AAC audio: use it on iPhone, for MKV the browser can't open, and when
+          // the file's audio (Dolby / DTS) wouldn't play in this browser — otherwise the video plays in silence.
+          const preferHls = !!res.hlsUrl && (isIOS() || (res.mimeType === 'video/x-matroska' && !canPlayMkv()) || !audioPlayable(r.audio));
           const mkv = res.mimeType === 'video/x-matroska' || /\.(mkv|webm)$/i.test(res.fileName ?? '');
           if (!preferHls && mkv && !canPlayMkv()) {
             // No iPhone-friendly (HLS) version from the Debrid service: convert the MKV in the page instead.
@@ -501,6 +508,29 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     ];
     return () => offs.forEach((f) => f());
   }, [resumeId, source]);
+
+  // ── Silent video: the browser plays the picture but can't decode the audio (Dolby/DTS in Chrome/Firefox) ──
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !source || phase !== 'ready' || source.remux || isHlsUrl(source.url, source.mime)) return;
+    const t = setInterval(() => {
+      if (v.paused || v.currentTime < 3 || v.readyState < 3) return;
+      const x = v as HTMLVideoElement & { webkitAudioDecodedByteCount?: number; mozHasAudio?: boolean; webkitVideoDecodedByteCount?: number };
+      const silent = x.webkitAudioDecodedByteCount !== undefined ? x.webkitAudioDecodedByteCount === 0 && (x.webkitVideoDecodedByteCount ?? 1) > 0
+        : x.mozHasAudio !== undefined ? !x.mozHasAudio : false;
+      clearInterval(t);
+      if (!silent) return;
+      if (source.alt && isHlsUrl(source.alt)) {
+        // Same video from the Debrid service, transcoded with AAC audio: continue from here.
+        try { if (resumeId) localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
+        setStatus('This file’s audio doesn’t play in this browser; switching to a version that does…');
+        setSource({ ...source, url: source.alt, alt: source.url, mime: 'application/vnd.apple.mpegurl' });
+      } else {
+        setNotice('No sound: this file’s audio (Dolby or DTS) doesn’t play in this browser. Pick a release with AAC audio, or use Safari or the iPhone app.');
+      }
+    }, 1500);
+    return () => clearInterval(t);
+  }, [source, phase, resumeId]);
 
   // ── Fullscreen ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -838,8 +868,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     : wtStats ? `${wtStats.numPeers} peers · ${formatBytes(wtStats.downloadSpeed)}/s · ${(wtStats.progress * 100).toFixed(1)}%` : undefined;
 
   const alternatives = req?.kind === 'torrent' ? [
-    caps?.stream && source?.engine !== 'cloud' && engineOverride !== 'cloud' && { label: 'Stream through your relay', engine: 'cloud' as Engine },
-    hasDebrid(settings, caps) && source?.engine !== 'debrid' && engineOverride !== 'debrid' && { label: `Use ${PROVIDER_NAMES[settings.debridProvider] ?? 'Debrid'}`, engine: 'debrid' as Engine },
+    caps?.stream && source?.engine !== 'cloud' && engineOverride !== 'cloud' && engineUsed !== 'cloud' && { label: 'Stream through your relay', engine: 'cloud' as Engine },
+    hasDebrid(settings, caps) && source?.engine !== 'debrid' && engineOverride !== 'debrid' && engineUsed !== 'debrid' && { label: `Use ${PROVIDER_NAMES[settings.debridProvider] ?? 'Debrid'}`, engine: 'debrid' as Engine },
     supportsWebTorrent() && source?.engine !== 'webtorrent' && { label: 'Try WebTorrent', engine: 'webtorrent' as Engine },
     engineOverride !== 'webtor' && { label: 'Free online player (webtor.io)', engine: 'webtor' as Engine },
   ].filter(Boolean) as { label: string; engine: Engine }[] : [];
@@ -913,6 +943,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {notice && phase === 'ready' && (
+          <div className="absolute inset-x-3 top-14 z-10 flex items-start gap-3 rounded-xl bg-black/80 p-3 text-sm text-white backdrop-blur" onPointerUp={(e) => e.stopPropagation()}>
+            <p className="flex-1">{notice}</p>
+            <button className="btn-ghost -m-1 px-2 py-1 text-xs" onClick={() => setNotice(undefined)}>OK</button>
           </div>
         )}
 

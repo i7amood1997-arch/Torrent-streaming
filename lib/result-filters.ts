@@ -48,7 +48,7 @@ export function countByQuality(results: TorrentResult[]): Record<QualityTier, nu
  * 1080p first (4K only with a Debrid account, which has the bandwidth), healthy seeders,
  * MP4 preferred on devices that can't open MKV directly; direct links beat torrents.
  */
-export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; preferMp4?: boolean } = {}): TorrentResult | undefined {
+export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; preferMp4?: boolean; audioOk?: (audio: string[] | undefined) => boolean } = {}): TorrentResult | undefined {
   const tier: Record<string, number> = { '4K': opts.debrid ? 3.2 : 1.2, '1080p': 3, '720p': 2, SD: 0.8, Unknown: 0.5 };
   const score = (r: TorrentResult) => {
     const c = (r.container ?? r.fileName?.split('.').pop() ?? '').toLowerCase();
@@ -57,6 +57,7 @@ export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; pre
       // Direct links start instantly and don't depend on seeders: they win ties.
       (r.url ? 2.3 : Math.min(2, Math.log10(r.seeders + 1) * 0.7) - (r.seeders < 3 ? 2 : 0)) +
       (opts.preferMp4 && ['mp4', 'm4v', 'mov'].includes(c) ? 0.6 : 0) -
+      (opts.audioOk && !opts.audioOk(r.audio) ? (opts.debrid ? 0.4 : 1.5) : 0) - // silent here (Debrid's HLS copy can fix it)
       (r.remux ? 0.8 : 0) - // huge files
       ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0)
     );
