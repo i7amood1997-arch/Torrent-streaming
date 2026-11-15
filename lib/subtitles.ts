@@ -243,9 +243,14 @@ export async function fetchSubtitleCues(tokenStr: string, keys: SubtitleKeys): P
     const { link } = (await dl.json()) as { link: string };
     bytes = new Uint8Array(await (await fetch(link, { signal: AbortSignal.timeout(15000) })).arrayBuffer());
   } else {
-    const zip = new Uint8Array(await (await fetch(SUBDL_DL + token.url, { signal: AbortSignal.timeout(15000) })).arrayBuffer());
-    const files = Object.entries(unzipSync(zip)).filter(([n]) => /\.(srt|vtt)$/i.test(n));
-    if (!files.length) throw new Error('No .srt in archive');
+    const res = await fetch(SUBDL_DL + token.url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) throw new Error(`SubDL download ${res.status}`);
+    const zip = new Uint8Array(await res.arrayBuffer());
+    if (zip[0] === 0x52 && zip[1] === 0x61 && zip[2] === 0x72 && zip[3] === 0x21) throw new Error('this subtitle is a RAR archive, which can’t be opened here');
+    // .srt/.vtt first, then .ass/.ssa (the usual format for anime).
+    const rank = (n: string) => (/\.(srt|vtt)$/i.test(n) ? 0 : 1);
+    const files = Object.entries(unzipSync(zip)).filter(([n]) => /\.(srt|vtt|ass|ssa)$/i.test(n)).sort(([a], [b]) => rank(a) - rank(b));
+    if (!files.length) throw new Error('no subtitle file in the archive');
     let pick = files[0];
     if (token.season != null && token.episode != null) {
       const re = new RegExp(`s0?${token.season}[ ._-]?e0?${token.episode}(?!\\d)|\\b${token.season}x0?${token.episode}(?!\\d)`, 'i');

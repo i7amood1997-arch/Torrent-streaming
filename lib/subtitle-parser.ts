@@ -31,8 +31,39 @@ export function cleanCueText(t: string): string {
 }
 
 /** Parses both SRT and WebVTT (they share the cue grammar closely enough). */
+/**
+ * ASS/SSA (common for anime): the [Events] "Dialogue:" lines. Times are H:MM:SS.cc; the text is
+ * the last field (it may contain commas); \N is a line break; drawing commands are skipped.
+ */
+export function parseAss(text: string): SubtitleCue[] {
+  let fields = ['layer', 'start', 'end', 'style', 'name', 'marginl', 'marginr', 'marginv', 'effect', 'text'];
+  const cues: SubtitleCue[] = [];
+  const time = (t: string) => { const m = /^(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})$/.exec(t.trim()); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] + +m[4].padEnd(3, '0') / 1000 : NaN; };
+  for (const line of text.split('\n')) {
+    const f = /^Format:\s*(.*)$/i.exec(line);
+    if (f && /text/i.test(f[1])) { fields = f[1].split(',').map((x) => x.trim().toLowerCase()); continue; }
+    const d = /^Dialogue:\s*(.*)$/i.exec(line);
+    if (!d) continue;
+    const parts = d[1].split(',');
+    const n = fields.length;
+    if (parts.length < n) continue;
+    const rec: Record<string, string> = {};
+    fields.forEach((k, i) => { rec[k] = i === n - 1 ? parts.slice(i).join(',') : parts[i]; });
+    if (/\\p[1-9]/.test(rec.text ?? '')) continue; // vector drawing, not dialogue
+    const start = time(rec.start ?? '');
+    const end = time(rec.end ?? '');
+    if (Number.isNaN(start) || Number.isNaN(end) || end <= start) continue;
+    const body = cleanCueText((rec.text ?? '').replace(/\\[Nn]/g, '\n').replace(/\\h/g, ' '));
+    if (body) cues.push({ start, end, text: body });
+  }
+  // Styled subtitles often repeat a line in several layers (outline/shadow): keep one.
+  const seen = new Set<string>();
+  return cues.filter((c) => { const k = `${c.start}|${c.end}|${c.text}`; if (seen.has(k)) return false; seen.add(k); return true; }).sort((x, y) => x.start - y.start);
+}
+
 export function parseSubtitles(input: string): SubtitleCue[] {
-  const text = input.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+  const text = input.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  if (/^\s*\[Script Info\]/i.test(text) || /^Dialogue:/m.test(text)) return parseAss(text);
   const blocks = text.split(/\n{2,}/);
   const cues: SubtitleCue[] = [];
   for (const block of blocks) {
