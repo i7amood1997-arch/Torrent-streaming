@@ -22,6 +22,7 @@ import { agrees, alignSubtitles, confident, type Alignment } from '@/lib/autosyn
 import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
 import { hashRemoteVideo } from '@/lib/subtitle-hash';
 import { audioPlayable, canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
+import { deadLinkMessage } from '@/lib/playback-errors';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
 import { toVtt } from '@/lib/subtitle-parser';
@@ -455,6 +456,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     if (!v) return;
     let lastSave = 0;
     const on = (ev: string, fn: () => void) => { v.addEventListener(ev, fn); return () => v.removeEventListener(ev, fn); };
+    let live = true;
     const offs = [
       on('play', () => { setPlaying(true); nativeTV()?.setKeepScreenOn(true); }),
       on('pause', () => { setPlaying(false); nativeTV()?.setKeepScreenOn(false); }),
@@ -504,15 +506,18 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           setSource({ ...source, alt: viaRelay, remux: true });
           return;
         }
-        setError(
-          code === 4
-            ? 'This browser cannot decode this file (container/codec). On iPhone/iPad choose an MP4 / H.264 release, or a Real-Debrid stream with HLS transcoding.'
-            : `Playback error (${v.error?.message || code}).`,
-        );
+        const fallback = code === 4
+          ? 'This browser cannot decode this file (container/codec). On iPhone/iPad choose an MP4 / H.264 release, or a Real-Debrid stream with HLS transcoding.'
+          : `Playback error (${v.error?.message || code}).`;
+        setError(fallback);
         setPhase('error');
+        // Code 4 is also what a dead link gives: check the link and say so if that's the reason.
+        if (code === 4 && source && v.readyState === 0) {
+          deadLinkMessage(source.url).then((m) => { if (m && live) setError(m); });
+        }
       }),
     ];
-    return () => offs.forEach((f) => f());
+    return () => { live = false; offs.forEach((f) => f()); };
   }, [resumeId, source]);
 
   // ── Silent video: the browser plays the picture but can't decode the audio (Dolby/DTS in Chrome/Firefox) ──
