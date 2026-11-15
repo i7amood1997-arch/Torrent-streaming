@@ -135,7 +135,7 @@ export function SearchView({ active }: { active: boolean }) {
           <PosterGrid items={items} loading={loading} />
           {!loading && !items.length && q && (
             <div className="space-y-3 text-sm text-ink-400">
-              <p>Nothing in the catalog for “{q}”.</p>
+              {!error && <p>Nothing in the catalog for “{q}”.</p>}
               <button className="btn-glass rounded-full px-4" onClick={() => { setMode('torrent'); submit(); }}>Search torrents instead</button>
             </div>
           )}
