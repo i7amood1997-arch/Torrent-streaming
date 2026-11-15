@@ -127,6 +127,31 @@ export const DEFAULT_SETTINGS: Settings = {
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true, autoTranslate: true, autoGenerate: true, translator: 'ai' },
 };
 
+/**
+ * The browser's localStorage, or an in-memory stand-in when it is blocked (some private
+ * modes, locked-down profiles). Without a storage, zustand drops the persist API and the
+ * app crashed on start; now settings simply last until the tab closes.
+ */
+export function safeStorage(): Storage {
+  try {
+    const ls = window.localStorage;
+    const k = '__ts_probe';
+    ls.setItem(k, '1');
+    ls.removeItem(k);
+    return ls;
+  } catch {
+    const m = new Map<string, string>();
+    return {
+      get length() { return m.size; },
+      clear: () => m.clear(),
+      getItem: (k) => m.get(k) ?? null,
+      key: (i) => [...m.keys()][i] ?? null,
+      removeItem: (k) => { m.delete(k); },
+      setItem: (k, v) => { m.set(k, String(v)); },
+    };
+  }
+}
+
 export const useApp = create<AppState>()(
   persist(
     (set, get) => ({
@@ -175,7 +200,7 @@ export const useApp = create<AppState>()(
         return persisted;
       },
       skipHydration: true, // rehydrated in a client effect to avoid SSR mismatch
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(safeStorage),
       partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history }),
       merge: (persisted: any, current) => ({
         ...current,
