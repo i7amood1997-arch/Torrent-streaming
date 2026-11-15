@@ -72,7 +72,7 @@ async function http<T>(url: string, init: RequestInit & { timeout?: number } = {
   try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
   if (!res.ok) {
     const msg = body?.error ?? body?.detail ?? body?.message ?? (typeof body === 'string' ? body.slice(0, 200) : `HTTP ${res.status}`);
-    throw new DebridError(explainDebridError(String(msg)), res.status);
+    throw new DebridError(explainDebridError(String(msg)), res.status, String(msg));
   }
   return body as T;
 }
@@ -91,7 +91,8 @@ export function explainDebridError(code: string): string {
 }
 
 export class DebridError extends Error {
-  constructor(message: string, public status = 502) {
+  /** The provider's own error code (e.g. `infringing_file`), when it sent one. */
+  constructor(message: string, public status = 502, public code?: string) {
     super(message);
   }
 }
@@ -115,6 +116,19 @@ async function resolveRealDebrid(i: ResolveInput): Promise<ResolvedStream> {
     id = added.id;
   }
 
+  try {
+    return await finishRealDebrid(i, id, auth, formHeaders);
+  } catch (e) {
+    // A torrent Real-Debrid will never serve (copyright block, dead/broken torrent): remove it from
+    // the account so the torrent list doesn't fill up with failures. Best effort; the original error wins.
+    if (e instanceof DebridError && (e.code === 'infringing_file' || e.status === 451 || e.code === 'dead_torrent')) {
+      await fetch(`${RD}/torrents/delete/${id}`, { method: 'DELETE', headers: auth, signal: AbortSignal.timeout(5000) }).catch(() => undefined);
+    }
+    throw e;
+  }
+}
+
+async function finishRealDebrid(i: ResolveInput, id: string, auth: Record<string, string>, formHeaders: Record<string, string>): Promise<ResolvedStream> {
   let info = await http<any>(`${RD}/torrents/info/${id}`, { headers: auth });
   if (info.status === 'waiting_files_selection') {
     const files: FileLike[] = info.files.map((f: any, idx: number) => ({ index: idx, id: f.id, name: f.path, size: f.bytes }));
@@ -126,7 +140,7 @@ async function resolveRealDebrid(i: ResolveInput): Promise<ResolvedStream> {
   }
 
   if (info.status !== 'downloaded') {
-    if (['error', 'magnet_error', 'virus', 'dead'].includes(info.status)) return { status: 'error', message: `Real-Debrid: ${info.status}`, provider: 'realdebrid' };
+    if (['error', 'magnet_error', 'virus', 'dead'].includes(info.status)) throw new DebridError(`Real-Debrid: ${info.status}`, 502, 'dead_torrent');
     return { status: 'queued', progress: info.progress ?? 0, message: `Real-Debrid: ${info.status}`, provider: 'realdebrid' };
   }
 
