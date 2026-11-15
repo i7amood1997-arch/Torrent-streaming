@@ -10,8 +10,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useApp, type PlayRequest } from '@/lib/store';
-import { activeCues, autoSelectTracks, decodeSubtitleBytes, hasRtlChars, isRtlLang, parseSubtitles, releaseSimilarity } from '@/lib/subtitle-parser';
-import { languageName, plainLine, translateLines, upgradeLines, type BatchTranslateFn } from '@/lib/translate';
+import { activeCues, decodeSubtitleBytes, firstWorking, hasRtlChars, isRtlLang, parseSubtitles, rankTracks, releaseSimilarity } from '@/lib/subtitle-parser';
+import { firstPassLines, languageName, plainLine, translateLines, upgradeLines, type BatchTranslateFn } from '@/lib/translate';
 import { getTranslation, putTranslation } from '@/lib/translation-cache';
 import type { SubtitleCue, SubtitleTrackInfo } from '@/lib/types';
 import type { GeneratorStatus } from '@/lib/speech/generate';
@@ -129,6 +129,8 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const titleRef = useRef<string | undefined>(undefined);
   titleRef.current = req?.title;
   const [tracks, setTracks] = useState<SubtitleTrackInfo[]>([]);
+  const tracksRef = useRef(tracks);
+  tracksRef.current = tracks;
   const [loaded, setLoaded] = useState<SubtitleState['loaded']>({});
   const [offsets, setOffsets] = useState<Record<Lang, number>>({ ar: 0, en: 0 });
   const [scales, setScales] = useState<Record<Lang, number>>({ ar: 1, en: 1 });
@@ -165,15 +167,19 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const genQueue = useRef<Promise<void>>(Promise.resolve());
   const genAbort = useRef(new AbortController());
 
-  const loadCues = useCallback(async (lang: Lang, info: SubtitleTrackInfo, signal?: AbortSignal) => {
+  /** Download a track's cues. Resolves true if it loaded with something to show. */
+  const loadCues = useCallback(async (lang: Lang, info: SubtitleTrackInfo, signal?: AbortSignal): Promise<boolean> => {
     setLoaded((l) => ({ ...l, [lang]: { info, cues: [] } }));
     try {
       const cues = (await api.subtitleCues(info.token, signal)).cues ?? [];
+      if (!cues.length) throw new Error('the subtitle file is empty');
       setLoaded((l) => (l[lang]?.info.id === info.id ? { ...l, [lang]: { info, cues } } : l));
+      return true;
     } catch (e) {
-      if ((e as Error).name === 'AbortError') return;
+      if ((e as Error).name === 'AbortError') return false;
       setErrors((x) => [...x, `${lang.toUpperCase()}: ${(e as Error).message}`]);
       setLoaded((l) => (l[lang]?.info.id === info.id ? { ...l, [lang]: null } : l));
+      return false;
     }
   }, []);
 
@@ -218,13 +224,18 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       const saved = ai ? getTranslation(cacheKey, lines.length) : undefined;
       if (saved) { finish(saved, 'ai'); return; }
 
-      // 1) Fast, complete first pass.
-      const out: (string | undefined)[] = await translateLines(lines, src.lang, lang, {
+      // 1) Fast, complete first pass (Google; the AI does it if Google refuses).
+      let engine: 'google' | 'ai' = 'google';
+      const first = await firstPassLines(lines, src.lang, lang, {
         translate: api.translate,
+        ai,
         signal: ac.signal,
-        onBatch: (done, partial) => { publish(partial); status({ engine: 'google', progress: done / Math.max(1, lines.length) }); },
+        onBatch: (done, partial) => { publish(partial); status({ engine, progress: done / Math.max(1, lines.length) }); },
+        onFallback: () => { engine = 'ai'; status({ engine, progress: 0 }); },
       });
+      const out: (string | undefined)[] = first.out;
       publish(out);
+      if (first.engine === 'ai') { putTranslation(cacheKey, out.map((x) => x ?? '')); finish(out, 'ai'); return; }
       if (!ai) { finish(out, 'google'); return; }
 
       // 2) AI rewrite, nearest the viewer first; lines swap in as they're ready.
@@ -277,12 +288,15 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       .then(({ tracks = [], errors = [] }) => {
         setTracks((prev) => [...prev.filter((t) => t.provider === 'embedded' || t.provider === 'local' || t.provider === 'generated'), ...tracks]);
         setErrors(errors.map((e) => `${e.provider}: ${e.message}`));
-        const best = autoSelectTracks(tracks, LANGS);
         for (const lang of LANGS) {
           // Embedded subtitles (exact timing) and the user's own choice win over downloads.
           if (userPickedRef.current.has(lang) || embeddedRef.current[lang]) continue;
-          const t = best[lang];
-          if (t) { loadCues(lang, t, ac.signal); continue; }
+          const ranked = rankTracks(tracks, lang);
+          if (ranked.length) {
+            // The best track first; if it won't download (or is empty), the next ones.
+            void firstWorking(ranked, (t: SubtitleTrackInfo) => (userPickedRef.current.has(lang) ? Promise.resolve(true) : loadCues(lang, t, ac.signal)), 3, ac.signal);
+            continue;
+          }
           // Missing language: translate the best other track (English first).
           const src = autoTranslate ? pickTranslationSource(tracks, lang) : undefined;
           if (src) void translateInto(lang, src, ac.signal);
@@ -304,6 +318,11 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     else if (t.provider === 'translated') {
       const cached = translatedRef.current.get(t.id);
       if (cached) setLoaded((l) => ({ ...l, [lang]: cached }));
+      else {
+        // Not translated (yet, or it failed): picking it starts the translation again.
+        const src = tracksRef.current.find((x) => `tr-${lang}-${x.id}` === t.id);
+        if (src) void translateInto(lang, src);
+      }
     } else if (t.lang !== lang) void translateInto(lang, t); // another language picked: translate it
     else loadCues(lang, t);
   }, [loadCues, translateInto]);

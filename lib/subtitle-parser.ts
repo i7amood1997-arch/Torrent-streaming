@@ -117,12 +117,27 @@ export function releaseSimilarity(a?: string, b?: string): number {
 /** Pick the best track for each preferred language (Arabic + English by default). */
 export function autoSelectTracks(tracks: SubtitleTrackInfo[], langs: string[] = ['ar', 'en']): Record<string, SubtitleTrackInfo | undefined> {
   const out: Record<string, SubtitleTrackInfo | undefined> = {};
-  for (const lang of langs) {
-    out[lang] = tracks
-      .filter((t) => t.lang === lang)
-      .sort((x, y) => (y.score ?? 0) - (x.score ?? 0) || Number(!!x.hearingImpaired) - Number(!!y.hearingImpaired) || (y.downloads ?? 0) - (x.downloads ?? 0))[0];
-  }
+  for (const lang of langs) out[lang] = rankTracks(tracks, lang)[0];
   return out;
+}
+
+/** A language's tracks, best first (the next ones are tried if the best won't download). */
+export function rankTracks(tracks: SubtitleTrackInfo[], lang: string): SubtitleTrackInfo[] {
+  return tracks
+    .filter((t) => t.lang === lang)
+    .sort((x, y) => (y.score ?? 0) - (x.score ?? 0) || Number(!!x.hearingImpaired) - Number(!!y.hearingImpaired) || (y.downloads ?? 0) - (x.downloads ?? 0));
+}
+
+/**
+ * Try candidates in order until one loads (some subtitle files fail to download or are
+ * empty). Returns the one that worked, or undefined.
+ */
+export async function firstWorking<T>(candidates: T[], load: (c: T) => Promise<boolean>, max = 3, signal?: AbortSignal): Promise<T | undefined> {
+  for (const c of candidates.slice(0, max)) {
+    if (signal?.aborted) return undefined;
+    if (await load(c)) return c;
+  }
+  return undefined;
 }
 
 const vttTime = (s: number) => {

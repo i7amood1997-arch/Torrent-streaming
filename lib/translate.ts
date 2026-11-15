@@ -58,15 +58,28 @@ export function parseGoogle(data: unknown): { text: string; detected?: string } 
 
 export type TranslateFn = (text: string, from: string, to: string, signal?: AbortSignal) => Promise<string>;
 
+/** Waits between retries when Google says it's busy (429/503): its limit is short-lived. */
+export const BUSY_RETRY_MS = [1200, 3000];
+
+const wait = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  if (signal?.aborted) return reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(t); reject(signal.reason ?? new DOMException('Aborted', 'AbortError')); }, { once: true });
+});
+
 export const googleTranslate: TranslateFn = async (text, from, to, signal) => {
-  const res = await fetch(`${GOOGLE}?client=gtx&dt=t&sl=${encodeURIComponent(from || 'auto')}&tl=${encodeURIComponent(to)}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: new URLSearchParams({ q: text }).toString(),
-    signal,
-  });
-  if (!res.ok) throw new Error(res.status === 429 ? 'translator busy (429)' : `translator HTTP ${res.status}`);
-  return parseGoogle(await res.json()).text;
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`${GOOGLE}?client=gtx&dt=t&sl=${encodeURIComponent(from || 'auto')}&tl=${encodeURIComponent(to)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+      body: new URLSearchParams({ q: text }).toString(),
+      signal,
+    });
+    if (res.ok) return parseGoogle(await res.json()).text;
+    const busy = res.status === 429 || res.status === 503;
+    if (busy && attempt < BUSY_RETRY_MS.length) { await wait(BUSY_RETRY_MS[attempt], signal); continue; }
+    throw new Error(busy ? `translator busy (${res.status})` : `translator HTTP ${res.status}`);
+  }
 };
 
 // ─── Sentences split across subtitle lines ──────────────────────────────────
@@ -180,7 +193,7 @@ export async function translateLines(
   const plan: [number, number][] = ai ? Array.from({ length: Math.ceil(lines.length / size) }, (_, k) => [k * size, Math.min(lines.length, (k + 1) * size)]) : [];
   if (!ai) {
     await googleLines(lines, from, to, { ...opts, onBatch: (done, part) => { part.forEach((t, i) => { if (t !== undefined) out[i] = t; }); opts.onBatch?.(done, out); } }).then((t) => t.forEach((x, i) => { out[i] = x; }));
-    return out.map((x) => x ?? '');
+    return Array.from(out, (x) => x ?? '');
   }
 
   let done = 0;
@@ -199,7 +212,14 @@ export async function translateLines(
       }
     }
     const missing = idx.filter((i) => out[i] === undefined);
-    if (missing.length) await google(missing);
+    if (missing.length) {
+      try {
+        await google(missing);
+      } catch (e) {
+        // The AI did this batch: a few lines it skipped aren't worth failing the whole file over.
+        if ((e as Error).name === 'AbortError' || !ai) throw e;
+      }
+    }
   };
   // Two batches in flight, reported in order.
   for (let k = 0; k < plan.length; k += 2) {
@@ -207,7 +227,30 @@ export async function translateLines(
     done = plan[Math.min(plan.length, k + 2) - 1][1];
     opts.onBatch?.(done, out);
   }
-  return out.map((x) => x ?? '');
+  return Array.from(out, (x) => x ?? '');
+}
+
+/**
+ * The quick first translation of a subtitle file: Google (complete in seconds). If Google
+ * refuses (rate limit, blocked), the AI translator does the whole file instead of giving up.
+ * `engine` says which one produced the result.
+ */
+export async function firstPassLines(
+  lines: string[],
+  from: string,
+  to: string,
+  opts: { translate?: TranslateFn; ai?: BatchTranslateFn; signal?: AbortSignal; onBatch?: (done: number, out: (string | undefined)[]) => void; onFallback?: (e: Error) => void },
+): Promise<{ out: string[]; engine: 'google' | 'ai' }> {
+  try {
+    return { out: await translateLines(lines, from, to, { translate: opts.translate, signal: opts.signal, onBatch: opts.onBatch }), engine: 'google' };
+  } catch (e) {
+    if ((e as Error).name === 'AbortError' || opts.signal?.aborted || !opts.ai) throw e;
+    opts.onFallback?.(e as Error);
+    let aiFailed: Error | undefined;
+    const out = await translateLines(lines, from, to, { ...opts, onAiFailed: (x) => { aiFailed = x; } });
+    // translateLines only falls back to Google when the AI stops; if that also worked, fine.
+    return { out, engine: aiFailed ? 'google' : 'ai' };
+  }
 }
 
 /** Google path: whole sentences in, split back over their lines. */
@@ -236,7 +279,7 @@ async function googleLines(
     },
   });
   spread(unitOut);
-  return out.map((x) => x ?? '');
+  return Array.from(out, (x) => x ?? '');
 }
 
 /** Translate independent units with newline-joined batches (1:1 mapping, bisect on mismatch). */
@@ -272,7 +315,7 @@ async function translateUnits(
     done = plan.slice(0, i + 2).reduce((n, [, b]) => Math.max(n, b), done);
     opts.onBatch?.(done, out);
   }
-  return out.map((s) => s ?? '');
+  return Array.from(out, (s) => s ?? '');
 }
 
 /**
