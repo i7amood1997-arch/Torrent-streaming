@@ -7,7 +7,7 @@
  */
 import { useEffect, useState } from 'react';
 import { Home } from '@/components/home';
-import { IconFilm, IconPlay, IconSearch, IconSettings } from '@/components/icons';
+import { IconGearFill, IconHomeFill, IconPlay, IconSearch } from '@/components/icons';
 import { SEARCH_INPUT_ID, SearchView } from '@/components/search-view';
 import { SettingsPanel } from '@/components/settings-panel';
 import { TitleDetail } from '@/components/title-detail';
@@ -17,10 +17,10 @@ import { asset, BASE_PATH } from '@/lib/config';
 import { useApp, type View } from '@/lib/store';
 import { initialFocus, isTV, onTvBack, popFocus, pushFocus, startTvMode } from '@/lib/tv';
 
-const NAV: { id: Exclude<View, 'player'>; label: string; icon: typeof IconFilm }[] = [
-  { id: 'discover', label: 'Home', icon: IconFilm },
-  { id: 'search', label: 'Search', icon: IconSearch },
-  { id: 'settings', label: 'Settings', icon: IconSettings },
+/** The tabs in the floating bar; Search sits apart in its own glass circle, as on Apple TV. */
+const NAV: { id: Exclude<View, 'player' | 'search'>; label: string; icon: typeof IconHomeFill }[] = [
+  { id: 'discover', label: 'Home', icon: IconHomeFill },
+  { id: 'settings', label: 'Settings', icon: IconGearFill },
 ];
 
 export default function App() {
@@ -114,23 +114,29 @@ export default function App() {
         <>
           {/* Keeps scrolled content from showing through behind the floating bar */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/50 via-black/20 to-transparent md:block" />
-          <nav data-tv-nav className="glass absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-1 rounded-full p-1.5 md:flex" aria-label="Main">
-            {NAV.map((n) => {
-              const on = listView === n.id && !detail;
-              return (
-                <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                  className={`rounded-full px-5 py-2 text-[15px] font-semibold transition ${on ? 'glass-selected' : 'text-white/85 hover:text-white'}`}>
-                  {n.label}
+          <div data-tv-nav className="absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-3 md:flex">
+            <nav className="glass flex items-center gap-1 rounded-full p-1.5" aria-label="Main">
+              {NAV.map((n) => {
+                const on = listView === n.id && !detail;
+                return (
+                  <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
+                    className={`rounded-full px-5 py-2 text-[15px] font-semibold transition ${on ? 'glass-selected' : 'text-white hover:bg-white/5'}`}>
+                    {n.label}
+                  </button>
+                );
+              })}
+              {nowPlaying && (
+                <button onClick={() => setView('player')} className="ml-1 flex max-w-[16rem] items-center gap-2 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold text-white hover:bg-white/5">
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-black"><IconPlay size={10} /></span>
+                  <span className="truncate">{nowLabel}</span>
                 </button>
-              );
-            })}
-            {nowPlaying && (
-              <button onClick={() => setView('player')} className="ml-1 flex max-w-[16rem] items-center gap-2 rounded-full bg-white/15 py-2 pl-3 pr-4 text-[13px] font-semibold text-white hover:bg-white/25">
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-black"><IconPlay size={10} /></span>
-                <span className="truncate">{nowLabel}</span>
-              </button>
-            )}
-          </nav>
+              )}
+            </nav>
+            <button onClick={() => setView('search')} aria-label="Search" aria-current={listView === 'search' && !detail ? 'page' : undefined}
+              className={`glass grid h-[3.25rem] w-[3.25rem] place-items-center rounded-full transition ${listView === 'search' && !detail ? 'text-[#4ba3ff]' : 'text-white'}`}>
+              <IconSearch size={22} strokeWidth={2.6} />
+            </button>
+          </div>
 
           <div className="absolute inset-x-3 bottom-[max(0.6rem,env(safe-area-inset-bottom))] z-40 space-y-2 md:hidden">
             {nowPlaying && (
@@ -142,17 +148,23 @@ export default function App() {
                 </span>
               </button>
             )}
-            <nav data-tv-nav className="glass flex rounded-[1.6rem] p-1" aria-label="Main">
-              {NAV.map((n) => {
-                const on = listView === n.id;
-                return (
-                  <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                    className={`flex flex-1 flex-col items-center gap-0.5 rounded-[1.3rem] py-1.5 text-[10px] font-semibold transition ${on ? 'glass-selected' : 'text-white/75'}`}>
-                    <n.icon size={22} /> {n.label}
-                  </button>
-                );
-              })}
-            </nav>
+            <div data-tv-nav className="flex items-center gap-2.5">
+              <nav className="glass flex flex-1 rounded-full p-1.5" aria-label="Main">
+                {NAV.map((n) => {
+                  const on = listView === n.id;
+                  return (
+                    <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
+                      className={`flex flex-1 flex-col items-center gap-0.5 rounded-full py-2 text-[11px] font-semibold transition ${on ? 'glass-selected' : 'text-white'}`}>
+                      <n.icon size={26} /> {n.label}
+                    </button>
+                  );
+                })}
+              </nav>
+              <button onClick={() => setView('search')} aria-label="Search" aria-current={listView === 'search' ? 'page' : undefined}
+                className={`glass grid h-[4.25rem] w-[4.25rem] shrink-0 place-items-center rounded-full transition ${listView === 'search' ? 'text-[#4ba3ff]' : 'text-white'}`}>
+                <IconSearch size={26} strokeWidth={2.6} />
+              </button>
+            </div>
           </div>
         </>
       )}
