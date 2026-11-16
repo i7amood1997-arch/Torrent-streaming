@@ -15,7 +15,9 @@ import { openAudioSource, type AudioClip } from '@/lib/speech/audio-source';
 import type { SubtitleCue, SubtitleTrackInfo } from '@/lib/types';
 import { LANGS, type Lang, type SubtitleState } from './subtitles';
 
-const MKV_BUDGET = 28 << 20; // bytes per stretch when the whole stream must be read
+const MKV_BUDGET = 40 << 20; // bytes per stretch when the whole stream must be read
+const MIN_STRETCH = 15; // seconds; heavy files get shorter stretches, but more of them
+const GENTLE_SPAN = 20 * 60; // relay torrents: stretches from the first 20 minutes only
 const wait = (ms: number, signal: AbortSignal) => new Promise<void>((res) => { const t = setTimeout(res, ms); signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true }); });
 
 const downloadable = (t?: SubtitleTrackInfo) => !!t && (t.provider === 'opensubtitles' || t.provider === 'subdl' || t.provider === 'local' || t.provider === 'translated');
@@ -30,6 +32,8 @@ export function usePresync(opts: {
   enabled: boolean;
   /** Relay offers speech recognition. */
   ai: boolean;
+  /** Start once playback is under way and stay near the start of the file (relay torrents). */
+  gentle?: boolean;
   subsRef: React.MutableRefObject<SubtitleState | null>;
   getTime: () => number;
   /** Tells the live listener what was applied (media-time shift in seconds). */
@@ -154,13 +158,18 @@ export function usePresync(opts: {
 
       if (audio === 'pending') {
         try {
+          if (o.current.gentle) while (!signal.aborted && o.current.getTime() < 4) await wait(1000, signal);
+          if (signal.aborted) return;
           const src = await openAudioSource(o.current.urls!, signal);
-          const cheap = src.costPerSecond < 100_000; // MP4: audio only
+          const cheap = src.costPerSecond < 100_000; // MP4 / HLS: audio only, or close to it
           const length = cheap ? 60 : Math.floor(Math.min(60, MKV_BUDGET / src.costPerSecond));
-          if (length < 30) throw new Error('bitrate too high to sample');
+          if (length < MIN_STRETCH) throw new Error('bitrate too high to sample');
           const first = pending()[0];
           if (!first) throw new Error('subtitle changed');
-          const starts = planWindows(first.cues, src.duration, cheap ? 4 : 3, length);
+          // Shorter stretches: more of them, so there is as much speech to match.
+          const count = cheap ? 4 : length >= 40 ? 3 : length >= 25 ? 4 : 5;
+          const span = o.current.gentle ? Math.min(src.duration || Infinity, (first.cues[0]?.start ?? 0) + GENTLE_SPAN) : src.duration;
+          const starts = planWindows(first.cues, span, count, length);
           for (const start of starts) {
             const clip = await src.read(start, start + length, signal);
             firstClip ??= clip;

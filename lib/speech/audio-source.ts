@@ -60,9 +60,10 @@ export async function openAudioSource(urls: (string | undefined)[], signal?: Abo
       lastError = e;
       continue;
     }
+    if (String.fromCharCode(...head.subarray(0, 7)) === '#EXTM3U') return (await import('./hls-audio')).openHls(url, signal);
     if (head[0] === 0x1a && head[1] === 0x45 && head[2] === 0xdf && head[3] === 0xa3) return openMkv(url, size, signal);
     if (String.fromCharCode(...head.subarray(4, 8)) === 'ftyp') return openMp4(url, head, size, signal);
-    throw new UnsupportedAudio('This video format can’t be read for subtitles (only MP4 and MKV).');
+    throw new UnsupportedAudio('This video format can’t be read for subtitles (only MP4, MKV and HLS).');
   }
   throw new Error(`Couldn’t read the video (${(lastError as Error)?.message ?? 'no link'}).`);
 }

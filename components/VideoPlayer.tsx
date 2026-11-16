@@ -77,6 +77,18 @@ function readableUrls(source: Source): string[] | undefined {
   return urls.length ? [...new Set(urls)] : undefined;
 }
 
+/**
+ * Links the subtitle sync and generator can read audio from: the file itself, plus HLS copies
+ * (Real-Debrid's iPhone stream) through the relay, which makes their segments readable here.
+ */
+function audioUrls(source: Source): string[] | undefined {
+  const files = readableUrls(source) ?? [];
+  const hls = source.engine === 'webtor' || source.engine === 'webtorrent' ? [] : [source.url, source.alt].filter((u): u is string => !!u && isHlsUrl(u, u === source.url ? source.mime : undefined));
+  const viaRelay = hls.map((u) => (u.includes('/api/proxy') ? u : api.proxyUrl(u))).filter((u): u is string => !!u);
+  const urls = [...files, ...hls, ...viaRelay]; // the stream itself first (if its host allows it), else via the relay
+  return urls.length ? [...new Set(urls)] : undefined;
+}
+
 const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link' };
 
 /**
@@ -349,10 +361,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   // Up-front sync: fit subtitles to audio sampled from across the file, before the viewer needs them.
   // Relay torrent streams: sampling audio across the file would pull tens of MB from peers while the
   // video is starting, so they rely on listening to the audio (and the other subtitle) instead.
-  const presyncUrls = source && source.engine !== 'cloud' ? readableUrls(source) : undefined;
+  const presyncUrls = source ? audioUrls(source) : undefined;
   usePresync({
     playKey: source ? `${req?.nonce}|${source.url}` : '',
     urls: presyncUrls,
+    // Relay torrents: reading audio elsewhere in the file would compete with playback for peers,
+    // so wait until it plays and sample the first 20 minutes only.
+    gentle: source?.engine === 'cloud',
     enabled: settings.subtitle.autoSync,
     ai: !!caps?.ai,
     subsRef,
@@ -368,7 +383,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [genStatus, setGenStatus] = useState<GeneratorStatus>();
   const [genWanted, setGenWanted] = useState(false);
   useEffect(() => { setGenWanted(false); setGenStatus(undefined); }, [req?.nonce]);
-  const genUrls = source ? readableUrls(source) : undefined;
+  const genUrls = source ? audioUrls(source) : undefined;
   const genReason = !caps?.ai
     ? apiBase() ? 'Your relay needs one update for this: open it in Cloudflare → Deployments and redeploy the latest version.' : 'This needs your own relay (Settings → Relay).'
     : source && !genUrls ? 'Not available for this kind of stream.' : undefined;
