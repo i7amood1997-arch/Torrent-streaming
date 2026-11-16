@@ -114,12 +114,15 @@ export const api = {
   async transcribe(audio: { bytes: Uint8Array; mime: string }, opts: { language?: string }, signal?: AbortSignal): Promise<Transcript> {
     const base = apiBase();
     if (!base) throw Object.assign(new Error('Generating subtitles needs your relay.'), { fatal: true });
+    // 16 kHz mono WAV: accepted by every speech service the relay may use (Cloudflare, then Groq).
+    const wav = /wav|flac|ogg|mpeg/.test(audio.mime) ? undefined : await (await import('./audio-energy')).toWav16k(audio.bytes);
+    const body = wav ? { bytes: wav, mime: 'audio/wav' } : audio;
     const res = await fetch(`${base}/api/transcribe${opts.language ? `?lang=${encodeURIComponent(opts.language)}` : ''}`, {
-      method: 'POST', headers: { ...headers(), 'Content-Type': audio.mime }, body: audio.bytes as BodyInit, signal,
+      method: 'POST', headers: { ...headers(), 'Content-Type': body.mime }, body: body.bytes as BodyInit, signal,
     });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { fatal: !!body.fatal || res.status === 501 });
-    return body as Transcript;
+    const out = await res.json().catch(() => ({}));
+    if (!res.ok) throw Object.assign(new Error(out.error ?? `HTTP ${res.status}`), { fatal: !!out.fatal || res.status === 501 });
+    return out as Transcript;
   },
 
   /** Built-in cloud streaming: ask the relay to open the torrent. Poll until `ready`. */

@@ -48,3 +48,33 @@ export async function analyseClip(clip: AudioClip): Promise<SpeechSample[]> {
   const out: SpeechSample[] = speechiness(power).map((e, i) => ({ t: clip.start + i / 10, e }));
   return out;
 }
+
+/**
+ * A clip as 16 kHz mono WAV (what speech recognition uses anyway, and a format every service
+ * accepts). Undefined when this browser can't decode the clip (then the original is sent).
+ */
+export async function toWav16k(bytes: Uint8Array): Promise<Uint8Array | undefined> {
+  const Ctor = Offline();
+  if (!Ctor) return undefined;
+  try {
+    const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const buffer = await decode(new Ctor(1, 1, 44100), copy);
+    const rate = 16000;
+    const ctx = new Ctor(1, Math.max(1, Math.ceil(buffer.duration * rate)), rate);
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(ctx.destination);
+    src.start();
+    const pcm = (await ctx.startRendering()).getChannelData(0);
+    const out = new Uint8Array(44 + pcm.length * 2);
+    const dv = new DataView(out.buffer);
+    const str = (o: number, s: string) => { for (let i = 0; i < s.length; i++) out[o + i] = s.charCodeAt(i); };
+    str(0, 'RIFF'); dv.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    dv.setUint32(16, 16, true); dv.setUint16(20, 1, true); dv.setUint16(22, 1, true); dv.setUint32(24, rate, true);
+    dv.setUint32(28, rate * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true); str(36, 'data'); dv.setUint32(40, pcm.length * 2, true);
+    for (let i = 0; i < pcm.length; i++) dv.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 0x7fff, true);
+    return out;
+  } catch {
+    return undefined;
+  }
+}

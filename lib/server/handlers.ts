@@ -34,6 +34,8 @@ export type Env = Record<string, string | undefined>;
 /** Non-string bindings (Cloudflare): Workers AI for speech recognition. */
 export interface ApiBindings {
   AI?: { run(model: string, input: unknown): Promise<unknown> };
+  /** Tests only: stands in for fetch when calling Groq. */
+  groqFetch?: typeof fetch;
   /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
   claude?: Pick<Anthropic, 'messages'>;
 }
@@ -353,14 +355,65 @@ interface WhisperOut {
   segments?: { start: number; end: number; text: string; no_speech_prob?: number; avg_logprob?: number; words?: { word: string; start: number; end: number }[] }[];
 }
 
-async function transcribe(req: Request, sp: URLSearchParams, b: ApiBindings) {
-  if (!b.AI) return err('Speech recognition isn’t set up on this relay (it needs the Workers AI binding, added automatically on the next deploy).', 501);
+// ─── Groq (backup speech recognition when the Workers AI allowance is used up) ──
+
+const GROQ_STT = 'https://api.groq.com/openai/v1/audio/transcriptions';
+const GROQ_MODEL = 'whisper-large-v3-turbo';
+/** Language names some Whisper APIs return, as ISO codes (the app compares codes). */
+const LANG_CODES: Record<string, string> = {
+  english: 'en', arabic: 'ar', french: 'fr', spanish: 'es', german: 'de', italian: 'it', portuguese: 'pt', russian: 'ru',
+  turkish: 'tr', japanese: 'ja', korean: 'ko', chinese: 'zh', hindi: 'hi', persian: 'fa', urdu: 'ur', dutch: 'nl',
+  polish: 'pl', swedish: 'sv', indonesian: 'id', thai: 'th', vietnamese: 'vi', greek: 'el', hebrew: 'he',
+};
+const EXT: Record<string, string> = { 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/flac': 'flac', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'm4a', 'audio/webm': 'webm' };
+
+interface Transcribed { language?: string; segments: { start: number; end: number; text: string; no_speech_prob?: number; avg_logprob?: number; words?: { word: string; start: number; end: number }[] }[] }
+
+export async function groqTranscribe(audio: Uint8Array, contentType: string, lang: string | null, key: string, fetchFn: typeof fetch = fetch): Promise<Transcribed> {
+  const form = new FormData();
+  const type = contentType.split(';')[0].trim();
+  form.append('file', new Blob([audio as BlobPart], { type }), `audio.${EXT[type] ?? 'wav'}`);
+  form.append('model', GROQ_MODEL);
+  form.append('response_format', 'verbose_json');
+  form.append('timestamp_granularities[]', 'word');
+  form.append('timestamp_granularities[]', 'segment');
+  form.append('temperature', '0');
+  if (lang && /^[a-z]{2}$/.test(lang)) form.append('language', lang);
+  const res = await fetchFn(GROQ_STT, { method: 'POST', headers: { Authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(60_000) });
+  const body = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) throw Object.assign(new Error(body?.error?.message ?? `Groq HTTP ${res.status}`), { status: res.status });
+  const raw = String(body.language ?? '').toLowerCase();
+  const language = /^[a-z]{2}$/.test(raw) ? raw : LANG_CODES[raw];
+  const words: { word: string; start: number; end: number }[] = Array.isArray(body.words) ? body.words : [];
+  const segments = (Array.isArray(body.segments) ? body.segments : []).map((s: any) => ({
+    start: s.start, end: s.end, text: String(s.text ?? ''), no_speech_prob: s.no_speech_prob, avg_logprob: s.avg_logprob,
+    // Word times may come per segment or in one list for the whole clip.
+    words: Array.isArray(s.words) ? s.words : words.filter((w) => w.start >= s.start - 0.05 && w.start < s.end),
+  }));
+  return { language, segments };
+}
+
+async function transcribe(req: Request, sp: URLSearchParams, b: ApiBindings, env: Env) {
+  const groqKey = env.GROQ_API_KEY;
+  if (!b.AI && !groqKey) return err('Speech recognition isn’t set up on this relay (it needs the Workers AI binding, added automatically on the next deploy).', 501);
   const audio = new Uint8Array(await req.arrayBuffer());
   if (!audio.length) return err('audio required', 400);
   if (audio.length > 25 << 20) return err('audio clip too large', 413);
   const lang = sp.get('lang');
   const opts = { vad_filter: true, condition_on_previous_text: false, ...(lang && /^[a-z]{2,3}$/.test(lang) ? { language: lang } : {}) };
   const contentType = req.headers.get('content-type') || 'application/octet-stream';
+  /** Cloudflare's free allowance is used up (or there is no Workers AI): Groq, if the relay has a key. */
+  const viaGroq = async () => {
+    try {
+      return finishTranscript(await groqTranscribe(audio, contentType, lang, groqKey!, b.groqFetch));
+    } catch (e) {
+      const status = (e as { status?: number }).status;
+      if (status === 429) return json({ error: 'Today’s free speech-recognition allowances (Cloudflare and Groq) are used up. They reset daily.', fatal: true }, 429);
+      if (status === 401 || status === 403) return json({ error: 'The Groq key on your relay was rejected.', fatal: true }, 502);
+      return err(`Speech recognition failed (Groq): ${describeError(e)}`, 502);
+    }
+  };
+  if (!b.AI) return viaGroq();
   let out: WhisperOut;
   try {
     // Streamed body first (no base64 work for the Worker), then the documented base64 form.
@@ -373,17 +426,23 @@ async function transcribe(req: Request, sp: URLSearchParams, b: ApiBindings) {
   } catch (e) {
     const m = describeError(e);
     if (/neuron|allocation|quota|4006/i.test(m)) {
+      if (groqKey) return viaGroq();
       return json({ error: 'Today’s free speech-recognition allowance on your relay is used up (about 3½ hours of audio a day). It resets daily.', fatal: true }, 429);
     }
     return err(`Speech recognition failed: ${m}`, 502);
   }
+  return finishTranscript({ language: out.transcription_info?.language, segments: out.segments ?? [] });
+}
+
+/** Drop silence/hallucinated lines and return the app's transcript shape. */
+function finishTranscript(out: Transcribed) {
   const segments = (out.segments ?? [])
     .filter((s) => s.text?.trim() && !((s.no_speech_prob ?? 0) > 0.8) && !((s.avg_logprob ?? 0) < -1.2))
     .map((s) => ({
       start: s.start, end: s.end, text: s.text.trim(),
       words: s.words?.map((w) => ({ word: w.word, start: w.start, end: w.end })),
     }));
-  return json({ language: out.transcription_info?.language, segments });
+  return json({ language: out.language, segments });
 }
 
 // ─── Direct-link playback proxy ─────────────────────────────────────────────
@@ -485,7 +544,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
       else if (path === '/api/translate' && req.method === 'POST') res = await translate(req);
       else if (path === '/api/translate-ai' && req.method === 'POST') res = await translateAi(req, bindings);
-      else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings);
+      else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings, env);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
       else res = err('Not found', 404);
     } catch (e) {

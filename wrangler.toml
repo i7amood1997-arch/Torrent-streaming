@@ -7,6 +7,7 @@
 #   npx wrangler secret put TORZNAB_URL | TORZNAB_API_KEY
 #   npx wrangler secret put ACCESS_TOKEN   # strongly recommended if you store Debrid keys here
 #   npx wrangler secret put ANTHROPIC_API_KEY   # optional: Claude translates subtitles only when every other translator refused
+#   npx wrangler secret put GROQ_API_KEY   # optional: speech recognition once the free Workers AI allowance is used up
 name = "streamdeck-api"
 main = "worker/index.ts"
 compatibility_date = "2025-09-01"
