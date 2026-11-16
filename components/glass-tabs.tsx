@@ -1,20 +1,24 @@
 'use client';
 /**
- * A Liquid Glass tab bar. The selected tab sits on one glass "platter" that travels between tabs
- * with a spring and swells while it moves (like a gel bubble), rather than each tab lighting up
- * on its own. The bar itself is `.glass` (lensing, rim light, touch light: see globals.css and
- * lib/liquid-glass.ts).
+ * A Liquid Glass tab bar, after Apple's: the selected tab sits on a dark glass platter; when you
+ * switch, the platter turns into a clear lens (bright rim, bending what's under it) that glides to
+ * the new tab, then settles back into a platter.
+ *
+ * The glass surface is its own layer behind the tabs, not their parent: Safari leaves stale
+ * paint behind when a child of a backdrop-filtered element animates past its edges, and the
+ * lens has to sit above the labels to bend them.
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 export interface GlassTab {
   id: string;
   label: string;
-  /** Rendered instead of the label (top bar) or above it (bottom bar). */
+  /** Bottom bar: drawn above the label. */
   icon?: ReactNode;
-  /** Top bar: show only the icon (the label becomes the accessible name). */
-  iconOnly?: boolean;
 }
+
+/** How long the lens is out, ms (Apple's switch takes about this long). */
+const LENS_MS = 380;
 
 export function GlassTabs({ tabs, active, onSelect, layout, children }: {
   tabs: GlassTab[];
@@ -24,19 +28,19 @@ export function GlassTabs({ tabs, active, onSelect, layout, children }: {
   children?: ReactNode;
 }) {
   const bar = useRef<HTMLElement>(null);
-  const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
+  const [spot, setSpot] = useState<{ x: number; w: number } | null>(null);
   const [moving, setMoving] = useState(false);
-  const placed = useRef(false); // the first placement doesn't animate
+  const [placed, setPlaced] = useState(false); // the first placement doesn't animate
   const prev = useRef(active);
 
   useLayoutEffect(() => {
     const tab = active == null ? null : bar.current?.querySelector<HTMLElement>(`[data-tab="${active}"]`);
     if (!tab) {
-      setPill(null);
-      placed.current = false;
+      setSpot(null);
+      setPlaced(false);
       return;
     }
-    const measure = () => setPill({ x: tab.offsetLeft, w: tab.offsetWidth });
+    const measure = () => setSpot({ x: tab.offsetLeft, w: tab.offsetWidth });
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(tab);
@@ -44,40 +48,48 @@ export function GlassTabs({ tabs, active, onSelect, layout, children }: {
   }, [active]);
 
   useEffect(() => {
-    if (pill) requestAnimationFrame(() => (placed.current = true));
-  }, [pill]);
+    if (!spot || placed) return;
+    const id = requestAnimationFrame(() => setPlaced(true));
+    return () => cancelAnimationFrame(id);
+  }, [spot, placed]);
 
-  // Swell while travelling from one tab to another.
+  // Lift the lens while the selection travels.
   useEffect(() => {
     const from = prev.current;
     prev.current = active;
     if (from == null || active == null || from === active) return;
     setMoving(true);
-    const t = setTimeout(() => setMoving(false), 380);
+    const t = setTimeout(() => setMoving(false), LENS_MS);
     return () => clearTimeout(t);
   }, [active]);
 
   const top = layout === 'top';
+  const pad = top ? 'inset-y-[5px]' : 'inset-y-1';
+  // `translate`, not `transform`: the lens also scales, and `scale` would stretch a transform's offset too.
+  const at = spot ? { translate: `${spot.x}px 0` } : undefined;
   return (
-    <nav ref={bar} aria-label="Main"
-      className={`glass glass-bar relative flex items-center rounded-full ${top ? 'h-[3.25rem] p-[5px]' : 'h-[3.875rem] p-1'}`}>
-      {pill && (
-        <span aria-hidden className={`glass-pill ${top ? 'inset-y-[5px]' : 'inset-y-1'}`} data-moving={moving ? '' : undefined} data-still={placed.current ? undefined : ''}
-          style={{ width: pill.w, transform: `translateX(${pill.x}px)` }} />
+    <nav ref={bar} aria-label="Main" data-moving={moving ? '' : undefined}
+      className={`glass-host relative flex items-center rounded-full ${top ? 'h-[3.25rem] p-[5px]' : 'h-[3.875rem] p-1'}`}>
+      <span aria-hidden className="glass absolute inset-0 rounded-full" />
+      {spot && (
+        <span aria-hidden className={`glass-pill ${pad}`} data-still={placed ? undefined : ''} style={{ ...at, width: spot.w }} />
       )}
       {tabs.map((t) => {
         const on = t.id === active;
         return (
           <button key={t.id} data-tab={t.id} onClick={() => onSelect(t.id)} aria-current={on ? 'page' : undefined}
-            aria-label={t.iconOnly ? t.label : undefined}
-            className={`glass-tab relative z-[1] flex h-full items-center justify-center rounded-full font-semibold transition-colors duration-300 ${
+            className={`glass-tab relative flex h-full items-center justify-center rounded-full font-semibold transition-colors duration-300 ${
               on ? 'text-[#4ba3ff]' : 'text-white'} ${
-              top ? (t.iconOnly ? 'w-[3.25rem]' : 'px-5 text-[15px]') : 'min-w-[4.75rem] flex-col gap-px px-3 text-[10px] leading-3 tracking-[0.01em]'}`}>
-            {top ? (t.iconOnly ? t.icon : t.label) : (<>{t.icon}<span>{t.label}</span></>)}
+              top ? 'px-5 text-[15px]' : 'w-[4.75rem] flex-col gap-px text-[10px] leading-3 tracking-[0.01em]'}`}>
+            {top ? t.label : (<>{t.icon}<span>{t.label}</span></>)}
           </button>
         );
       })}
       {children}
+      {/* The lens rides above the labels so it can bend them; it jumps to its new width and only glides sideways. */}
+      {spot && (
+        <span aria-hidden className={`glass-lens ${pad}`} data-still={placed ? undefined : ''} style={{ ...at, width: spot.w }} />
+      )}
     </nav>
   );
 }

@@ -15,6 +15,9 @@
  */
 
 export const GLASS_SELECTOR = '.glass, .glass-btn, .btn-glass';
+/** Everything that gets a lens: glass surfaces, plus the tab bar's travelling lens. */
+const LENS_SELECTOR = `${GLASS_SELECTOR}, .glass-lens`;
+const MAX_FILTERS = 48;
 const IOR = 1.5; // refractive index of glass
 
 /**
@@ -105,7 +108,9 @@ export function lensFor(w: number, h: number): { bezel: number; strength: number
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 let defs: SVGDefsElement | null = null;
-const filters = new Map<string, string>(); // size key → filter id
+const filters = new Map<string, string>(); // size key → filter id (oldest first)
+let serial = 0;
+const uses = new Map<string, number>(); // filter id → elements using it
 const applied = new WeakMap<HTMLElement, string>();
 
 /** True only where the backdrop can run an SVG filter (Chromium). Safari reports support but draws nothing. */
@@ -116,8 +121,8 @@ export function canLens(): boolean {
   return CSS.supports('backdrop-filter', 'url(#x)');
 }
 
-function filterFor(w: number, h: number, r: number, blur: number): string {
-  const key = `${w}x${h}r${r}b${blur}`;
+function filterFor(w: number, h: number, r: number, blur: number, power: number): string {
+  const key = `${w}x${h}r${r}b${blur}p${power}`;
   const known = filters.get(key);
   if (known) return known;
   if (!defs) {
@@ -130,13 +135,24 @@ function filterFor(w: number, h: number, r: number, blur: number): string {
     svg.appendChild(defs);
     document.body.appendChild(svg);
   }
-  const { bezel, strength } = lensFor(w, h);
-  const map = glassMap(w, h, r, bezel, strength);
+  const lensSize = lensFor(w, h);
+  const map = glassMap(w, h, r, lensSize.bezel, lensSize.strength * power);
   const canvas = document.createElement('canvas');
   canvas.width = map.width;
   canvas.height = map.height;
   canvas.getContext('2d')!.putImageData(new ImageData(map.data, map.width, map.height), 0, 0);
-  const id = `lg${filters.size}`;
+  // Sizes come and go (resizing windows, animated widths): keep only the most recent filters.
+  // Only filters no element is using are dropped.
+  if (filters.size >= MAX_FILTERS) {
+    for (const [oldKey, oldId] of filters) {
+      if (uses.get(oldId)) continue;
+      filters.delete(oldKey);
+      uses.delete(oldId);
+      document.getElementById(oldId)?.remove();
+      break;
+    }
+  }
+  const id = `lg${++serial}`;
   const f = document.createElementNS(SVG_NS, 'filter');
   f.id = id;
   f.setAttribute('x', '0');
@@ -160,12 +176,18 @@ function lens(el: HTMLElement) {
   if (w < 8 || h < 8) return;
   const cs = getComputedStyle(el);
   const r = Math.round(parseFloat(cs.borderTopLeftRadius) || 0);
-  const blur = Number(cs.getPropertyValue('--lg-blur')) || 4;
-  const id = filterFor(w, h, r, blur);
-  if (applied.get(el) === id) return;
+  const num = (name: string, fallback: number) => {
+    const v = parseFloat(cs.getPropertyValue(name));
+    return Number.isFinite(v) ? v : fallback;
+  };
+  const id = filterFor(w, h, r, num('--lg-blur', 3), num('--lg-power', 1));
+  const before = applied.get(el);
+  if (before === id) return;
+  if (before) uses.set(before, (uses.get(before) ?? 1) - 1);
+  uses.set(id, (uses.get(id) ?? 0) + 1);
   applied.set(el, id);
   // The SVG lens, then the same vibrancy as the CSS glass.
-  el.style.backdropFilter = `url(#${id}) saturate(1.7) brightness(1.04)`;
+  el.style.backdropFilter = `url(#${id}) ${cs.getPropertyValue('--lg-tone').trim() || 'saturate(1.7) brightness(1.04)'}`;
   el.dataset.lens = '';
 }
 
@@ -180,14 +202,19 @@ export function startLiquidGlass() {
 
   // Touch light: remember where the finger is on the glass it pressed.
   const press = (e: PointerEvent) => {
-    const el = (e.target as Element | null)?.closest?.(GLASS_SELECTOR) as HTMLElement | null;
+    const target = e.target as Element | null;
+    // A tab bar's glass is a layer behind its tabs: light that layer, and flex the whole bar.
+    const host = target?.closest?.('.glass-host') as HTMLElement | null;
+    const el = (host ? host.querySelector(':scope > .glass') : target?.closest?.(GLASS_SELECTOR)) as HTMLElement | null;
     if (!el || solid()) return;
+    if (host) host.dataset.lit = '';
     const b = el.getBoundingClientRect();
     el.style.setProperty('--lg-x', `${e.clientX - b.left}px`);
     el.style.setProperty('--lg-y', `${e.clientY - b.top}px`);
     el.dataset.lit = '';
     const off = () => {
       delete el.dataset.lit;
+      if (host) delete host.dataset.lit;
       window.removeEventListener('pointerup', off, true);
       window.removeEventListener('pointercancel', off, true);
     };
@@ -203,7 +230,7 @@ export function startLiquidGlass() {
   });
   const watched = new WeakSet<Element>();
   const scan = (root: ParentNode) => {
-    root.querySelectorAll<HTMLElement>(GLASS_SELECTOR).forEach((el) => {
+    root.querySelectorAll<HTMLElement>(LENS_SELECTOR).forEach((el) => {
       if (watched.has(el)) return;
       watched.add(el);
       sizes.observe(el);
@@ -215,7 +242,7 @@ export function startLiquidGlass() {
       rec.addedNodes.forEach((n) => {
         if (n.nodeType !== 1) return;
         const el = n as HTMLElement;
-        if (el.matches(GLASS_SELECTOR) && !watched.has(el)) {
+        if (el.matches(LENS_SELECTOR) && !watched.has(el)) {
           watched.add(el);
           sizes.observe(el);
         }
@@ -223,7 +250,7 @@ export function startLiquidGlass() {
       });
       if (rec.type === 'attributes' && rec.target.nodeType === 1) {
         const el = rec.target as HTMLElement;
-        if (el.matches(GLASS_SELECTOR) && !watched.has(el)) {
+        if (el.matches(LENS_SELECTOR) && !watched.has(el)) {
           watched.add(el);
           sizes.observe(el);
         }

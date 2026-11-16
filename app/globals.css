@@ -133,7 +133,7 @@ textarea {
     opacity: 1;
     transition-duration: 0.12s;
   }
-  /* It flexes under the finger: bars give a little, buttons swell like gel. */
+  /* It flexes under the finger: surfaces give a little, buttons swell like gel. */
   .glass[data-lit] {
     scale: 1.015;
   }
@@ -148,11 +148,26 @@ textarea {
   .glass-btn:active {
     scale: 1.08;
   }
-  /* The selected tab's platter: a darker glass drop that slides between tabs, swelling as it goes. */
+  /*
+   * Tab bar (components/glass-tabs.tsx). The glass is a layer behind the tabs; the host flexes as
+   * a whole when touched, and stretches a little while the selection travels, like Apple's.
+   */
+  .glass-host {
+    transition: scale 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .glass-host > .glass[data-lit] {
+    scale: none;
+  }
+  .glass-host[data-lit] {
+    scale: 1.02;
+  }
+  .glass-host[data-moving] {
+    scale: 1.03 1.02;
+  }
+  /* The selected tab's platter: a darker glass that hands over to the lens while moving. */
   .glass-pill {
     position: absolute;
     left: 0;
-    z-index: 0;
     border-radius: 9999px;
     pointer-events: none;
     background: rgba(255, 255, 255, 0.12);
@@ -161,23 +176,57 @@ textarea {
       inset -1px -1px 0.5px -0.5px rgba(255, 255, 255, 0.12),
       inset 0 0 8px rgba(255, 255, 255, 0.04);
     transition:
-      transform 0.5s cubic-bezier(0.3, 1.3, 0.5, 1),
-      width 0.5s cubic-bezier(0.3, 1.3, 0.5, 1),
-      scale 0.35s cubic-bezier(0.34, 1.56, 0.64, 1),
-      background-color 0.3s,
-      box-shadow 0.3s;
+      translate 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      width 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      opacity 0.3s ease-out 0.05s;
   }
-  .glass-pill[data-still] {
-    transition: none;
+  .glass-host[data-moving] .glass-pill {
+    opacity: 0;
+    transition:
+      translate 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      width 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      opacity 0.1s;
   }
-  .glass-pill[data-moving] {
-    scale: 1.1 1.2;
-    background: rgba(255, 255, 255, 0.2);
+  /*
+   * The lens: clear glass that lifts out of the bar, a little taller than it, bright-rimmed,
+   * bending the icons and labels beneath it (lib/liquid-glass.ts gives it a strong lens in
+   * Chromium; Safari brightens what's under it). Hidden when the selection is at rest.
+   */
+  .glass-lens {
+    --lg-blur: 0;
+    --lg-power: 0.4;
+    --lg-tone: saturate(1.5) brightness(1.1);
+    position: absolute;
+    left: 0;
+    border-radius: 9999px;
+    pointer-events: none;
+    opacity: 0;
+    scale: 0.92;
+    background: rgba(255, 255, 255, 0.04);
+    -webkit-backdrop-filter: saturate(1.5) brightness(1.12);
+    backdrop-filter: saturate(1.5) brightness(1.12);
     box-shadow:
-      inset 1.5px 1.5px 0.5px -1px rgba(255, 255, 255, 0.7),
-      inset -1.5px -1.5px 0.5px -1px rgba(255, 255, 255, 0.45),
-      inset 0 0 12px rgba(255, 255, 255, 0.1),
-      0 6px 18px rgba(0, 0, 0, 0.25);
+      inset 1.5px 1.5px 0.5px -1px rgba(255, 255, 255, 0.9),
+      inset -1.5px -1.5px 0.5px -1px rgba(255, 255, 255, 0.65),
+      inset 0 0 0 0.5px rgba(255, 255, 255, 0.25),
+      inset 0 0 12px rgba(255, 255, 255, 0.12),
+      0 6px 18px rgba(0, 0, 0, 0.28);
+    transition:
+      translate 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      opacity 0.22s ease-out 0.04s,
+      scale 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .glass-host[data-moving] .glass-lens {
+    opacity: 1;
+    scale: 1.18;
+    transition:
+      translate 0.42s cubic-bezier(0.3, 1.2, 0.5, 1),
+      opacity 0.08s,
+      scale 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  .glass-pill[data-still],
+  .glass-lens[data-still] {
+    transition: none;
   }
   .glass-tab {
     -webkit-tap-highlight-color: transparent;
@@ -531,8 +580,15 @@ input[type='range'] {
 }
 [data-tv] .glass::after,
 [data-tv] .btn-glass::after,
-[data-tv] .glass-btn::after {
+[data-tv] .glass-btn::after,
+[data-tv] .glass-lens {
   display: none;
+}
+[data-tv] .glass-host[data-moving] {
+  scale: none;
+}
+[data-tv] .glass-host[data-moving] .glass-pill {
+  opacity: 1;
 }
 [data-tv] [class*='backdrop-blur'] {
   -webkit-backdrop-filter: none !important;
@@ -577,5 +633,11 @@ input[type='range'] {
     background: rgb(40, 40, 44);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
+  }
+  .glass-lens {
+    display: none;
+  }
+  .glass-host[data-moving] .glass-pill {
+    opacity: 1;
   }
 }

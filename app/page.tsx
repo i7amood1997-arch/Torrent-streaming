@@ -19,11 +19,11 @@ import { startLiquidGlass } from '@/lib/liquid-glass';
 import { useApp, type View } from '@/lib/store';
 import { initialFocus, isTV, onTvBack, popFocus, pushFocus, startTvMode } from '@/lib/tv';
 
-/** The tabs in the floating glass bar: `top` is the iPad/desktop bar (Search as an icon), `bottom` the phone tab bar. */
-const NAV: { id: Exclude<View, 'player'>; label: string; top: ReactNode; bottom: ReactNode }[] = [
-  { id: 'discover', label: 'Home', top: null, bottom: <IconHomeFill size={27} /> },
-  { id: 'search', label: 'Search', top: <IconSearch size={21} strokeWidth={2.6} />, bottom: <IconSearch size={27} strokeWidth={2.6} /> },
-  { id: 'settings', label: 'Settings', top: null, bottom: <IconGearFill size={27} /> },
+/** The tabs in the floating glass bar (the phone tab bar shows the icons above the labels). */
+const NAV: { id: Exclude<View, 'player'>; label: string; icon: ReactNode }[] = [
+  { id: 'discover', label: 'Home', icon: <IconHomeFill size={27} /> },
+  { id: 'search', label: 'Search', icon: <IconSearch size={27} strokeWidth={2.6} /> },
+  { id: 'settings', label: 'Settings', icon: <IconGearFill size={27} /> },
 ];
 
 export default function App() {
@@ -120,7 +120,7 @@ export default function App() {
           <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/50 via-black/20 to-transparent md:block" />
           <div data-tv-nav className="absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 md:block">
             <GlassTabs layout="top" active={detail ? null : listView} onSelect={(id) => setView(id as View)}
-              tabs={NAV.map((n) => ({ id: n.id, label: n.label, icon: n.top, iconOnly: n.id === 'search' }))}>
+              tabs={NAV}>
               {nowPlaying && (
                 <button onClick={() => setView('player')} className="relative z-[1] ml-1 flex h-full max-w-[16rem] items-center gap-2 rounded-full pl-3 pr-4 text-[13px] font-semibold text-white hover:bg-white/5">
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-black"><IconPlay size={10} /></span>
@@ -142,7 +142,7 @@ export default function App() {
             )}
             <div data-tv-nav className="flex justify-center">
               <GlassTabs layout="bottom" active={listView} onSelect={(id) => setView(id as View)}
-                tabs={NAV.map((n) => ({ id: n.id, label: n.label, icon: n.bottom }))} />
+                tabs={NAV} />
             </div>
           </div>
         </>
