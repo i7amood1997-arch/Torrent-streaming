@@ -83,6 +83,9 @@ export class MkvMsePlayer {
   private startJumped = false;
   private waitingTimer?: ReturnType<typeof setTimeout>;
   private evictTimer?: ReturnType<typeof setInterval>;
+  private watchTimer?: ReturnType<typeof setInterval>;
+  private watch?: { time: number; frames: number; since: number };
+  private lastRecover = 0;
 
   constructor(private video: HTMLVideoElement, private url: string, private opts: MkvPlayerOptions) {}
 
@@ -106,6 +109,7 @@ export class MkvMsePlayer {
     this.video.addEventListener('waiting', this.onWaiting);
     this.video.addEventListener('timeupdate', this.onTime);
     this.evictTimer = setInterval(() => this.evict(), 5000);
+    this.watchTimer = setInterval(() => this.watchPicture(), 1000);
     void this.load(0, this.gen);
     // Fetch the seek index in the background once playback is under way.
     setTimeout(() => { if (!this.destroyed && !this.failed) void this.loadCues(); }, 15000);
@@ -117,6 +121,7 @@ export class MkvMsePlayer {
     this.fetchCtl?.abort();
     clearTimeout(this.waitingTimer);
     clearInterval(this.evictTimer);
+    clearInterval(this.watchTimer);
     this.video.removeEventListener('seeking', this.onSeeking);
     this.video.removeEventListener('waiting', this.onWaiting);
     this.video.removeEventListener('timeupdate', this.onTime);
@@ -401,6 +406,45 @@ export class MkvMsePlayer {
       void this.seekTo(t);
     }, 2500);
   };
+
+  /**
+   * The clock (and the sound, and the subtitles) can keep running while the picture has stopped:
+   * a hole in the video data, or the decoder stuck on frames it can't decode. The 'waiting' event
+   * never fires then, so watch the picture itself and reload from the playhead when it's frozen.
+   */
+  private watchPicture() {
+    const v = this.video as HTMLVideoElement & { getVideoPlaybackQuality?: () => { totalVideoFrames: number } };
+    // Hidden page: browsers may stop drawing frames while the sound goes on; that's not a fault.
+    const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    if (hidden || this.destroyed || this.failed || v.paused || v.seeking || v.ended || v.readyState < 2) { this.watch = undefined; return; }
+    const t = v.currentTime;
+    const b = this.sb.video?.buffered;
+    let covered = false;
+    if (b) for (let i = 0; i < b.length; i++) if (b.start(i) <= t + 0.1 && b.end(i) > t + 0.2) covered = true;
+    if (b && !covered && Date.now() - this.lastRecover > 3000) {
+      // Playing past the end of the picture we have: skip a small hole, or refetch from here.
+      for (let i = 0; i < b.length; i++) if (b.start(i) > t && b.start(i) - t < 3) { debug('video hole, skipping to', b.start(i)); this.lastRecover = Date.now(); v.currentTime = b.start(i) + 0.01; return; }
+      if (this.isAudioAhead(t)) { debug('video missing at', t, 'refetching'); this.lastRecover = Date.now(); void this.seekTo(t); return; }
+    }
+    const frames = v.getVideoPlaybackQuality?.().totalVideoFrames;
+    if (frames === undefined) return;
+    if (!this.watch || frames !== this.watch.frames || t < this.watch.time) { this.watch = { time: t, frames, since: t }; return; }
+    // The clock moved 2.5 s with no new frame on screen: the decoder is stuck.
+    if (t - this.watch.since > 2.5 && Date.now() - this.lastRecover > 15000) {
+      debug('picture frozen at', t, 'refetching');
+      this.lastRecover = Date.now();
+      this.watch = undefined;
+      void this.seekTo(t);
+    }
+  }
+
+  /** The sound has data at `t` (so playback runs on without the picture). */
+  private isAudioAhead(t: number): boolean {
+    const a = this.sb.audio?.buffered;
+    if (!a) return false;
+    for (let i = 0; i < a.length; i++) if (a.start(i) <= t && a.end(i) > t + 0.5) return true;
+    return false;
+  }
 
   private async seekTo(t: number) {
     const gen = ++this.gen;

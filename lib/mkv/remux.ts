@@ -116,6 +116,11 @@ class TrackMuxer {
   private seq = 1;
   private lastDts = -Infinity;
   private lastDuration: number;
+  /**
+   * After a seek or a resync the next video frame may depend on frames that were never sent: the
+   * player then shows a frozen picture while the sound plays on. Wait for a keyframe instead.
+   */
+  private needKey = true;
 
   constructor(readonly out: OutputTrack) {
     this.lastDuration = out.plan.defaultDuration;
@@ -124,6 +129,7 @@ class TrackMuxer {
   reset() {
     this.pending = [];
     this.lastDts = -Infinity;
+    this.needKey = true;
   }
 
   /** Returns the init segment the first time a frame arrives (Dolby needs the frame to build it). */
@@ -134,6 +140,8 @@ class TrackMuxer {
       this.init = initSegment(entry, this.out.plan.timescale);
     }
     if (this.out.kind === 'video') {
+      if (this.needKey && !f.keyframe) return out;
+      this.needKey = false;
       if (f.keyframe && this.pending.length) out.push(...this.flushVideo(0));
       this.pending.push({ pts: f.pts, keyframe: f.keyframe, data: f.data });
       const span = this.pending[this.pending.length - 1].pts - this.pending[0].pts;

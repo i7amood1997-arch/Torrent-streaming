@@ -203,3 +203,21 @@ describe('remuxer output', () => {
     expect(subtitleText(te.encode('<i>Plain</i> text'), 'S_TEXT/UTF8')).toBe('Plain text');
   });
 });
+
+describe('converter after a seek or a data error', () => {
+  it('waits for a keyframe before sending video (no frozen picture with the sound playing on)', () => {
+    const { header, frames } = demux(fixture('h264-aac-ass.mkv'));
+    const remux = new MkvRemuxer(selectTracks(header), () => undefined);
+    const video = frames.filter((f) => f.track === 1);
+    const firstKey = video.findIndex((f, i) => i > 0 && f.keyframe);
+    expect(firstKey).toBeGreaterThan(5);
+    for (const f of video.slice(0, 3)) remux.push(f); // playing normally
+    remux.reset(); // seek / resync lands mid-GOP
+    const out: Uint8Array[] = [];
+    for (const f of video.slice(3)) { const r = remux.push(f); for (const s of r?.segments ?? []) if (s.kind === 'video') out.push(s.data); }
+    for (const s of remux.flush()) if (s.kind === 'video') out.push(s.data);
+    const samples = out.flatMap((d) => readFragments(d).flatMap((fr) => fr.samples));
+    expect(samples.length).toBe(video.length - firstKey);
+    expect(samples[0].flags & 0x10000).toBe(0); // first sample is a sync sample (not "non-sync")
+  });
+});
