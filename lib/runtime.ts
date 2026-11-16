@@ -21,3 +21,22 @@ export function describeError(e: unknown): string {
   if (e instanceof Error) return e.name === 'TimeoutError' ? 'timed out' : e.message;
   return String(e);
 }
+
+/**
+ * `AbortSignal.timeout()` is missing in Safari before 16 (iOS 15: iPhone 6s/7, older iPads) and
+ * every request with a time limit threw there, so the app couldn't even reach its relay. Give
+ * those browsers the same behaviour. Called once when this module loads.
+ */
+export function ensureAbortTimeout(target: { timeout?: (ms: number) => AbortSignal } | undefined = typeof AbortSignal !== 'undefined' ? (AbortSignal as never) : undefined): void {
+  if (!target || typeof target.timeout === 'function') return;
+  target.timeout = (ms: number) => {
+    const ctl = new AbortController();
+    setTimeout(() => {
+      let reason: unknown;
+      try { reason = new DOMException('The operation timed out.', 'TimeoutError'); } catch { reason = Object.assign(new Error('The operation timed out.'), { name: 'TimeoutError' }); }
+      ctl.abort(reason);
+    }, ms);
+    return ctl.signal;
+  };
+}
+ensureAbortTimeout();

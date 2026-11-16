@@ -1,4 +1,5 @@
 'use client';
+import './runtime'; // older Safari: AbortSignal.timeout
 import { DEFAULT_API_BASE } from './config';
 import { parseMagnet } from './magnet';
 import { useApp, type ServerCaps } from './store';

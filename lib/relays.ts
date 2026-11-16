@@ -6,6 +6,8 @@
  * the search terms), so ONLY keyless indexer requests may use them. Never route
  * requests that carry API keys (Debrid, subtitles, TMDB, Torznab) through here.
  */
+import './runtime'; // older Safari: AbortSignal.timeout
+
 export interface Relay {
   name: string;
   wrap: (url: string) => string;
