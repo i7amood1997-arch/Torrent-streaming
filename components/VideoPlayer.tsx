@@ -18,7 +18,7 @@ import type Hls from 'hls.js';
 import { api, apiBase, type StreamStats } from '@/lib/client-api';
 import { MkvMsePlayer, mkvAudioConvertSupported, mkvRemuxSupported } from '@/lib/mkv/player';
 import { TIMELINE_OFFSET_MS } from '@/lib/mkv/remux';
-import { agrees, alignSubtitles, confident, type Alignment } from '@/lib/autosync';
+import { agrees, alignSubtitles, confident, liveSpeechiness, WIDE_RANGE, type Alignment } from '@/lib/autosync';
 import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
 import { hashRemoteVideo } from '@/lib/subtitle-hash';
 import { audioPlayable, canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
@@ -332,6 +332,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => { tapRef.current?.reset(); }, [req?.nonce]);
 
   const syncState = useRef<Partial<Record<Lang, { track: string; last?: Alignment; applied?: Alignment }>>>({});
+  /** `localStorage.syncDebug = '1'` logs what the live sync measures. */
+  const dbgSync = (...a: unknown[]) => { try { if (localStorage.getItem('syncDebug')) console.log('[sync]', ...a); } catch { /* storage blocked */ } };
   // The latest subtitle state is read through subsRef: depending on `subs` (a new object on every
   // render, several times a second while playing) restarted this timer before it ever fired.
   useEffect(() => {
@@ -347,10 +349,21 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         const st = syncState.current[lang]?.track === tr.info.id ? syncState.current[lang]! : (syncState.current[lang] = { track: tr.info.id });
         const base = subs.baseShiftMs;
         const center = (base + subs.offsets[lang]) / 1000;
-        const a = alignSubtitles(tap.samples, tr.cues, { center: st.applied ? center : base / 1000, range: st.applied ? 3 : 20 });
-        if (!confident(a)) continue;
+        // Fine-tune near the current timing over what was heard recently; if that no longer fits
+        // (not matched yet, or a scene cut/added in this version), search widely over the last
+        // 4 minutes: this follows timing that changes partway through a film.
+        const heard = tap.speech(240);
+        const input = heard.precise ? heard.samples : liveSpeechiness(heard.samples);
+        // A speed difference only shows over a long stretch: until 8 minutes have been heard, a
+        // shift plus a speed change can mimic a plain shift, so only normal speed is considered.
+        const span = input.length ? input[input.length - 1].t - input[0].t : 0;
+        const scales = span >= 480 ? undefined : [st.applied?.scale ?? 1];
+        let a = st.applied ? alignSubtitles(input, tr.cues, { center, range: 3, scales }) : undefined;
+        if (!confident(a)) a = alignSubtitles(input, tr.cues, { center: base / 1000, range: WIDE_RANGE, scales });
+        dbgSync('live', lang, a ? `offset ${a.offset.toFixed(2)} scale ${a.scale.toFixed(4)} z ${a.z.toFixed(1)} ratio ${a.ratio.toFixed(2)} ${confident(a) ? 'confident' : 'unsure'}` : 'none', `${input.length} samples, ${Math.round(span)} s, ${heard.precise ? 'precise' : 'coarse'}`);
+        if (!confident(a)) { st.last = undefined; continue; }
         // Apply when two consecutive estimates agree; later, only move if a new estimate is stable and differs.
-        if (st.last && agrees(a!, st.last) && (!st.applied || (a!.scale === st.applied.scale && Math.abs(a!.offset - st.applied.offset) > 0.35))) {
+        if (st.last && agrees(a!, st.last) && (!st.applied || a!.scale !== st.applied.scale || Math.abs(a!.offset - st.applied.offset) > 0.35)) {
           st.applied = a;
           subs.applyAutoSync(lang, a!.offset * 1000 - base, a!.scale);
         }

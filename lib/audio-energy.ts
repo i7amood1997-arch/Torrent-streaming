@@ -4,7 +4,7 @@
  * the browser decodes the clip, a band-pass keeps 300–3000 Hz, and the level is
  * measured every 100 ms. Output matches what the live audio tap records.
  */
-import type { SpeechSample } from './autosync';
+import { speechiness, type SpeechSample } from './autosync';
 import type { AudioClip } from './speech/audio-source';
 
 type OfflineCtor = typeof OfflineAudioContext;
@@ -37,12 +37,14 @@ export async function analyseClip(clip: AudioClip): Promise<SpeechSample[]> {
   src.connect(hp); hp.connect(lp); lp.connect(ctx.destination);
   src.start();
   const pcm = (await ctx.startRendering()).getChannelData(0);
-  const hop = Math.round(rate / 10);
-  const out: SpeechSample[] = [];
-  for (let i = 0; i + hop <= pcm.length; i += hop) {
+  // Power every 10 ms, turned into a speech measure that music and effects don't fool.
+  const hop = Math.round(rate / 100);
+  const power = new Float64Array(Math.floor(pcm.length / hop));
+  for (let j = 0; j < power.length; j++) {
     let sum = 0;
-    for (let k = i; k < i + hop; k++) sum += pcm[k] * pcm[k];
-    out.push({ t: clip.start + i / rate, e: 10 * Math.log10(sum / hop + 1e-12) });
+    for (let k = j * hop; k < (j + 1) * hop; k++) sum += pcm[k] * pcm[k];
+    power[j] = sum / hop;
   }
+  const out: SpeechSample[] = speechiness(power).map((e, i) => ({ t: clip.start + i / 10, e }));
   return out;
 }

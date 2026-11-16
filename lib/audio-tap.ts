@@ -9,10 +9,48 @@
  *  - Routing is only set up once the AudioContext is running, which iOS allows only
  *    after a user gesture: `unlockAudio()` is called from Play taps.
  */
-import type { SpeechSample } from './autosync';
+import { speechiness, type SpeechSample } from './autosync';
 
 let ctx: AudioContext | undefined;
 const taps = new WeakMap<HTMLMediaElement, AnalyserNode>();
+
+/**
+ * Speech-band power every 10 ms, with the media time it was heard at: the same input the up-front
+ * sync uses (lib/audio-energy.ts), so live listening can tell speech from music just as well.
+ */
+interface PowerLog { t: number[]; p: number[] }
+const powerLogs = new WeakMap<HTMLMediaElement, PowerLog>();
+const KEEP_10MS = 8 * 60 * 100; // 8 minutes
+
+function attachPowerLog(v: HTMLVideoElement, source: MediaElementAudioSourceNode, c: AudioContext) {
+  const log: PowerLog = { t: [], p: [] };
+  powerLogs.set(v, log);
+  if (typeof c.createScriptProcessor !== 'function') return;
+  const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 300;
+  const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3000;
+  const proc = c.createScriptProcessor(2048, 1, 1);
+  const mute = c.createGain(); mute.gain.value = 0; // the processor must reach the output to run; silently
+  source.connect(hp); hp.connect(lp); lp.connect(proc); proc.connect(mute); mute.connect(c.destination);
+  const hop = Math.max(1, Math.round(c.sampleRate / 100));
+  let next: number | undefined;
+  proc.onaudioprocess = (ev) => {
+    if (v.paused || v.seeking || v.muted || v.volume === 0 || v.playbackRate > 4) { next = undefined; return; }
+    const x = ev.inputBuffer.getChannelData(0);
+    const chunks = Math.floor(x.length / hop);
+    // The media clock is read coarsely: follow on exactly from the previous buffer while it agrees
+    // (within 0.25 s), and only jump to the clock after a seek or a pause.
+    const estimate = v.currentTime - x.length / c.sampleRate;
+    const start = next !== undefined && Math.abs(estimate - next) < 0.25 ? next : estimate;
+    for (let k = 0; k < chunks; k++) {
+      let sum = 0;
+      for (let i = k * hop; i < (k + 1) * hop; i++) sum += x[i] * x[i];
+      log.t.push(start + (k * hop) / c.sampleRate);
+      log.p.push(sum / hop);
+    }
+    next = start + (chunks * hop) / c.sampleRate;
+    if (log.t.length > KEEP_10MS + 6000) { log.t.splice(0, log.t.length - KEEP_10MS); log.p.splice(0, log.p.length - KEEP_10MS); }
+  };
+}
 
 /** Call from a user gesture (tap on Play): creates/resumes the shared AudioContext. */
 export function unlockAudio() {
@@ -55,6 +93,33 @@ export class AudioTap {
 
   reset() {
     this.samples = [];
+    const log = powerLogs.get(this.video);
+    if (log) { log.t = []; log.p = []; }
+  }
+
+  /**
+   * The last `seconds` heard as speech measures every 100 ms (lib/autosync speechiness), from the
+   * 10 ms power log; continuous stretches only (a seek or pause starts a new one). Falls back to
+   * the coarse levels when the browser has no audio processing for the log.
+   */
+  speech(seconds: number): { samples: SpeechSample[]; precise: boolean } {
+    const log = powerLogs.get(this.video);
+    if (!log || log.t.length < 200) return { samples: this.samples.slice(-Math.round(seconds * 12.5)), precise: false };
+    const from = Math.max(0, log.t.length - Math.round(seconds * 100));
+    const out: SpeechSample[] = [];
+    let runStart = from;
+    const flush = (end: number) => {
+      if (end - runStart < 100) return; // under a second: skip
+      const e = speechiness(log.p.slice(runStart, end));
+      const t0 = log.t[runStart];
+      e.forEach((v, i) => out.push({ t: t0 + i / 10, e: v }));
+    };
+    for (let i = from + 1; i < log.t.length; i++) {
+      const dt = log.t[i] - log.t[i - 1];
+      if (dt < 0 || dt > 0.05) { flush(i); runStart = i; }
+    }
+    flush(log.t.length);
+    return { samples: out, precise: true };
   }
 
   /** True when samples are being collected (audio routed and readable). */
@@ -76,6 +141,7 @@ export class AudioTap {
         source.connect(analyser);
         source.connect(ctx.destination); // keep the sound playing
         taps.set(v, analyser);
+        try { attachPowerLog(v, source, ctx); } catch { /* the 100 ms levels still work */ }
       } catch {
         return;
       }

@@ -18,6 +18,9 @@ import { LANGS, type Lang, type SubtitleState } from './subtitles';
 const MKV_BUDGET = 40 << 20; // bytes per stretch when the whole stream must be read
 const MIN_STRETCH = 15; // seconds; heavy files get shorter stretches, but more of them
 const GENTLE_SPAN = 20 * 60; // relay torrents: stretches from the first 20 minutes only
+/** Set `localStorage.syncDebug = '1'` to log what the up-front sync does (support/diagnosis). */
+const dbg = (...a: unknown[]) => { try { if (localStorage.getItem('syncDebug')) console.log('[sync]', ...a); } catch { /* storage blocked */ } };
+const fitInfo = (f?: Fit) => (f ? `offset ${f.offset.toFixed(2)} scale ${f.scale.toFixed(4)} z ${f.z.toFixed(1)} ratio ${f.ratio.toFixed(2)} consistent ${f.consistent} local ${f.local.map((l) => `${Math.round(l.t)}s:${l.offset.toFixed(2)}`).join(',')}` : 'none');
 const wait = (ms: number, signal: AbortSignal) => new Promise<void>((res) => { const t = setTimeout(res, ms); signal.addEventListener('abort', () => { clearTimeout(t); res(); }, { once: true }); });
 
 const downloadable = (t?: SubtitleTrackInfo) => !!t && (t.provider === 'opensubtitles' || t.provider === 'subdl' || t.provider === 'local' || t.provider === 'translated');
@@ -99,10 +102,12 @@ export function usePresync(opts: {
           const tr = await api.transcribe(firstClip, {}, signal);
           const t0 = firstClip.start;
           words = { language: tr.language, list: tr.segments.flatMap((sg) => sg.words?.length ? sg.words.map((w) => ({ word: w.word, start: w.start + t0 })) : sg.text.split(/\s+/).map((w, i, all) => ({ word: w, start: t0 + sg.start + ((i + 0.5) / all.length) * (sg.end - sg.start) }))) };
-        } catch { words = null; return false; }
+          dbg('words', words.language, words.list.length, 'from clip', firstClip.start, firstClip.mime, firstClip.bytes.length);
+        } catch (e) { dbg('words failed', (e as Error).message); words = null; return false; }
       }
       if (!words || words.language !== info.lang || info.provider === 'translated') return false;
       const a = anchorOffset(words.list, cues);
+      dbg(lang, 'words anchor', a ? `offset ${a.offset.toFixed(2)} votes ${a.votes.toFixed(1)} ratio ${a.ratio.toFixed(1)}` : 'none');
       if (!a || a.ratio < 2) return false;
       apply(lang, info.id, { offset: a.offset, scale: 1, z: a.votes, ratio: a.ratio, seconds: 0 }, 'words', true);
       return true;
@@ -111,6 +116,7 @@ export function usePresync(opts: {
     /** Fit one language; when `final`, also try other subtitles and the fallbacks. */
     const check = async (lang: Lang, info: SubtitleTrackInfo, cues: SubtitleCue[], final: boolean) => {
       let fit: Fit | undefined = windows.length ? fitTrack(windows, cues) : undefined;
+      dbg(lang, final ? 'final' : 'early', info.releaseName ?? info.id, fitInfo(fit));
       if (fits(fit) && (windows.length >= 2 || final)) { apply(lang, info.id, fit, 'audio', true); return; }
       if (!final) return;
       if (byReference(lang, info, cues)) return;
@@ -118,7 +124,7 @@ export function usePresync(opts: {
       // The chosen subtitle doesn't fit this video: try the next best ones.
       if (windows.length && info.provider !== 'local' && info.provider !== 'translated') {
         const s = subs();
-        const others = s.tracks.filter((t) => t.lang === lang && t.id !== info.id && t.token && (t.provider === 'opensubtitles' || t.provider === 'subdl')).slice(0, 3);
+        const others = s.tracks.filter((t) => t.lang === lang && t.id !== info.id && t.token && !t.otherEpisode && (t.provider === 'opensubtitles' || t.provider === 'subdl')).slice(0, 3);
         let best: { info: SubtitleTrackInfo; cues: SubtitleCue[]; fit: Fit } | undefined;
         for (const t of others) {
           try {
@@ -161,6 +167,7 @@ export function usePresync(opts: {
           if (o.current.gentle) while (!signal.aborted && o.current.getTime() < 4) await wait(1000, signal);
           if (signal.aborted) return;
           const src = await openAudioSource(o.current.urls!, signal);
+          dbg('audio source', { duration: src.duration, costPerSecond: Math.round(src.costPerSecond), codec: src.codec });
           const cheap = src.costPerSecond < 100_000; // MP4 / HLS: audio only, or close to it
           const length = cheap ? 60 : Math.floor(Math.min(60, MKV_BUDGET / src.costPerSecond));
           if (length < MIN_STRETCH) throw new Error('bitrate too high to sample');
@@ -170,16 +177,19 @@ export function usePresync(opts: {
           const count = cheap ? 4 : length >= 40 ? 3 : length >= 25 ? 4 : 5;
           const span = o.current.gentle ? Math.min(src.duration || Infinity, (first.cues[0]?.start ?? 0) + GENTLE_SPAN) : src.duration;
           const starts = planWindows(first.cues, span, count, length);
+          dbg('stretches', starts, 'length', length);
           for (const start of starts) {
             const clip = await src.read(start, start + length, signal);
             firstClip ??= clip;
             windows.push(await analyseClip(clip));
+            dbg('stretch', start, 'samples', windows[windows.length - 1].length);
             if (signal.aborted) return;
             if (windows.length >= 2) for (const p of pending()) await check(p.lang, p.info, p.cues, false);
           }
           audio = 'ready';
-        } catch {
+        } catch (e) {
           if (signal.aborted) return;
+          dbg('audio failed', (e as Error).message);
           audio = windows.length ? 'ready' : 'none';
         }
       }
