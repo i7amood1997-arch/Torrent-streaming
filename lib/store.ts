@@ -124,7 +124,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
-  indexers: ['torrentio', 'knaben', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv'],
+  indexers: ['torrentio', 'torrentsdb', 'knaben', 'bitsearch', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv'],
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
@@ -187,7 +187,7 @@ export const useApp = create<AppState>()(
     }),
     {
       name: 'ts-settings',
-      version: 4,
+      version: 5,
       // v2 added sources (Knaben, Nyaa, Torrents-CSV) and made the Pirate Bay API default: switch them on once for existing users.
       migrate: (persisted: any, version) => {
         if (version < 2 && Array.isArray(persisted?.settings?.indexers)) {
@@ -196,6 +196,10 @@ export const useApp = create<AppState>()(
         // v4 added the Internet Archive (direct links).
         if (version < 4 && Array.isArray(persisted?.settings?.indexers)) {
           persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'archive'])];
+        }
+        // v5 added TorrentsDB and Bitsearch.
+        if (version < 5 && Array.isArray(persisted?.settings?.indexers)) {
+          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'torrentsdb', 'bitsearch'])];
         }
         // v3 added AnimeTosho and MediaFusion.
         if (version < 3 && Array.isArray(persisted?.settings?.indexers)) {

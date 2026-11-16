@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -46,6 +46,8 @@ export interface IndexerConfig {
   knabenUrl: string;
   torrentsCsvUrl: string;
   nyaaUrl: string;
+  torrentsdbUrl: string;
+  bitsearchUrl: string;
   timeoutMs: number;
   /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
   publicRelays?: boolean;
@@ -75,6 +77,8 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     knabenUrl: trimSlash(env.KNABEN_URL || 'https://api.knaben.org'),
     torrentsCsvUrl: trimSlash(env.TORRENTS_CSV_URL || 'https://torrents-csv.com'),
     nyaaUrl: trimSlash(env.NYAA_URL || 'https://nyaa.si'),
+    torrentsdbUrl: trimSlash(env.TORRENTSDB_URL || 'https://torrentsdb.com'),
+    bitsearchUrl: trimSlash(env.BITSEARCH_URL || 'https://bitsearch.to'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 6500),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
@@ -285,6 +289,13 @@ const mediafusion: IndexerAdapter = {
   id: 'mediafusion',
   supports: (q) => !!q.imdbId,
   search: (q, { config, fetchJson }) => stremioStreams(config.mediafusionUrl, q, fetchJson, 'mediafusion'),
+};
+
+/** TorrentsDB: a large torrent catalogue served as a Stremio add-on (by IMDb id, like Torrentio). */
+const torrentsdb: IndexerAdapter = {
+  id: 'torrentsdb',
+  supports: (q) => !!q.imdbId,
+  search: (q, { config, fetchJson }) => stremioStreams(config.torrentsdbUrl, q, fetchJson, 'torrentsdb'),
 };
 
 /** The user's own Stremio add-ons (e.g. a configured AIOStreams, Comet, TorrentClaw or MediaFusion). */
@@ -556,6 +567,46 @@ const torrentscsv: IndexerAdapter = {
   }),
 };
 
+// ─── Bitsearch (large general search engine; HTML results) ─────────────────
+
+const decodeEntities = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+
+/** One result card per torrent: title, magnet, size, seeders, leechers. Tolerant of markup changes. */
+export function parseBitsearchHtml(html: string): TorrentResult[] {
+  const cards = html.split(/<li[^>]*class="[^"]*search-result[^"]*"/i).slice(1);
+  return cards.flatMap((card) => {
+    const magnet = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(card)?.[1]?.replace(/&amp;/g, '&');
+    const parsed = magnet ? parseMagnet(magnet) : undefined;
+    if (!parsed) return [];
+    const title = decodeEntities(/<h5[^>]*>([\s\S]*?)<\/h5>/i.exec(card)?.[1] ?? '') || decodeURIComponent(/[?&]dn=([^&]+)/.exec(magnet!)?.[1]?.replace(/\+/g, ' ') ?? '');
+    const stat = (label: RegExp) => { const m = new RegExp(`alt="${label.source}"[^>]*>(?:\\s*<[^>]+>)*\\s*([^<]+)`, 'i').exec(card); return m?.[1]?.trim(); };
+    const seeders = Number((stat(/Seeders?/) ?? '0').replace(/[^\d]/g, '')) || 0;
+    if (!title || seeders <= 0) return [];
+    return [makeResult({
+      title,
+      infoHash: parsed.infoHash,
+      magnet: parsed.magnet,
+      sizeBytes: parseSize(stat(/Size/)),
+      seeders,
+      leechers: Number((stat(/Leechers?/) ?? '0').replace(/[^\d]/g, '')) || 0,
+      indexer: 'bitsearch',
+      tracker: 'Bitsearch',
+    })];
+  });
+}
+
+const bitsearch: IndexerAdapter = {
+  id: 'bitsearch',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    // category 2 = video, sorted by seeders
+    const html = await fetchText(`${config.bitsearchUrl}/search?q=${encodeURIComponent(term)}&category=2&sort=seeders`);
+    const out = parseBitsearchHtml(html);
+    if (!out.length && !/search-result|No results|no results/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    return out;
+  }),
+};
+
 // ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────
 
 /** Parse a Nyaa RSS feed (nyaa:infoHash / nyaa:seeders / nyaa:size extensions). */
@@ -657,7 +708,7 @@ const archive: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive };
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 

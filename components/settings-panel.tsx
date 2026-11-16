@@ -21,6 +21,8 @@ const SOURCES = [
   { id: 'nyaa', name: 'Nyaa', help: 'Anime.' },
   { id: 'animetosho', name: 'AnimeTosho', help: 'Anime from Nyaa, TokyoTosho and AniDex, with seeders.' },
   { id: 'archive', name: 'Internet Archive', help: 'Free, legal films (public domain and openly licensed), streamed directly — no seeders.' },
+  { id: 'torrentsdb', name: 'TorrentsDB', help: 'Large catalogue of movies, shows and anime (Catalog mode), like Torrentio.' },
+  { id: 'bitsearch', name: 'Bitsearch', help: 'Large search engine across many sites, with seeders.' },
   { id: 'mediafusion', name: 'MediaFusion', help: 'Big aggregator (Prowlarr, Zilean, Torrentio…). Its public server may hide torrents from free users.' },
   { id: 'apibay', name: 'The Pirate Bay API', help: 'Text search of all video.' },
   { id: 'torrentscsv', name: 'Torrents-CSV', help: 'Open index built from the DHT network.' },
