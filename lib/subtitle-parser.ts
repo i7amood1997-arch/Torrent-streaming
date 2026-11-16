@@ -152,6 +152,67 @@ export function autoSelectTracks(tracks: SubtitleTrackInfo[], langs: string[] = 
   return out;
 }
 
+/**
+ * An episode's number counted from the show's first episode (specials excluded), from the
+ * seasons' episode counts. Undefined if an earlier season's count isn't known.
+ */
+export function absoluteEpisode(seasons: { seasonNumber: number; episodeCount?: number }[] | undefined, season?: number, episode?: number): number | undefined {
+  if (!seasons || season == null || episode == null || season < 1) return undefined;
+  let n = episode;
+  for (let s = 1; s < season; s++) {
+    const c = seasons.find((x) => x.seasonNumber === s)?.episodeCount;
+    if (!c) return undefined;
+    n += c;
+  }
+  return n;
+}
+
+export interface EpisodeRef { season?: number; episode?: number; /** Number counted from the show's first episode (anime releases use it). */ abs?: number }
+
+/**
+ * Does a subtitle's release name say which episode it is for?
+ *  1 = this episode, -1 = clearly another episode, 0 = can't tell (no number, a pack, ambiguous).
+ * Understands S04E06, 4x06, "Episode 6", "E65" and the anime style "Show - 65".
+ */
+export function episodeMatch(name: string, ref: EpisodeRef): 1 | 0 | -1 {
+  const { season, episode, abs } = ref;
+  if (season == null || episode == null) return 0;
+  const n = name.replace(/[._]/g, ' ');
+  // A plain number N: the episode counted from the start, or within the season?
+  const single = (v: number): 1 | 0 | -1 => {
+    if (abs != null && v === abs) return 1;
+    if (v === season * 100 + episode) return 1; // old style "406"
+    if (v === episode) return abs == null || abs === episode ? 1 : 0; // "06" in season 4 might be season 1's sixth: can't tell
+    return abs != null || season === 1 ? -1 : 0;
+  };
+  const range = (a: number, b: number): 1 | 0 | -1 => {
+    const has = (v?: number) => v != null && v >= a && v <= b;
+    if (has(abs) || has(episode)) return 0; // a pack that may contain it
+    return abs != null || season === 1 ? -1 : 0;
+  };
+  const se = /\bs(\d{1,2}) ?e(\d{1,4})(?: ?- ?e?(\d{1,4}))?(?!\d)/i.exec(n) ?? /\b(\d{1,2})x(\d{2,4})(?: ?- ?(\d{2,4}))?(?!\d)/i.exec(n);
+  if (se) {
+    const s = +se[1];
+    const a = +se[2];
+    if (se[3]) return (s === season || (s === 1 && abs != null)) ? range(a, +se[3]) : -1;
+    if (s === season && a === episode) return 1;
+    if (abs != null && a === abs && (s === season || s === 1)) return 1; // absolute numbering written as S01E65 / S04E65
+    return -1;
+  }
+  const verdicts: (1 | 0 | -1)[] = [];
+  for (const m of n.matchAll(/\b(?:episode|ep|e) ?(\d{1,4})(?: ?[-~] ?(\d{1,4}))?(?!\d)/gi)) verdicts.push(m[2] ? range(+m[1], +m[2]) : single(+m[1]));
+  for (const m of n.matchAll(/(?:^| )- (\d{1,4})(?:v\d+)?(?: ?[-~] ?(\d{1,4}))?(?![\dpk])/gi)) {
+    const v = +m[1];
+    if (!m[2] && v >= 1900 && v <= 2099) continue; // a year
+    verdicts.push(m[2] ? range(v, +m[2]) : single(v));
+  }
+  const bare = /^ *(\d{1,4}) *$/.exec(n); // a pack's file named just "65"
+  if (bare) verdicts.push(single(+bare[1]));
+  if (verdicts.includes(1)) return 1;
+  if (verdicts.includes(0)) return 0;
+  return verdicts.includes(-1) ? -1 : 0;
+}
+
 /** A language's tracks, best first (the next ones are tried if the best won't download). */
 export function rankTracks(tracks: SubtitleTrackInfo[], lang: string): SubtitleTrackInfo[] {
   return tracks

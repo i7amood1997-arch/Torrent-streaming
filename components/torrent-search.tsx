@@ -25,6 +25,8 @@ export interface SearchContext {
   type?: MediaType;
   season?: number;
   episode?: number;
+  /** Episode number counted from the show's first episode. */
+  absEpisode?: number;
   title?: string;
   year?: number;
   poster?: string;
@@ -115,7 +117,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
     set({ qualities: filters.qualities.includes(q) ? filters.qualities.filter((x) => x !== q) : [...filters.qualities, q] });
 
   const onPlay = (r: TorrentResult) =>
-    play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, poster: context?.poster, backdrop: context?.backdrop });
+    play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, absEpisode: context?.absEpisode, poster: context?.poster, backdrop: context?.backdrop });
   const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable }) : undefined), [results, debrid, renderHeader]);
 
   // Title page, streaming through the relay: open the torrent there now, so peers are connected and

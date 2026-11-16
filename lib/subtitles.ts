@@ -6,7 +6,7 @@ import { unzipSync } from 'fflate';
 import { cinemeta } from './cinemeta';
 import { parseRelease, titleFromRelease } from './release-parser';
 import { describeError, serverOnlyHeaders } from './runtime';
-import { decodeSubtitleBytes, parseSubtitles, releaseSimilarity } from './subtitle-parser';
+import { decodeSubtitleBytes, episodeMatch, parseSubtitles, releaseSimilarity } from './subtitle-parser';
 import { ISO2 } from './translate';
 import type { SubtitleCue, SubtitleTrackInfo } from './types';
 
@@ -25,6 +25,8 @@ export interface SubtitleSearch {
   videoSize?: number;
   /** File name of the playing video (helps the feed rank releases). */
   fileName?: string;
+  /** Episode number counted from the show's first episode (anime subtitles are numbered this way). */
+  absEpisode?: number;
 }
 
 export interface SubtitleKeys {
@@ -41,7 +43,7 @@ const SUBDL_DL = 'https://dl.subdl.com';
 
 type Token =
   | { p: 'opensubtitles'; fileId: number; lang: string }
-  | { p: 'subdl'; url: string; lang: string; season?: number; episode?: number }
+  | { p: 'subdl'; url: string; lang: string; season?: number; episode?: number; abs?: number }
   | { p: 'stremio'; url: string; lang: string };
 
 /** Keyless OpenSubtitles feed published as a Stremio add-on (lookup by IMDB id). */
@@ -147,7 +149,7 @@ async function searchSubDL(q: SubtitleSearch, key: string): Promise<SubtitleTrac
       releaseName,
       hearingImpaired: !!s.hi,
       score: releaseSimilarity(releaseName, q.releaseName),
-      token: encodeToken({ p: 'subdl', url: s.url, lang, season: q.season, episode: q.episode }),
+      token: encodeToken({ p: 'subdl', url: s.url, lang, season: q.season, episode: q.episode, abs: q.absEpisode }),
     };
   });
 }
@@ -218,6 +220,17 @@ export async function searchSubtitles(q: SubtitleSearch, keys: SubtitleKeys) {
     else errors.push({ provider: jobs[i][0], message: describeError(s.reason) });
   });
   if (!tracks.length && !errors.length) errors.push({ provider: 'subtitles', message: q.imdbId ? 'No subtitles found for this title.' : 'Could not identify this title to look up subtitles.' });
+  // Series: a subtitle whose name says another episode must not be picked automatically; one that
+  // names this episode goes ahead of those that don't say.
+  if (q.season != null && q.episode != null) {
+    const ref = { season: q.season, episode: q.episode, abs: q.absEpisode };
+    for (const t of tracks) {
+      if (t.hashMatch) continue; // timed for this exact file: nothing to doubt
+      const m = episodeMatch(t.releaseName ?? t.label, ref);
+      if (m === -1) { t.otherEpisode = true; t.score = (t.score ?? 0) * 0.05; }
+      else if (m === 1) t.score = Math.max(t.score ?? 0, Math.min((t.score ?? 0) + 0.25, 0.9));
+    }
+  }
   tracks.sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (b.downloads ?? 0) - (a.downloads ?? 0));
   return { tracks, errors };
 }
@@ -252,9 +265,14 @@ export async function fetchSubtitleCues(tokenStr: string, keys: SubtitleKeys): P
     const files = Object.entries(unzipSync(zip)).filter(([n]) => /\.(srt|vtt|ass|ssa)$/i.test(n)).sort(([a], [b]) => rank(a) - rank(b));
     if (!files.length) throw new Error('no subtitle file in the archive');
     let pick = files[0];
-    if (token.season != null && token.episode != null) {
-      const re = new RegExp(`s0?${token.season}[ ._-]?e0?${token.episode}(?!\\d)|\\b${token.season}x0?${token.episode}(?!\\d)`, 'i');
-      pick = files.find(([n]) => re.test(n)) ?? pick;
+    if (token.season != null && token.episode != null && files.length > 1) {
+      // A pack: take this episode's file; if every file names another episode, say so.
+      const ref = { season: token.season, episode: token.episode, abs: token.abs };
+      const verdict = files.map(([n]) => episodeMatch(n.split('/').pop()!.replace(/\.[a-z0-9]+$/i, ''), ref));
+      const hit = verdict.indexOf(1);
+      if (hit >= 0) pick = files[hit];
+      else if (verdict.every((v) => v === -1)) throw new Error('this archive doesn’t contain this episode');
+      else pick = files[verdict.indexOf(0)];
     }
     bytes = pick[1];
   }

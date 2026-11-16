@@ -227,6 +227,7 @@ async function subtitles(req: Request, env: Env, sp: URLSearchParams) {
         videoHash: /^[0-9a-f]{16}$/.test(sp.get('hash') ?? '') ? sp.get('hash')! : undefined,
         videoSize: Number(sp.get('size')) || undefined,
         fileName: sp.get('file')?.slice(0, 300) || undefined,
+        absEpisode: intParam(sp.get('abs')),
       },
       subtitleKeys(req, env),
     ),

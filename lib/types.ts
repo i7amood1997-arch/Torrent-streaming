@@ -109,6 +109,8 @@ export interface SubtitleTrackInfo {
   hashMatch?: boolean;
   /** 0..1 similarity to the playing release name, used for auto-selection. */
   score?: number;
+  /** The release name clearly says another episode: listed, but never chosen automatically. */
+  otherEpisode?: boolean;
   /** Translated/generated tracks: the language the text came from. */
   sourceLang?: string;
   /** Opaque token passed back to /api/subtitles/file. */

@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { formatBytes } from '@/lib/release-parser';
+import { absoluteEpisode } from '@/lib/subtitle-parser';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbDetails, TmdbEpisode, TmdbItem, TorrentResult } from '@/lib/types';
@@ -139,7 +140,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
           renderHeader={top}
           // No IMDB id → id-based sources can't help; use the title as a text query.
           query={details.imdbId ? undefined : `${details.title}${!series && details.year ? ` ${details.year}` : season != null ? ` S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}` : ''}`}
-          context={{ imdbId: details.imdbId, tmdbId: details.source === 'tmdb' ? details.id : undefined, type: item.type, season: series ? season : undefined, episode: series ? episode : undefined, title: details.title, year: details.year, poster: d.posterPath ?? undefined, backdrop: (series && ep?.stillPath) || d.backdropPath || undefined }}
+          context={{ imdbId: details.imdbId, tmdbId: details.source === 'tmdb' ? details.id : undefined, type: item.type, season: series ? season : undefined, episode: series ? episode : undefined, absEpisode: series ? absoluteEpisode(details.seasons, season, episode) : undefined, title: details.title, year: details.year, poster: d.posterPath ?? undefined, backdrop: (series && ep?.stillPath) || d.backdropPath || undefined }}
         />
       )}
     </div>

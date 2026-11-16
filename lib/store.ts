@@ -59,6 +59,8 @@ export interface PlayRequest {
   type?: MediaType;
   season?: number;
   episode?: number;
+  /** Episode number counted from the show's first episode (to match anime subtitles). */
+  absEpisode?: number;
   /** Artwork for Continue Watching. */
   poster?: string;
   backdrop?: string;
