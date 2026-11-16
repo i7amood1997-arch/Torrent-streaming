@@ -420,7 +420,10 @@ export class TorrentSession implements PeerHandler {
   private pump() {
     if (this.destroyed || !this.timer) return;
     // `peers` includes connections still being opened; only a few may be opening at once.
-    while (this.budget > 0 && this.candidates.length && this.peers.size < MAX_PEERS && this.connecting + this.trackersInFlight < MAX_CONNECTING) {
+    // Few addresses left and trackers still to ask: keep one slot for a tracker, or peers (most of
+    // which never answer) would hold every slot until the list ran dry.
+    const reserve = this.trackerQueue.length > 0 && this.trackersInFlight === 0 && this.candidates.length < ENOUGH_CANDIDATES ? 1 : 0;
+    while (this.budget > 0 && this.candidates.length && this.peers.size < MAX_PEERS && this.connecting + this.trackersInFlight < MAX_CONNECTING - reserve) {
       this.connectPeer(this.takeCandidate());
     }
     // Trackers only add addresses: with plenty waiting, one at a time so peers keep the slots.

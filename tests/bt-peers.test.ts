@@ -63,6 +63,28 @@ describe('relay streaming: which peers are tried first', () => {
     expect(tried).toHaveLength(3); // the free slots went to peers
     s.destroy();
   });
+
+  it('with only a few addresses, a tracker still gets a slot (peers that never answer must not block it)', async () => {
+    const { tried, connect } = hangingConnect();
+    const announces: string[] = [];
+    let release = () => {};
+    const fetchFn = (async (url: string) => {
+      announces.push(String(url));
+      if (String(url).startsWith('http://first/')) return new Response(bencode({ interval: 1800, peers: compact(20) }) as any);
+      if (String(url).startsWith('http://held/')) { await new Promise<void>((r) => { release = r; }); throw new Error('timeout'); }
+      return new Promise(() => undefined);
+    }) as unknown as typeof fetch;
+    // One tracker answers with 20 addresses (all dead) while another is still out; a third is added later.
+    const s = new TorrentSession({ infoHash, trackers: ['http://first/announce', 'http://held/announce'], connect, fetchFn, infoBytes: rawInfo });
+    s.touch();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(tried).toHaveLength(4); // 4 peers opening + the held tracker = all 5 slots
+    s.addTrackers(['http://later1/announce']);
+    release(); // the held tracker fails: its slot is free and 20 dead peers are waiting for slots
+    await new Promise((r) => setTimeout(r, 20));
+    expect(announces.some((u) => u.startsWith('http://later1/'))).toBe(true);
+    s.destroy();
+  });
 });
 
 function seeder() {
