@@ -332,12 +332,15 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => { tapRef.current?.reset(); }, [req?.nonce]);
 
   const syncState = useRef<Partial<Record<Lang, { track: string; last?: Alignment; applied?: Alignment }>>>({});
+  // The latest subtitle state is read through subsRef: depending on `subs` (a new object on every
+  // render, several times a second while playing) restarted this timer before it ever fired.
   useEffect(() => {
     if (!settings.subtitle.autoSync) return;
     const t = setInterval(() => {
       const tap = tapRef.current;
       setSyncListening(!!tap?.active);
-      if (!tap?.active) return;
+      const subs = subsRef.current;
+      if (!tap?.active || !subs) return;
       for (const lang of LANGS) {
         const tr = subs.loaded[lang];
         if (!tr?.cues.length || tr.info.provider === 'embedded' || tr.info.provider === 'generated' || subs.manual.has(lang)) continue;
@@ -355,7 +358,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       }
     }, 15000);
     return () => clearInterval(t);
-  }, [settings.subtitle.autoSync, subs]);
+  }, [settings.subtitle.autoSync]);
   useEffect(() => { syncState.current = {}; }, [req?.nonce]);
 
   // Up-front sync: fit subtitles to audio sampled from across the file, before the viewer needs them.
