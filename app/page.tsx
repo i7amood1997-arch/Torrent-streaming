@@ -5,7 +5,8 @@
  * them, and the player. Navigation is a floating glass bar: bottom on phones, top on
  * iPad/desktop. Views stay mounted so scroll position, search and playback survive.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { GlassTabs } from '@/components/glass-tabs';
 import { Home } from '@/components/home';
 import { IconGearFill, IconHomeFill, IconPlay, IconSearch } from '@/components/icons';
 import { SEARCH_INPUT_ID, SearchView } from '@/components/search-view';
@@ -14,13 +15,15 @@ import { TitleDetail } from '@/components/title-detail';
 import { VideoPlayer } from '@/components/VideoPlayer';
 import { api } from '@/lib/client-api';
 import { asset, BASE_PATH } from '@/lib/config';
+import { startLiquidGlass } from '@/lib/liquid-glass';
 import { useApp, type View } from '@/lib/store';
 import { initialFocus, isTV, onTvBack, popFocus, pushFocus, startTvMode } from '@/lib/tv';
 
-/** The tabs in the floating bar; Search sits apart in its own glass circle, as on Apple TV. */
-const NAV: { id: Exclude<View, 'player' | 'search'>; label: string; icon: typeof IconHomeFill }[] = [
-  { id: 'discover', label: 'Home', icon: IconHomeFill },
-  { id: 'settings', label: 'Settings', icon: IconGearFill },
+/** The tabs in the floating glass bar: `top` is the iPad/desktop bar (Search as an icon), `bottom` the phone tab bar. */
+const NAV: { id: Exclude<View, 'player'>; label: string; top: ReactNode; bottom: ReactNode }[] = [
+  { id: 'discover', label: 'Home', top: null, bottom: <IconHomeFill size={27} /> },
+  { id: 'search', label: 'Search', top: <IconSearch size={21} strokeWidth={2.6} />, bottom: <IconSearch size={27} strokeWidth={2.6} /> },
+  { id: 'settings', label: 'Settings', top: null, bottom: <IconGearFill size={27} /> },
 ];
 
 export default function App() {
@@ -32,6 +35,7 @@ export default function App() {
   // Android TV app: remote-control navigation, and Back walks back through the app before leaving it.
   useEffect(() => {
     startTvMode();
+    startLiquidGlass();
     if (!isTV()) return;
     // Remember the poster/button that opened a title or the player, to return to it.
     const unsub = useApp.subscribe((s, prev) => {
@@ -114,28 +118,16 @@ export default function App() {
         <>
           {/* Keeps scrolled content from showing through behind the floating bar */}
           <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/50 via-black/20 to-transparent md:block" />
-          <div data-tv-nav className="absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-3 md:flex">
-            <nav className="glass flex items-center gap-1 rounded-full p-1.5" aria-label="Main">
-              {NAV.map((n) => {
-                const on = listView === n.id && !detail;
-                return (
-                  <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                    className={`rounded-full px-5 py-2 text-[15px] font-semibold transition ${on ? 'glass-selected' : 'text-white hover:bg-white/5'}`}>
-                    {n.label}
-                  </button>
-                );
-              })}
+          <div data-tv-nav className="absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 md:block">
+            <GlassTabs layout="top" active={detail ? null : listView} onSelect={(id) => setView(id as View)}
+              tabs={NAV.map((n) => ({ id: n.id, label: n.label, icon: n.top, iconOnly: n.id === 'search' }))}>
               {nowPlaying && (
-                <button onClick={() => setView('player')} className="ml-1 flex max-w-[16rem] items-center gap-2 rounded-full py-2 pl-3 pr-4 text-[13px] font-semibold text-white hover:bg-white/5">
+                <button onClick={() => setView('player')} className="relative z-[1] ml-1 flex h-full max-w-[16rem] items-center gap-2 rounded-full pl-3 pr-4 text-[13px] font-semibold text-white hover:bg-white/5">
                   <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full bg-white text-black"><IconPlay size={10} /></span>
                   <span className="truncate">{nowLabel}</span>
                 </button>
               )}
-            </nav>
-            <button onClick={() => setView('search')} aria-label="Search" aria-current={listView === 'search' && !detail ? 'page' : undefined}
-              className={`glass grid h-[3.25rem] w-[3.25rem] place-items-center rounded-full transition ${listView === 'search' && !detail ? 'text-[#4ba3ff]' : 'text-white'}`}>
-              <IconSearch size={22} strokeWidth={2.6} />
-            </button>
+            </GlassTabs>
           </div>
 
           <div className="absolute inset-x-3 bottom-[max(0.6rem,env(safe-area-inset-bottom))] z-40 space-y-2 md:hidden">
@@ -148,22 +140,9 @@ export default function App() {
                 </span>
               </button>
             )}
-            <div data-tv-nav className="flex items-center gap-2.5">
-              <nav className="glass flex flex-1 rounded-full p-1.5" aria-label="Main">
-                {NAV.map((n) => {
-                  const on = listView === n.id;
-                  return (
-                    <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                      className={`flex flex-1 flex-col items-center gap-0.5 rounded-full py-2 text-[11px] font-semibold transition ${on ? 'glass-selected' : 'text-white'}`}>
-                      <n.icon size={26} /> {n.label}
-                    </button>
-                  );
-                })}
-              </nav>
-              <button onClick={() => setView('search')} aria-label="Search" aria-current={listView === 'search' ? 'page' : undefined}
-                className={`glass grid h-[4.25rem] w-[4.25rem] shrink-0 place-items-center rounded-full transition ${listView === 'search' ? 'text-[#4ba3ff]' : 'text-white'}`}>
-                <IconSearch size={26} strokeWidth={2.6} />
-              </button>
+            <div data-tv-nav className="flex justify-center">
+              <GlassTabs layout="bottom" active={listView} onSelect={(id) => setView(id as View)}
+                tabs={NAV.map((n) => ({ id: n.id, label: n.label, icon: n.bottom }))} />
             </div>
           </div>
         </>
