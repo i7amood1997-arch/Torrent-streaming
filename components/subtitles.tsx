@@ -129,7 +129,7 @@ const SOURCE_PREF = ['en', 'fr', 'es', 'de', 'it', 'pt', 'nl', 'sv', 'da', 'no',
 export function pickTranslationSource(tracks: SubtitleTrackInfo[], target: string): SubtitleTrackInfo | undefined {
   const rank = (l: string) => { const i = SOURCE_PREF.indexOf(l); return i < 0 ? SOURCE_PREF.length : i; };
   return tracks
-    .filter((t) => t.lang !== target && t.token && (t.provider === 'opensubtitles' || t.provider === 'subdl'))
+    .filter((t) => t.lang !== target && t.token && !t.otherEpisode && (t.provider === 'opensubtitles' || t.provider === 'subdl'))
     .sort((a, b) => rank(a.lang) - rank(b.lang) || Number(!!b.hashMatch) - Number(!!a.hashMatch) || (b.score ?? 0) - (a.score ?? 0))[0];
 }
 
@@ -149,7 +149,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const [auto, setAuto] = useState<Partial<Record<Lang, AutoJob>>>({});
   const [failed, setFailed] = useState<Partial<Record<Lang, string>>>({});
   /** Translation of subtitles embedded in the video file, which arrive as the file is read. */
-  const embTr = useRef<Partial<Record<Lang, { src: Lang; info: SubtitleTrackInfo; done: Set<number>; cues: SubtitleCue[]; busy: boolean; ac: AbortController }>>>({});
+  const embTr = useRef<Partial<Record<Lang, { src: Lang; info: SubtitleTrackInfo; done: Set<number>; cues: SubtitleCue[]; busy: boolean; ac: AbortController; retryAt?: number }>>>({});
   /** Languages waiting for embedded subtitles in another language to translate from. */
   const wantEmbTr = useRef<Set<Lang>>(new Set());
   const onEmbeddedFlush = useRef<() => void>(() => undefined);
@@ -281,7 +281,9 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
   const pumpEmbedded = useCallback(async (lang: Lang) => {
     const job = embTr.current[lang];
     const e = job && embeddedRef.current[job.src];
-    if (!job || !e || job.busy) return;
+    // After a failure, wait before asking the translators again (new cues keep arriving meanwhile).
+    if (!job || !e || job.busy || (job.retryAt && Date.now() < job.retryAt)) return;
+    job.retryAt = undefined;
     job.busy = true;
     let todo: SubtitleCue[] = [];
     try {
@@ -304,12 +306,19 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
         setAuto((a) => ({ ...a, [lang]: { kind: 'translate', engine, status: 'done', from: job.src } }));
       }
     } catch (err) {
-      todo.forEach((c) => job.done.delete(c.start)); // tried again with the next batch of cues
+      todo.forEach((c) => job.done.delete(c.start)); // tried again later
+      if ((err as Error).name !== 'AbortError') {
+        job.retryAt = Date.now() + 30_000;
+        setTimeout(() => { if (embTr.current[lang] === job && !job.ac.signal.aborted) void pumpRef.current(lang); }, 30_500);
+      }
       if ((err as Error).name !== 'AbortError') setAuto((a) => ({ ...a, [lang]: { kind: 'translate', status: 'error', from: job.src, message: `Couldn’t translate: ${(err as Error).message}` } }));
     } finally {
       job.busy = false;
     }
   }, []);
+
+  const pumpRef = useRef(pumpEmbedded);
+  pumpRef.current = pumpEmbedded;
 
   const startEmbTr = useCallback((lang: Lang, src: Lang) => {
     wantEmbTr.current.delete(lang);
@@ -375,14 +384,14 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     setLoading(true);
     const autoTranslate = useApp.getState().settings.subtitle.autoTranslate;
     api
-      .subtitles({ imdb: req.imdbId, tmdb: req.tmdbId, type: req.type, season: req.season, episode: req.episode, release: releaseName ?? req.result?.title, q: req.imdbId || req.tmdbId ? undefined : req.title, langs: autoTranslate ? 'ar,en,*' : 'ar,en', hash: file.hash, size: file.size, file: file.name }, ac.signal)
+      .subtitles({ imdb: req.imdbId, tmdb: req.tmdbId, type: req.type, season: req.season, episode: req.episode, abs: req.absEpisode, release: releaseName ?? req.result?.title, q: req.imdbId || req.tmdbId ? undefined : req.title, langs: autoTranslate ? 'ar,en,*' : 'ar,en', hash: file.hash, size: file.size, file: file.name }, ac.signal)
       .then(({ tracks = [], errors = [] }) => {
         setTracks((prev) => [...prev.filter((t) => t.provider === 'embedded' || t.provider === 'local' || t.provider === 'generated'), ...tracks]);
         setErrors(errors.map((e) => `${e.provider}: ${e.message}`));
         for (const lang of LANGS) {
           // Embedded subtitles (exact timing) and the user's own choice win over downloads.
           if (userPickedRef.current.has(lang) || embeddedRef.current[lang]) continue;
-          const ranked = rankTracks(tracks, lang);
+          const ranked = rankTracks(tracks, lang).filter((t) => !t.otherEpisode); // another episode's subtitle is never picked for you
           if (ranked.length) {
             // The best track first; if it won't download (or is empty), the next ones;
             // if none of them works, translate from another language as if there were none.
@@ -410,6 +419,8 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
     else if (t.provider === 'translated' && embTr.current[lang]?.info.id === t.id) {
       const j = embTr.current[lang]!;
       setLoaded((l) => ({ ...l, [lang]: { info: j.info, cues: [...j.cues] } }));
+      j.retryAt = undefined; // picked by hand: try again now if it had failed
+      void pumpEmbedded(lang);
     } else if (t.provider === 'embedded' && t.lang !== lang) {
       const other = appLang(t.lang);
       if (other) startEmbTr(lang, other); // subtitles in the video file, in the other language: translate them
@@ -423,7 +434,7 @@ export function useSubtitles(req: PlayRequest | undefined, file: PlayingFile): S
       }
     } else if (t.lang !== lang) void translateInto(lang, t); // another language picked: translate it
     else loadCues(lang, t);
-  }, [loadCues, translateInto, startEmbTr]);
+  }, [loadCues, translateInto, startEmbTr, pumpEmbedded]);
 
   /** Cues recognised from the audio (language `src`): shown directly or translated into Arabic/English. */
   const addGenerated = useCallback((src: string, cues: SubtitleCue[]) => {
@@ -565,10 +576,14 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
   const primary: Lang = style.primaryLang;
   const secondary: Lang = primary === 'ar' ? 'en' : 'ar';
 
+  // The loop reads the latest subtitles through a ref, so it isn't torn down on every render.
+  const subsRef = useRef(subs);
+  subsRef.current = subs;
   useEffect(() => {
     if (!video) return;
     let raf = 0;
     const tick = () => {
+      const subs = subsRef.current;
       const t = video.currentTime;
       const out: { lang: Lang; text: string }[] = [];
       for (const lang of style.dual ? [secondary, primary] : [primary]) {
@@ -585,7 +600,7 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [video, subs, style.dual, primary, secondary]);
+  }, [video, style.dual, primary, secondary]);
 
   return (
     <div
