@@ -1045,7 +1045,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
         {/* Top bar: back (phone) · title in fullscreen */}
         {req && (
-          <div className={`absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pb-6 pt-[max(0.5rem,env(safe-area-inset-top))] transition-opacity ${controls || phase !== 'ready' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+          <div className={`absolute inset-x-0 top-0 flex items-center gap-2 bg-gradient-to-b from-black/70 to-transparent px-2 pb-6 pt-2 player-topbar transition-opacity ${controls || phase !== 'ready' ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
             onPointerUp={(e) => e.stopPropagation()}>
             {onBack && <button className="player-back grid h-9 w-9 place-items-center rounded-full text-white" onClick={onBack} aria-label="Back"><IconBack size={22} /></button>}
             <p className="player-title hidden min-w-0 flex-1 truncate px-1 text-sm font-semibold text-white">{req.title}{epTag ? ` · ${epTag}` : ''}</p>

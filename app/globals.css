@@ -641,3 +641,8 @@ input[type='range'] {
     opacity: 1;
   }
 }
+
+/* Full screen on iPad/desktop: the player's top bar clears the notch itself (inline, the page already does). */
+.player:fullscreen .player-topbar {
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+}

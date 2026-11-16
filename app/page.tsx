@@ -109,7 +109,7 @@ export default function App() {
       </main>
 
       {/* Player: its own screen */}
-      <section className={`absolute inset-0 z-30 overflow-y-auto overscroll-contain bg-black scrollbar-thin ${inPlayer ? '' : 'hidden'}`}>
+      <section className={`absolute inset-0 z-30 overflow-y-auto overscroll-contain bg-black pt-[env(safe-area-inset-top)] scrollbar-thin ${inPlayer ? '' : 'hidden'}`}>
         <VideoPlayer onBack={() => setView(listView)} />
       </section>
 

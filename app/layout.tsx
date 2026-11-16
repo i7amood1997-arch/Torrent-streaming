@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   description: 'Search TMDB or raw torrent indexers, stream through Debrid or WebTorrent, with Arabic and English subtitles.',
   applicationName: 'Streamdeck',
   manifest: asset('/manifest.webmanifest'),
-  appleWebApp: { capable: true, title: 'Streamdeck', statusBarStyle: 'black' },
+  appleWebApp: { capable: true, title: 'Streamdeck', statusBarStyle: 'black-translucent' },
   icons: {
     icon: [{ url: asset('/icons/icon.svg?v=2'), type: 'image/svg+xml' }, { url: asset('/icons/icon-192.png?v=2'), sizes: '192x192' }],
     apple: [{ url: asset('/icons/apple-touch-icon.png?v=2'), sizes: '180x180' }],
