@@ -141,7 +141,10 @@ async function finishRealDebrid(i: ResolveInput, id: string, auth: Record<string
 
   if (info.status !== 'downloaded') {
     if (['error', 'magnet_error', 'virus', 'dead'].includes(info.status)) throw new DebridError(`Real-Debrid: ${info.status}`, 502, 'dead_torrent');
-    return { status: 'queued', progress: info.progress ?? 0, message: `Real-Debrid: ${info.status}`, provider: 'realdebrid' };
+    const seeders = typeof info.seeders === 'number' ? info.seeders : undefined;
+    const speed = typeof info.speed === 'number' ? info.speed : undefined;
+    const detail = info.status === 'downloading' ? ` ${Math.round(info.progress ?? 0)}%${seeders !== undefined ? ` · ${seeders} seeder${seeders === 1 ? '' : 's'}` : ''}${speed ? ` · ${(speed / 1048576).toFixed(1)} MB/s` : ''}` : '';
+    return { status: 'queued', progress: info.progress ?? 0, seeders, speed, message: `Real-Debrid: ${info.status}${detail}`, provider: 'realdebrid' };
   }
 
   // `links` only lists selected files, in order. Map the chosen selected file to its link.

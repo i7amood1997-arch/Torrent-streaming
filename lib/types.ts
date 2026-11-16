@@ -87,6 +87,9 @@ export interface ResolvedStream {
   mimeType?: string;
   /** 0–100 when the debrid service is still caching the torrent. */
   progress?: number;
+  /** While caching: peers sharing the torrent and download speed (bytes/s), when the service says. */
+  seeders?: number;
+  speed?: number;
   message?: string;
   provider?: DebridProvider;
 }

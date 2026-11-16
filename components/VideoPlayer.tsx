@@ -22,6 +22,7 @@ import { agrees, alignSubtitles, confident, liveSpeechiness, WIDE_RANGE, type Al
 import { AudioTap, isTapped, unlockAudio } from '@/lib/audio-tap';
 import { hashRemoteVideo } from '@/lib/subtitle-hash';
 import { audioPlayable, canPlayMkv, isHlsUrl, isIOS, supportsWebTorrent } from '@/lib/platform';
+import { debridStalled, type DebridProgress } from '@/lib/debrid-wait';
 import { deadLinkMessage } from '@/lib/playback-errors';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
@@ -254,6 +255,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       }
 
       live(setStatus)(`Sending to ${settings.debridProvider}…`);
+      const waiting: DebridProgress[] = [];
       for (let attempt = 0; attempt < 180; attempt++) {
         const res = await api.resolveDebrid(r, { season: req.season, episode: req.episode }, ac.signal);
         if (res.status === 'error') throw new Error(res.message ?? 'Debrid error');
@@ -282,6 +284,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         }
         live(setProgress)(res.progress);
         live(setStatus)(res.message ?? 'Caching torrent on debrid…');
+        waiting.push({ at: Date.now(), progress: res.progress, seeders: res.seeders, speed: res.speed });
+        const stuck = debridStalled(waiting, PROVIDER_NAMES[settings.debridProvider] ?? 'The debrid service');
+        if (stuck) throw new Error(stuck);
         await sleep(attempt < 5 ? 2000 : 5000, ac.signal);
       }
       throw new Error('Timed out waiting for the debrid service to cache this torrent.');
