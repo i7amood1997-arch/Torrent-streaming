@@ -571,24 +571,32 @@ const torrentscsv: IndexerAdapter = {
 
 const decodeEntities = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#39;|&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
 
-/** One result card per torrent: title, magnet, size, seeders, leechers. Tolerant of markup changes. */
+/**
+ * One result card per torrent: title, info-hash, size, seeders, leechers. Handles the current
+ * layout ("torrent-result-card", hash in the download link) and the older one (magnet link,
+ * "alt=Seeder" icons). Counts that wrapped below zero (4294967xxx) are treated as unknown.
+ */
 export function parseBitsearchHtml(html: string): TorrentResult[] {
-  const cards = html.split(/<li[^>]*class="[^"]*search-result[^"]*"/i).slice(1);
+  const count = (v?: string) => { const n = Number((v ?? '').replace(/[^\d]/g, '')); return n > 0 && n < 2 ** 31 ? n : 0; };
+  const cards = html.split(/<(?:li|div)[^>]*class="[^"]*(?:torrent-result-card|search-result)[^"]*"/i).slice(1);
   return cards.flatMap((card) => {
     const magnet = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(card)?.[1]?.replace(/&amp;/g, '&');
-    const parsed = magnet ? parseMagnet(magnet) : undefined;
+    const hash = /\/download\/torrent\/([a-f0-9]{40})/i.exec(card)?.[1];
+    const parsed = magnet ? parseMagnet(magnet) : hash ? parseMagnet(hash) : undefined;
     if (!parsed) return [];
-    const title = decodeEntities(/<h5[^>]*>([\s\S]*?)<\/h5>/i.exec(card)?.[1] ?? '') || decodeURIComponent(/[?&]dn=([^&]+)/.exec(magnet!)?.[1]?.replace(/\+/g, ' ') ?? '');
-    const stat = (label: RegExp) => { const m = new RegExp(`alt="${label.source}"[^>]*>(?:\\s*<[^>]+>)*\\s*([^<]+)`, 'i').exec(card); return m?.[1]?.trim(); };
-    const seeders = Number((stat(/Seeders?/) ?? '0').replace(/[^\d]/g, '')) || 0;
+    const title = decodeEntities(/<h[35][^>]*>([\s\S]*?)<\/h[35]>/i.exec(card)?.[1] ?? '');
+    const old = (label: string) => new RegExp(`alt="${label}"[^>]*>(?:\\s*<[^>]+>)*\\s*([^<]+)`, 'i').exec(card)?.[1];
+    const swarm = (word: string) => new RegExp(`>\\s*([\\d,]+)\\s*</span>\\s*<span>\\s*${word}`, 'i').exec(card)?.[1];
+    const seeders = count(swarm('seeders') ?? old('Seeders?'));
     if (!title || seeders <= 0) return [];
+    const size = /fa-download"><\/i>\s*<span>([^<]+)<\/span>/i.exec(card)?.[1] ?? old('Size');
     return [makeResult({
       title,
       infoHash: parsed.infoHash,
-      magnet: parsed.magnet,
-      sizeBytes: parseSize(stat(/Size/)),
+      magnet: magnet ? parsed.magnet : undefined,
+      sizeBytes: parseSize(size),
       seeders,
-      leechers: Number((stat(/Leechers?/) ?? '0').replace(/[^\d]/g, '')) || 0,
+      leechers: count(swarm('leechers') ?? old('Leechers?')),
       indexer: 'bitsearch',
       tracker: 'Bitsearch',
     })];
@@ -602,7 +610,7 @@ const bitsearch: IndexerAdapter = {
     // category 2 = video, sorted by seeders
     const html = await fetchText(`${config.bitsearchUrl}/search?q=${encodeURIComponent(term)}&category=2&sort=seeders`);
     const out = parseBitsearchHtml(html);
-    if (!out.length && !/search-result|No results|no results/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    if (!out.length && !/torrent-result|search-result|No results|no results/i.test(html)) throw new Error('unexpected page (the site may have changed)');
     return out;
   }),
 };
