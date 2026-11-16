@@ -12,7 +12,7 @@
  *
  * Pure functions; the audio decoding lives in lib/audio-energy.ts.
  */
-import { alignSubtitles, confident, type Alignment, type SpeechSample } from './autosync';
+import { alignSubtitles, confident, WIDE_RANGE, type Alignment, type SpeechSample } from './autosync';
 import type { SubtitleCue } from './types';
 
 export interface Fit extends Alignment {
@@ -46,14 +46,16 @@ export function planWindows(cues: SubtitleCue[], duration: number, count: number
 /** Fit one subtitle against audio stretches from across the film. */
 export function fitTrack(windows: SpeechSample[][], cues: SubtitleCue[], opts: { center?: number; range?: number } = {}): Fit | undefined {
   const all = windows.flat();
-  const a = alignSubtitles(all, cues, { center: opts.center, range: opts.range ?? 20 });
+  const a = alignSubtitles(all, cues, { center: opts.center, range: opts.range ?? WIDE_RANGE });
   if (!a) return undefined;
   const local: Fit['local'] = [];
   let consistent = true;
   for (const w of windows) {
     if (w.length < 300) continue;
-    const l = alignSubtitles(w, cues, { center: a.offset, range: 4, scales: [a.scale], minSeconds: 30 });
-    if (!l || l.z < 4.5) continue; // this stretch has too little dialogue to judge
+    // Searched ±30 s: a stretch that clearly fits somewhere else (a scene added or cut) must count
+    // as a disagreement, not be skipped as unclear.
+    const l = alignSubtitles(w, cues, { center: a.offset, range: 30, scales: [a.scale], minSeconds: 30 });
+    if (!l || l.z < 4.5 || l.ratio < 1.1) continue; // this stretch has too little dialogue to judge
     local.push({ t: w[0].t, offset: l.offset });
     if (Math.abs(l.offset - a.offset) > 0.35) consistent = false;
   }
@@ -77,15 +79,17 @@ export function betterFit(a: Fit | undefined, b: Fit | undefined): boolean {
  */
 export function alignToReference(ref: SubtitleCue[], cues: SubtitleCue[], opts: { center?: number; range?: number } = {}): Alignment | undefined {
   if (ref.length < 12) return undefined;
-  const from = ref[0].start;
-  const to = ref[ref.length - 1].end;
+  // Ten minutes of the reference's dialogue are plenty, and keep the wide search quick.
+  const mid = (ref[0].start + ref[ref.length - 1].end) / 2;
+  const from = Math.max(ref[0].start, mid - 300);
+  const to = Math.min(ref[ref.length - 1].end, mid + 300);
   const samples: SpeechSample[] = [];
   let i = 0;
   for (let t = from; t <= to; t += 0.1) {
     while (i < ref.length && ref[i].end <= t) i++;
     samples.push({ t, e: i < ref.length && ref[i].start <= t ? 1 : 0 });
   }
-  return alignSubtitles(samples, cues, { center: opts.center, range: opts.range ?? 20, threshold: 0.5 });
+  return alignSubtitles(samples, cues, { center: opts.center, range: opts.range ?? WIDE_RANGE, threshold: 0.5 });
 }
 
 // ─── Word anchors (speech recognition) ──────────────────────────────────────
@@ -96,7 +100,7 @@ const norm = (w: string) => w.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p
  * Shift from recognised words: every recognised word votes for the shifts that would put
  * it on a subtitle line containing the same word; the true shift collects the most votes.
  */
-export function anchorOffset(words: { word: string; start: number }[], cues: SubtitleCue[], scale = 1, range = 30): { offset: number; votes: number; ratio: number } | undefined {
+export function anchorOffset(words: { word: string; start: number }[], cues: SubtitleCue[], scale = 1, range = WIDE_RANGE, minVotes = 5): { offset: number; votes: number; ratio: number } | undefined {
   const index = new Map<string, number[]>(); // word → estimated cue-time of each occurrence
   for (const c of cues) {
     const tokens = c.text.split(/\s+/).map(norm).filter(Boolean);
@@ -120,7 +124,7 @@ export function anchorOffset(words: { word: string; start: number }[], cues: Sub
   let bestBin = 0;
   const score = (b: number) => (bins.get(b - 1) ?? 0) + (bins.get(b) ?? 0) + (bins.get(b + 1) ?? 0);
   for (const b of bins.keys()) { const s = score(b); if (s > best) { best = s; bestBin = b; } }
-  if (best < 5) return undefined;
+  if (best < minVotes) return undefined;
   let runner = 0;
   for (const b of bins.keys()) if (Math.abs(b - bestBin) > 5) runner = Math.max(runner, score(b));
   // Weighted centre of the peak.

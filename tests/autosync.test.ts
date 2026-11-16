@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agrees, alignSubtitles, confident, type SpeechSample } from '@/lib/autosync';
+import { agrees, alignSubtitles, confident, WIDE_RANGE, type SpeechSample } from '@/lib/autosync';
 import { openSubtitlesHash } from '@/lib/subtitle-hash';
 import type { SubtitleCue } from '@/lib/types';
 
@@ -112,6 +112,45 @@ describe('up-front sync', () => {
     // 6 s of extra footage in the middle: the second half is shifted.
     const f = fitTrack(stretches(film, starts, 60, (t) => (t < 2700 ? t + 1 : t + 7)), film);
     expect(fits(f)).toBe(false);
+  });
+
+  it('the quick wide search gives the same answer as checking every step', () => {
+    const scales = [1, 25 / 23.976, 23.976 / 25];
+    for (let k = 0; k < 10; k++) {
+      const r = rng(100 + k);
+      const cues = dialogue(12, 40 + k);
+      const offset = Math.round((r() * 200 - 100) * 10) / 10;
+      const scale = k % 4 === 3 ? scales[1 + (k % 2)] : 1;
+      const noise = k === 9; // no subtitle-shaped speech at all: neither should be confident
+      const samples = noise ? speech([], 0, 1, 360, 9 + k) : speech(cues, offset, scale, 360, 9 + k).slice(-3000);
+      const fast = alignSubtitles(samples, cues, { range: WIDE_RANGE });
+      const full = alignSubtitles(samples, cues, { range: WIDE_RANGE, exhaustive: true });
+      expect(confident(fast)).toBe(confident(full));
+      if (!noise) {
+        expect(fast!.scale).toBe(full!.scale);
+        expect(Math.abs(fast!.offset - full!.offset)).toBeLessThanOrEqual(0.1);
+        expect(Math.abs(fast!.z - full!.z)).toBeLessThan(full!.z * 0.15);
+      }
+    }
+  });
+
+  it('finds a large shift (a release with a different opening: subtitles 34 s late)', () => {
+    const starts = planWindows(film, 5400, 4, 60);
+    const f = fitTrack(stretches(film, starts, 60, (t) => t - 33.8), film);
+    expect(fits(f)).toBe(true);
+    expect(Math.abs(f!.offset + 33.8)).toBeLessThanOrEqual(0.2);
+  });
+
+  it('a large shift is found while listening too, and against the other language and recognised words', () => {
+    const live = alignSubtitles(speech(film, -33.8, 1, 400).slice(-4500), film, { range: WIDE_RANGE })!;
+    expect(confident(live)).toBe(true);
+    expect(Math.abs(live.offset + 33.8)).toBeLessThanOrEqual(0.2);
+    const ref = dialogue(20, 5);
+    const late = ref.map((c) => ({ ...c, start: c.start + 33.8, end: c.end + 33.8 }));
+    expect(Math.abs(alignToReference(ref, late)!.offset + 33.8)).toBeLessThanOrEqual(0.2);
+    const cues: SubtitleCue[] = Array.from({ length: 60 }, (_, i) => ({ start: i * 4, end: i * 4 + 3, text: `alpha${i} bravo${i} charlie${i}`.replace(/\d/g, (d) => 'ghijklmnop'[+d]) }));
+    const words = cues.slice(10, 30).flatMap((c) => c.text.split(' ').map((w, k) => ({ word: w, start: c.start + 0.5 + k * 0.8 - 33.8 })));
+    expect(Math.abs(anchorOffset(words, cues)!.offset + 33.8)).toBeLessThanOrEqual(0.3);
   });
 
   it('lines a subtitle up with a reference in another language', () => {
