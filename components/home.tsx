@@ -171,7 +171,7 @@ function ContinueWatching() {
                   <img decoding="async" src={posterUrl(h.backdrop ?? h.poster, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
                 )}
                 <span className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent" />
-                <span className="absolute bottom-2.5 left-2.5 grid h-8 w-8 place-items-center rounded-full bg-white/20 text-white backdrop-blur"><IconPlay size={13} /></span>
+                <span className="glass-btn absolute bottom-2.5 left-2.5 grid h-8 w-8 place-items-center rounded-full text-white"><IconPlay size={13} /></span>
               </span>
               <span className="mt-2 block truncate text-[13px] font-medium text-ink-200" dir="auto">{h.title}</span>
               <span className="block text-[11px] text-ink-400">{h.season != null ? `S${h.season} · E${h.episode}` : h.result?.quality && h.result.quality !== 'Unknown' ? h.result.quality : 'Resume'}</span>

@@ -53,15 +53,81 @@ textarea {
   .btn-primary {
     @apply btn bg-white font-semibold text-black hover:bg-white/90 active:scale-[0.97];
   }
-  /* Translucent "material" surfaces */
-  .glass {
-    background: rgba(40, 40, 44, 0.62);
-    -webkit-backdrop-filter: saturate(180%) blur(28px);
-    backdrop-filter: saturate(180%) blur(28px);
-    box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.14), 0 10px 40px rgba(0, 0, 0, 0.45);
+  /*
+   * Liquid Glass (in the spirit of Apple's material): clear rather than frosted, the content behind
+   * stays visible and more vivid; light catches the rim (bright top edge, fainter bottom edge);
+   * a soft inner glow and a floating shadow give it thickness. The rim and sheen are drawn by
+   * ::before/::after behind the content (isolation keeps them above the glass, below the text).
+   */
+  .glass,
+  .btn-glass,
+  .glass-btn {
+    position: relative;
+    isolation: isolate;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.05) 55%, rgba(255, 255, 255, 0.08) 100%), rgba(28, 28, 32, 0.28);
+    -webkit-backdrop-filter: blur(14px) saturate(190%) brightness(1.06);
+    backdrop-filter: blur(14px) saturate(190%) brightness(1.06);
+    box-shadow:
+      inset 0 1px 0.5px rgba(255, 255, 255, 0.42),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.10),
+      inset 0 0 18px rgba(255, 255, 255, 0.05),
+      0 10px 32px rgba(0, 0, 0, 0.32),
+      0 1px 3px rgba(0, 0, 0, 0.22);
+    /* Labels stay readable over bright content (Apple strengthens text on glass the same way). */
+    text-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.45);
   }
+  .glass::before,
+  .btn-glass::before,
+  .glass-btn::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    padding: 1px;
+    pointer-events: none;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.14) 28%, rgba(255, 255, 255, 0) 52%, rgba(255, 255, 255, 0.10) 78%, rgba(255, 255, 255, 0.34) 100%);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+  .glass::after,
+  .btn-glass::after,
+  .glass-btn::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    background: radial-gradient(130% 70% at 28% -10%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0) 60%);
+  }
+  /* Buttons made of glass: brighten on hover, swell like gel when pressed. */
   .btn-glass {
-    @apply btn bg-white/15 font-semibold text-white backdrop-blur-xl hover:bg-white/25 active:scale-[0.97];
+    @apply btn font-semibold text-white;
+  }
+  .btn-glass,
+  .glass-btn {
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), background-color 0.2s, box-shadow 0.2s;
+  }
+  .btn-glass:hover,
+  .glass-btn:hover {
+    background-color: rgba(255, 255, 255, 0.10);
+  }
+  .btn-glass:active,
+  .glass-btn:active {
+    transform: scale(1.06);
+    box-shadow:
+      inset 0 1px 0.5px rgba(255, 255, 255, 0.55),
+      inset 0 -1px 1px rgba(255, 255, 255, 0.16),
+      inset 0 0 22px rgba(255, 255, 255, 0.12),
+      0 12px 36px rgba(0, 0, 0, 0.36);
+  }
+  /* The selected item inside a glass bar: a brighter glass bubble, not a solid white slab. */
+  .glass-selected {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18));
+    box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.6), inset 0 -1px 1px rgba(255, 255, 255, 0.12), 0 2px 8px rgba(0, 0, 0, 0.18);
+    color: #fff;
   }
   .btn-ghost {
     @apply btn text-ink-200 hover:bg-ink-700/60;
@@ -399,11 +465,18 @@ input[type='range'] {
 /* ── Android TV performance ────────────────────────────────────
  * TV chips are slow at blur and repaints: no backdrop blur (solid materials instead),
  * no slow zoom on the big picture, and only transform/opacity animate (compositor-only). */
-[data-tv] .glass {
+[data-tv] .glass,
+[data-tv] .btn-glass,
+[data-tv] .glass-btn {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
   background: rgba(30, 30, 33, 0.94);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+[data-tv] .glass::after,
+[data-tv] .btn-glass::after,
+[data-tv] .glass-btn::after {
+  display: none;
 }
 [data-tv] [class*='backdrop-blur'] {
   -webkit-backdrop-filter: none !important;
@@ -438,4 +511,15 @@ input[type='range'] {
 [data-tv] button {
   transition-property: transform, background-color, color, opacity;
   transition-duration: 0.12s;
+}
+
+/* Reduce Transparency (Accessibility): solid materials instead of glass. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .btn-glass,
+  .glass-btn {
+    background: rgb(40, 40, 44);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }

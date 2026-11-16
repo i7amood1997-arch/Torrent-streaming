@@ -113,13 +113,13 @@ export default function App() {
       {!inPlayer && (
         <>
           {/* Keeps scrolled content from showing through behind the floating bar */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/85 via-black/45 to-transparent md:block" />
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-30 hidden h-24 bg-gradient-to-b from-black/50 via-black/20 to-transparent md:block" />
           <nav data-tv-nav className="glass absolute left-1/2 top-4 z-40 hidden -translate-x-1/2 items-center gap-1 rounded-full p-1.5 md:flex" aria-label="Main">
             {NAV.map((n) => {
               const on = listView === n.id && !detail;
               return (
                 <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                  className={`rounded-full px-5 py-2 text-[15px] font-semibold transition ${on ? 'bg-white text-black' : 'text-white/80 hover:text-white'}`}>
+                  className={`rounded-full px-5 py-2 text-[15px] font-semibold transition ${on ? 'glass-selected' : 'text-white/85 hover:text-white'}`}>
                   {n.label}
                 </button>
               );
@@ -147,7 +147,7 @@ export default function App() {
                 const on = listView === n.id;
                 return (
                   <button key={n.id} onClick={() => setView(n.id)} aria-current={on ? 'page' : undefined}
-                    className={`flex flex-1 flex-col items-center gap-0.5 rounded-[1.3rem] py-1.5 text-[10px] font-semibold transition ${on ? 'bg-white/15 text-white' : 'text-white/55'}`}>
+                    className={`flex flex-1 flex-col items-center gap-0.5 rounded-[1.3rem] py-1.5 text-[10px] font-semibold transition ${on ? 'glass-selected' : 'text-white/75'}`}>
                     <n.icon size={22} /> {n.label}
                   </button>
                 );

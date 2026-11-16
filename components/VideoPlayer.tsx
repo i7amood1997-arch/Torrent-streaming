@@ -1020,13 +1020,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         {/* Centre controls: touch = back 10 / play / forward 10; mouse = play when paused */}
         {phase === 'ready' && !waiting && (
           <div className={`absolute inset-0 hidden items-center justify-center gap-10 bg-black/25 transition-opacity [@media(pointer:coarse)]:flex ${controls ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
-            <button className="grid h-12 w-12 place-items-center rounded-full bg-black/40 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(-10); poke(); }} aria-label="Back 10 seconds"><IconBack10 size={24} /></button>
-            <button className="grid h-16 w-16 place-items-center rounded-full bg-black/50 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); togglePlay(); poke(); }} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={30} /> : <IconPlay size={30} />}</button>
-            <button className="grid h-12 w-12 place-items-center rounded-full bg-black/40 text-white backdrop-blur" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(10); poke(); }} aria-label="Forward 10 seconds"><IconFwd10 size={24} /></button>
+            <button className="glass-btn grid h-12 w-12 place-items-center rounded-full text-white" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(-10); poke(); }} aria-label="Back 10 seconds"><IconBack10 size={24} /></button>
+            <button className="glass-btn grid h-16 w-16 place-items-center rounded-full text-white" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); togglePlay(); poke(); }} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={30} /> : <IconPlay size={30} />}</button>
+            <button className="glass-btn grid h-12 w-12 place-items-center rounded-full text-white" onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => { e.stopPropagation(); seekBy(10); poke(); }} aria-label="Forward 10 seconds"><IconFwd10 size={24} /></button>
           </div>
         )}
         {phase === 'ready' && !playing && !waiting && (
-          <button className="tv-grid absolute left-1/2 top-1/2 hidden h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/60 text-white backdrop-blur [@media(pointer:fine)]:grid" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
+          <button className="glass-btn tv-grid absolute left-1/2 top-1/2 hidden h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full text-white [@media(pointer:fine)]:grid" onPointerUp={(e) => { e.stopPropagation(); togglePlay(); }} aria-label="Play">
             <IconPlay size={28} />
           </button>
         )}
