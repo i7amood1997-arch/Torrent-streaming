@@ -77,7 +77,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
           </p>
           <div className="mt-5 w-full max-w-sm">
             <FocusPlay ready={!!stream?.best} />
-            <button data-tv-play className="btn-primary h-[52px] w-full rounded-2xl text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
+            <button data-tv-play className="btn-primary h-12 min-w-[10.5rem] rounded-full px-8 text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
               onClick={() => stream?.best && stream.play(stream.best)}>
               {stream?.best ? <><IconPlay size={18} /> Play{tag ? ` ${tag}` : ''}</> : !ready || !stream || stream.loading ? <span className="animate-pulse">Finding streams…</span> : 'No streams found'}
             </button>
