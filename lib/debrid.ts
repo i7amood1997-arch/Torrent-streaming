@@ -232,3 +232,43 @@ export async function resolveDebridStream(input: ResolveInput): Promise<Resolved
   }
   return r;
 }
+
+// ─── "Will it start instantly?" ─────────────────────────────────────────────
+
+export interface CacheCheckItem { infoHash: string; magnet: string; fileIdx?: number; season?: number; episode?: number }
+export type CacheState = 'instant' | 'not' | 'unknown';
+
+/**
+ * Real-Debrid no longer answers "is this cached?" directly (instantAvailability was removed in
+ * 2024). The usual check: add the torrent, choose the file, and see if it is ready at once. Ready
+ * ones stay in the account (Play then reuses them); the others are deleted straight away.
+ */
+export async function checkRealDebridCache(apiKey: string, items: CacheCheckItem[]): Promise<Record<string, CacheState>> {
+  const auth = { Authorization: `Bearer ${apiKey}` };
+  const formHeaders = { ...auth, 'Content-Type': 'application/x-www-form-urlencoded' };
+  const out: Record<string, CacheState> = {};
+  const existing = await http<any[]>(`${RD}/torrents?limit=100`, { headers: auth }).catch(() => [] as any[]);
+  const byHash = new Map<string, any>((existing ?? []).map((t: any) => [String(t.hash ?? '').toLowerCase(), t]));
+  await Promise.all(items.slice(0, 6).map(async (it) => {
+    const hash = it.infoHash.toLowerCase();
+    const known = byHash.get(hash);
+    if (known) { out[hash] = known.status === 'downloaded' ? 'instant' : 'not'; return; }
+    let id: string | undefined;
+    try {
+      id = (await http<{ id: string }>(`${RD}/torrents/addMagnet`, { method: 'POST', headers: formHeaders, body: new URLSearchParams({ magnet: it.magnet }) })).id;
+      let info = await http<any>(`${RD}/torrents/info/${id}`, { headers: auth });
+      if (info.status === 'magnet_conversion') { await new Promise((r) => setTimeout(r, 1500)); info = await http<any>(`${RD}/torrents/info/${id}`, { headers: auth }); }
+      if (info.status === 'waiting_files_selection') {
+        const files: FileLike[] = (info.files ?? []).map((f: any, idx: number) => ({ index: idx, id: f.id, name: f.path, size: f.bytes }));
+        const chosen = pickFile(files, it.fileIdx, it.season, it.episode);
+        await http(`${RD}/torrents/selectFiles/${id}`, { method: 'POST', headers: formHeaders, body: new URLSearchParams({ files: chosen ? String(chosen.id) : 'all' }) });
+        info = await http<any>(`${RD}/torrents/info/${id}`, { headers: auth });
+      }
+      out[hash] = info.status === 'downloaded' ? 'instant' : 'not';
+    } catch {
+      out[hash] = 'unknown';
+    }
+    if (id && out[hash] !== 'instant') await fetch(`${RD}/torrents/delete/${id}`, { method: 'DELETE', headers: auth, signal: AbortSignal.timeout(5000) }).catch(() => undefined);
+  }));
+  return out;
+}

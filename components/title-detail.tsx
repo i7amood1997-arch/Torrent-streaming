@@ -25,7 +25,7 @@ function FocusPlay({ ready }: { ready: boolean }) {
   return null;
 }
 
-interface StreamState { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number }
+interface StreamState { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number; instant?: boolean }
 
 export function TitleDetail({ item }: { item: TmdbItem }) {
   const onBack = useApp((s) => s.closeDetail);
@@ -83,7 +83,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
             </button>
             {stream?.best && (
               <p className="mt-2 text-[11px] text-white/55">
-                {[stream.best.quality !== 'Unknown' ? stream.best.quality : '', formatBytes(stream.best.sizeBytes), stream.best.url ? 'direct link' : `${stream.best.seeders} seeders`].filter(Boolean).join(' · ')}
+                {[stream.best.quality !== 'Unknown' ? stream.best.quality : '', formatBytes(stream.best.sizeBytes), stream.best.url ? 'direct link' : stream.instant ? '⚡ Instant on Real-Debrid' : `${stream.best.seeders} seeders`].filter(Boolean).join(' · ')}
               </p>
             )}
           </div>

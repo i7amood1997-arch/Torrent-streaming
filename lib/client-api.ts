@@ -191,6 +191,25 @@ export const api = {
     }
   },
 
+  /** Which of these torrents the debrid service can play at once (same browser-first route as resolve). */
+  async checkDebridCache(items: { infoHash: string; magnet: string; fileIdx?: number; season?: number; episode?: number }[], signal?: AbortSignal): Promise<Record<string, 'instant' | 'not' | 'unknown'>> {
+    const s = useApp.getState().settings;
+    const init = (): RequestInit => ({ method: 'POST', headers: { ...headers(), 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: s.debridProvider, items }), signal });
+    const parse = async (res: Response) => {
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { status: res.status });
+      return (body.states ?? {}) as Record<string, 'instant' | 'not' | 'unknown'>;
+    };
+    const { handleApi } = await import('./server/handlers');
+    try {
+      return await parse(await handleApi(new Request(new URL('/api/debrid/check', location.origin), init()), directEnv()));
+    } catch (e) {
+      const err = e as Error & { status?: number };
+      if (err.name === 'AbortError' || !apiBase()) throw e;
+      return parse(await call('/api/debrid/check', init()));
+    }
+  },
+
   /** Probe capabilities. Direct mode never "fails"; a configured-but-unreachable backend sets `offline`. */
   async loadCaps() {
     const set = useApp.getState().setCaps;

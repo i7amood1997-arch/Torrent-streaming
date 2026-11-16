@@ -16,7 +16,7 @@
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
  */
-import { DebridError, envDebridKey, resolveDebridStream } from '../debrid';
+import { checkRealDebridCache, DebridError, envDebridKey, resolveDebridStream } from '../debrid';
 import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
 import { createTmdbClient, TmdbError } from '../tmdb';
@@ -209,6 +209,25 @@ async function debridResolve(req: Request, env: Env) {
   } catch (e) {
     const status = e instanceof DebridError ? (e.status === 401 || e.status === 403 ? 401 : 502) : 500;
     return err(describeError(e), status);
+  }
+}
+
+/** POST /api/debrid/check { provider, items: [{ infoHash, magnet, fileIdx?, season?, episode? }] } → { states } */
+async function debridCheck(req: Request, env: Env) {
+  let body: any;
+  try { body = await req.json(); } catch { return err('Invalid JSON', 400); }
+  const provider = body?.provider as DebridProvider;
+  const apiKey = req.headers.get('x-debrid-key')?.trim() || envDebridKey(provider, env) || '';
+  if (provider !== 'realdebrid' || !apiKey) return json({ states: {} }); // other services: not checked (yet)
+  const num = (v: unknown) => (Number.isInteger(v) ? (v as number) : undefined);
+  const items = (Array.isArray(body.items) ? body.items : []).slice(0, 6).flatMap((x: any) => {
+    const p = parseMagnet(String(x?.magnet ?? x?.infoHash ?? ''));
+    return p ? [{ infoHash: p.infoHash, magnet: p.magnet, fileIdx: num(x.fileIdx), season: num(x.season), episode: num(x.episode) }] : [];
+  });
+  try {
+    return json({ states: await checkRealDebridCache(apiKey, items) });
+  } catch (e) {
+    return err(describeError(e), e instanceof DebridError && (e.status === 401 || e.status === 403) ? 401 : 502);
   }
 }
 
@@ -540,6 +559,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/search' && get) res = await search(req, env, url.searchParams);
       else if (path === '/api/tmdb' && get) res = await tmdb(req, env, url.searchParams);
       else if (path === '/api/debrid/resolve' && req.method === 'POST') res = await debridResolve(req, env);
+      else if (path === '/api/debrid/check' && req.method === 'POST') res = await debridCheck(req, env);
       else if (path === '/api/subtitles' && get) res = await subtitles(req, env, url.searchParams);
       else if (path === '/api/subtitles/file' && get) res = await subtitleFile(req, env, url.searchParams);
       else if (path === '/api/translate' && req.method === 'POST') res = await translate(req);

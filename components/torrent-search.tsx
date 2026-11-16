@@ -13,7 +13,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
-import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, type ResultFilters, type SortKey } from '@/lib/result-filters';
+import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, rankResults, type ResultFilters, type SortKey } from '@/lib/result-filters';
 import { audioPlayable, canPlayMkv } from '@/lib/platform';
 import { hasDebrid, useApp, usesRelayStreaming } from '@/lib/store';
 import type { IndexerError, MediaType, QualityTier, TorrentResult } from '@/lib/types';
@@ -39,7 +39,7 @@ interface Props {
   /** Rendered above the results (e.g. the selected title's header). */
   header?: React.ReactNode;
   /** Like `header`, with the best stream for a one-tap Play button. */
-  renderHeader?: (h: { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number }) => React.ReactNode;
+  renderHeader?: (h: { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number; instant?: boolean }) => React.ReactNode;
 }
 
 const TIERS: QualityTier[] = ['4K', '1080p', '720p', 'SD'];
@@ -118,7 +118,28 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
 
   const onPlay = (r: TorrentResult) =>
     play({ kind: r.url ? 'url' : 'torrent', url: r.url, result: r, title: context?.title ?? r.title, imdbId: context?.imdbId ?? r.imdbId, tmdbId: context?.tmdbId, type: context?.type ?? (r.season != null ? 'series' : undefined), season: context?.season ?? r.season, episode: context?.episode ?? r.episode, absEpisode: context?.absEpisode, poster: context?.poster, backdrop: context?.backdrop });
-  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable }) : undefined), [results, debrid, renderHeader]);
+  // Debrid: check whether the leading results are ready to play at once (title page, once results settle).
+  const [cache, setCache] = useState<Record<string, 'instant' | 'not' | 'unknown'>>({});
+  const usesDebrid = useApp((s) => hasDebrid(s.settings, s.caps) && (s.settings.engine === 'auto' || s.settings.engine === 'debrid'));
+  useEffect(() => { setCache({}); }, [key]);
+  useEffect(() => {
+    // Results still arriving: check once they've been steady for a moment (a slow source mustn't hold it up).
+    if (!renderHeader || !usesDebrid || !results.length) return;
+    const top = rankResults(results, { debrid: true, preferMp4: !canPlayMkv(), audioOk: audioPlayable }).filter((r) => !r.url && r.magnet && !(r.id in cache)).slice(0, 5);
+    if (!top.length) return;
+    const ac = new AbortController();
+    const t = setTimeout(() => {
+      api.checkDebridCache(top.map((r) => ({ infoHash: r.infoHash, magnet: r.magnet, fileIdx: r.fileIdx, season: context?.season ?? r.season, episode: context?.episode ?? r.episode })), ac.signal)
+        .then((states) => setCache((c) => {
+          const n = { ...c };
+          for (const r of top) n[r.id] = states[r.infoHash.toLowerCase()] ?? 'unknown';
+          return n;
+        }))
+        .catch(() => setCache((c) => { const n = { ...c }; for (const r of top) n[r.id] ??= 'unknown'; return n; }));
+    }, loading ? 2500 : 800);
+    return () => { clearTimeout(t); ac.abort(); };
+  }, [renderHeader, usesDebrid, loading, results]); // eslint-disable-line react-hooks/exhaustive-deps
+  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable, cache }) : undefined), [results, debrid, renderHeader, cache]);
 
   // Title page, streaming through the relay: open the torrent there now, so peers are connected and
   // the start of the file is downloading before Play is pressed (the relay drops it if unused).
@@ -184,7 +205,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
   return (
     <section className="flex min-h-0 flex-col gap-3">
       {header}
-      {renderHeader?.({ best, play: onPlay, loading, count: results.length })}
+      {renderHeader?.({ best, play: onPlay, loading, count: results.length, instant: !!best && cache[best.id] === 'instant' })}
 
       {/* Toolbar */}
       <div className="flex items-center justify-between gap-3">
@@ -249,6 +270,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
                   <span className="text-hd" title="Direct link: no seeders involved">Direct</span>
                 ) : (
                   <>
+                    {cache[r.id] === 'instant' && <span className="font-semibold text-hd" title="Ready on Real-Debrid: starts at once">⚡ Instant</span>}
                     <span className={`inline-flex items-center gap-0.5 ${seedColor(r.seeders)}`} title="Seeders"><IconSeed size={12} />{r.seeders}</span>
                     <span className="inline-flex items-center gap-0.5 text-ink-400" title="Leechers"><IconLeech size={12} />{r.leechers}</span>
                   </>

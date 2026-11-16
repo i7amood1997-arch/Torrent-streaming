@@ -48,7 +48,20 @@ export function countByQuality(results: TorrentResult[]): Record<QualityTier, nu
  * 1080p first (4K only with a Debrid account, which has the bandwidth), healthy seeders,
  * MP4 preferred on devices that can't open MKV directly; direct links beat torrents.
  */
-export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; preferMp4?: boolean; audioOk?: (audio: string[] | undefined) => boolean } = {}): TorrentResult | undefined {
+export interface PickOptions {
+  debrid?: boolean;
+  preferMp4?: boolean;
+  audioOk?: (audio: string[] | undefined) => boolean;
+  /** Debrid cache check by result id: 'instant' starts at once, 'not' has to be fetched first. */
+  cache?: Record<string, 'instant' | 'not' | 'unknown'>;
+}
+
+export function pickBest(results: TorrentResult[], opts: PickOptions = {}): TorrentResult | undefined {
+  return rankResults(results, opts)[0];
+}
+
+/** Results in the order Play would choose them (filters applied). */
+export function rankResults(results: TorrentResult[], opts: PickOptions = {}): TorrentResult[] {
   const tier: Record<string, number> = { '4K': opts.debrid ? 3.2 : 1.2, '1080p': 3, '720p': 2, SD: 0.8, Unknown: 0.5 };
   const score = (r: TorrentResult) => {
     const c = (r.container ?? r.fileName?.split('.').pop() ?? '').toLowerCase();
@@ -59,8 +72,10 @@ export function pickBest(results: TorrentResult[], opts: { debrid?: boolean; pre
       (opts.preferMp4 && ['mp4', 'm4v', 'mov'].includes(c) ? 0.6 : 0) -
       (opts.audioOk && !opts.audioOk(r.audio) ? (opts.debrid ? 0.4 : 1.5) : 0) - // silent here (Debrid's HLS copy can fix it)
       (r.remux ? 0.8 : 0) - // huge files
-      ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0)
+      ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0) +
+      // Ready on the debrid service: starts at once (a level of quality is worth less than that).
+      (opts.cache?.[r.id] === 'instant' ? 2.5 : opts.cache?.[r.id] === 'not' ? -1.5 : 0)
     );
   };
-  return applyFilters(results, DEFAULT_FILTERS).reduce<TorrentResult | undefined>((best, r) => (!best || score(r) > score(best) ? r : best), undefined);
+  return applyFilters(results, DEFAULT_FILTERS).map((r) => ({ r, s: score(r) })).sort((a, b) => b.s - a.s).map((x) => x.r);
 }
