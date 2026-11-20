@@ -51,8 +51,11 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
     api.tmdbSeason(item.id, season).then((r) => { const eps = r?.episodes ?? []; setEpisodes(eps); setEpisode(eps[0]?.episodeNumber); }).catch((e) => setError(e.message));
   }, [item, season]);
 
-  // TV: start on the back button, then move to Play once a stream is ready.
-  useEffect(() => { const t = setTimeout(() => initialFocus('[data-tv-back]', true), 120); return () => clearTimeout(t); }, [item]);
+  // TV: start on Play if a stream is already found, else on Back until it is (FocusPlay moves it).
+  useEffect(() => {
+    const t = setTimeout(() => initialFocus(document.querySelector('[data-tv-play]:not([disabled])') ? '[data-tv-play]' : '[data-tv-back]', true), 120);
+    return () => clearTimeout(t);
+  }, [item]);
   const d = details ?? item;
   const series = item.type === 'series';
   const ready = !!details && (!series || episode != null);
@@ -77,7 +80,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
           </p>
           <div className="mt-5 w-full max-w-sm">
             <FocusPlay ready={!!stream?.best} />
-            <button data-tv-play className="btn-primary h-12 min-w-[10.5rem] rounded-full px-8 text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
+            <button data-tv-play data-tv-start className="btn-primary h-12 min-w-[10.5rem] rounded-full px-8 text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
               onClick={() => stream?.best && stream.play(stream.best)}>
               {stream?.best ? <><IconPlay size={18} /> Play{tag ? ` ${tag}` : ''}</> : !ready || !stream || stream.loading ? <span className="animate-pulse">Finding streams…</span> : 'No streams found'}
             </button>
@@ -101,7 +104,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
         <section className="-mx-[var(--gutter)] space-y-3">
           <Shelf className="!gap-2 !py-0">
             {details.seasons.map((s) => (
-              <button key={s.seasonNumber} onClick={() => setSeason(s.seasonNumber)}
+              <button key={s.seasonNumber} onClick={() => setSeason(s.seasonNumber)} aria-pressed={season === s.seasonNumber}
                 className={`rounded-full px-4 py-2 text-sm font-semibold transition ${season === s.seasonNumber ? 'bg-white text-black' : 'bg-ink-800 text-ink-200 hover:bg-ink-700'}`}>
                 Season {s.seasonNumber}
               </button>

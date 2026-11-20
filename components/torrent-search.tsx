@@ -159,8 +159,8 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
   const activeFilterCount = filters.qualities.length + (filters.minSeeders > 0 ? 1 : 0) + (filters.hdrOnly ? 1 : 0) + (filters.text ? 1 : 0) + (filters.maxSizeGb ? 1 : 0);
 
   const qualityPills = (
-    <div className="flex gap-2 md:flex-wrap" role="group" aria-label="Quality">
-      <button className={`pill shrink-0 ${filters.qualities.length === 0 ? 'border-accent bg-accent-soft text-accent' : 'border-ink-600 text-ink-400'}`} onClick={() => set({ qualities: [] })}>
+    <div className="flex gap-2 md:flex-wrap" role="group" aria-label="Quality" data-tv-row>
+      <button aria-pressed={filters.qualities.length === 0} className={`pill shrink-0 ${filters.qualities.length === 0 ? 'border-accent bg-accent-soft text-accent' : 'border-ink-600 text-ink-400'}`} onClick={() => set({ qualities: [] })}>
         All <span className="opacity-70">{results.length}</span>
       </button>
       {TIERS.map((q) => {

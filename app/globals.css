@@ -646,3 +646,45 @@ input[type='range'] {
 .player:fullscreen .player-topbar {
   padding-top: max(0.5rem, env(safe-area-inset-top));
 }
+
+/* TV: a drop-down's choices, as a sheet (lib/tv.ts openPicker). */
+.tv-picker {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.tv-picker-box {
+  display: flex;
+  max-height: 80vh;
+  min-width: 18rem;
+  max-width: 80vw;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+  border-radius: 24px;
+  background: rgb(30, 30, 33);
+  padding: 10px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.tv-pick {
+  border-radius: 9999px;
+  padding: 12px 20px;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 600;
+  color: #fff;
+}
+.tv-pick[aria-current] {
+  color: #4ba3ff;
+}
+.tv-pick:focus {
+  background: #fff;
+  color: #000;
+  outline: none !important;
+}
+.tv-pick:disabled {
+  opacity: 0.35;
+}

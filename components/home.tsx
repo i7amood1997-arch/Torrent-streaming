@@ -8,7 +8,7 @@ import { api } from '@/lib/client-api';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbItem } from '@/lib/types';
-import { initialFocus } from '@/lib/tv';
+import { initialFocus, isTV } from '@/lib/tv';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
 export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: number; wide?: boolean }) {
@@ -80,13 +80,20 @@ export function Shelf({ children, className = '' }: { children: React.ReactNode;
 }
 
 /** A row that fetches its titles when it comes near the screen. */
-function LazyShelf({ title, type, genre }: { title: string; type: 'movie' | 'series'; genre?: string }) {
+function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie' | 'series'; genre?: string; order: number }) {
   const ref = useRef<HTMLElement>(null);
   const [items, setItems] = useState<TmdbItem[]>();
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    // TV: every row's list comes in shortly after the first screen, one after another, so a row is
+    // never still loading when the remote reaches it (an empty row can't take focus, and its
+    // arrival would shift the page mid-move). The pictures still load as rows come near.
+    if (isTV()) {
+      const t = setTimeout(() => api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed(true)), 1200 + order * 350);
+      return () => clearTimeout(t);
+    }
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
@@ -233,7 +240,7 @@ export function Home({ active }: { active: boolean }) {
         <ShelfTitle>Top 10 This Week</ShelfTitle>
         <Shelf className="!gap-1">{items.length ? items.slice(0, 10).map((it, i) => <Poster key={`${it.type}-${it.id}`} item={it} numeral={i + 1} />) : <Skeleton />}</Shelf>
       </section>
-      {ready && SHELVES.map((s) => <LazyShelf key={s.title} {...s} />)}
+      {ready && SHELVES.map((s, i) => <LazyShelf key={s.title} {...s} order={i} />)}
     </div>
   );
 }

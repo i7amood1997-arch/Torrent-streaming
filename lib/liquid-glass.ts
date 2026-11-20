@@ -197,6 +197,8 @@ let started = false;
 export function startLiquidGlass() {
   if (started || typeof window === 'undefined') return;
   started = true;
+  // The TV app draws plain solid surfaces: no touch light, no lens, no watchers at all.
+  if (document.documentElement.dataset.tv != null) return;
   const solid = () =>
     document.documentElement.dataset.tv != null || matchMedia('(prefers-reduced-transparency: reduce)').matches;
 

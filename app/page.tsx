@@ -46,6 +46,11 @@ export default function App() {
       if (s.view === 'player') { s.setView(s.listView); popFocus(); return true; }
       if (s.detail) { s.closeDetail(); popFocus(); return true; }
       if (s.listView !== 'discover') { s.setView('discover'); setTimeout(() => initialFocus('[data-tv-start]', true), 80); return true; }
+      // Deep in Home: back to the top first; Back again from there leaves the app.
+      if (!document.activeElement?.hasAttribute('data-tv-start') && document.querySelector('[data-tv-pane] [data-tv-start]')) {
+        initialFocus('[data-tv-start]', true);
+        return true;
+      }
       return false;
     }, -1);
     return () => { unsub(); off(); };

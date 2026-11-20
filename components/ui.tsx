@@ -20,7 +20,7 @@ export function Switch({ checked, onChange, label, disabled }: { checked: boolea
 
 export function Segmented<T extends string>({ value, options, onChange, label, size = 'md' }: { value: T; options: { value: T; label: React.ReactNode }[]; onChange: (v: T) => void; label: string; size?: 'sm' | 'md' }) {
   return (
-    <div role="radiogroup" aria-label={label} className="inline-flex rounded-lg bg-ink-800 p-0.5">
+    <div role="radiogroup" data-tv-row aria-label={label} className="inline-flex rounded-lg bg-ink-800 p-0.5">
       {options.map((o) => (
         <button
           key={o.value}
