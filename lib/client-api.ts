@@ -80,6 +80,10 @@ export const api = {
   search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
     get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
 
+  /** Intro / recap / credits times for an episode or movie (TheIntroDB, through the relay). */
+  segments: (p: { tmdb?: number; imdb?: string; type?: string; season?: number; episode?: number; duration?: number }, signal?: AbortSignal) =>
+    get<import('./server/handlers').Segments>('/api/segments', p, signal),
+
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),
   subtitleCues: (token: string, signal?: AbortSignal) => get<{ cues: SubtitleCue[] }>('/api/subtitles/file', { token }, signal),

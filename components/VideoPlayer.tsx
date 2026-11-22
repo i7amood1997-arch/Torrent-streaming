@@ -26,6 +26,7 @@ import { debridStalled, type DebridProgress } from '@/lib/debrid-wait';
 import { deadLinkMessage } from '@/lib/playback-errors';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
+import { NextUp, SkipButton, useSegments } from './player-extras';
 import { applySeriesPrefs, rememberSeries, resumePosition, savePosition } from '@/lib/library';
 import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
@@ -141,6 +142,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(NaN);
+  const [ended, setEnded] = useState(false);
   const [buffered, setBuffered] = useState(0);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -510,7 +512,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     const on = (ev: string, fn: () => void) => { v.addEventListener(ev, fn); return () => v.removeEventListener(ev, fn); };
     let live = true;
     const offs = [
-      on('play', () => { setPlaying(true); nativeTV()?.setKeepScreenOn(true); }),
+      on('ended', () => setEnded(true)),
+      on('seeking', () => setEnded(false)),
+      on('play', () => { setEnded(false); setPlaying(true); nativeTV()?.setKeepScreenOn(true); }),
       on('pause', () => { setPlaying(false); nativeTV()?.setKeepScreenOn(false); if (req && v.currentTime > 1) savePosition(req, resumeId, v.currentTime, v.duration, true); }),
       on('waiting', () => setWaiting(true)),
       on('playing', () => setWaiting(false)),
@@ -699,6 +703,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
   // ── Android TV: remote keys, Back, and the TV's own player for files the WebView can't decode ──
   const tv = useMemo(() => isTV(), []);
+  const segments = useSegments(req, duration);
   useEffect(() => {
     if (!tv) return;
     setTvKeyOverride((e) => {
@@ -984,6 +989,13 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         </video>
 
         {showSubs && <SubtitleOverlay video={videoEl} subs={subs} />}
+
+        {phase === 'ready' && req && (
+          <>
+            <SkipButton seg={segments} time={time} tv={tv} seek={(t) => { const v = videoRef.current; if (v) v.currentTime = t; }} />
+            <NextUp req={req} seg={segments} time={time} duration={duration} ended={ended} tv={tv} />
+          </>
+        )}
 
         {/* Idle / resolving / error */}
         {phase !== 'ready' && (

@@ -36,6 +36,8 @@ export interface ApiBindings {
   AI?: { run(model: string, input: unknown): Promise<unknown> };
   /** Tests only: stands in for fetch when calling Groq. */
   groqFetch?: typeof fetch;
+  /** Tests only: stands in for fetch when calling TheIntroDB. */
+  introFetch?: typeof fetch;
   /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
   claude?: Pick<Anthropic, 'messages'>;
   /** Small per-user storage (Worker only): TV pairing and syncing between devices (lib/server/userdata.ts). */
@@ -565,6 +567,64 @@ async function proxy(req: Request, self: URL): Promise<Response> {
 
 export const encodeProxyHeaders = b64urlJson.enc;
 
+// ─── Intro / recap / credits times (TheIntroDB) ─────────────────────────────
+
+export interface Segments {
+  intro?: { start: number; end: number };
+  recap?: { start: number; end: number };
+  /** Where the end credits start (seconds); the next episode is offered from here. */
+  credits?: { start: number; end?: number };
+}
+
+const INTRODB = 'https://api.theintrodb.org/v4/media';
+
+/** Community-submitted times (seconds) for an episode or movie, or {} when none are known. */
+async function segments(q: URLSearchParams, bindings: ApiBindings): Promise<Response> {
+  const tmdb = intParam(q.get('tmdb'));
+  const imdb = q.get('imdb') ?? '';
+  const type = q.get('type') === 'series' ? 'series' : 'movie';
+  const season = intParam(q.get('season'));
+  const episode = intParam(q.get('episode'));
+  const duration = Number(q.get('duration')) || 0;
+  const qs = new URLSearchParams();
+  // Episodes only by TMDB id (an IMDb id there could mean the series or the episode); movies by either.
+  if (tmdb) qs.set('tmdb_id', String(tmdb));
+  else if (type === 'movie' && /^tt\d{6,9}$/.test(imdb)) qs.set('imdb_id', imdb);
+  else return json({}, 200, { 'Cache-Control': 'public, max-age=86400' });
+  if (type === 'series') {
+    if (season == null || episode == null) return err('season and episode are needed', 400);
+    qs.set('season', String(season));
+    qs.set('episode', String(episode));
+  }
+  if (duration > 60) qs.set('duration_ms', String(Math.round(duration * 1000)));
+  const f = bindings.introFetch ?? fetch;
+  try {
+    const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json' } });
+    if (!res.ok) return json({}, 200, { 'Cache-Control': `public, max-age=${res.status === 404 ? 21600 : 300}` });
+    return json(parseSegments(await res.json()), 200, { 'Cache-Control': 'public, max-age=43200' });
+  } catch {
+    return json({}, 200, { 'Cache-Control': 'no-store' });
+  }
+}
+
+/** TheIntroDB's answer (lists of {start_ms, end_ms}) → seconds; 0/0 means "confirmed none". */
+export function parseSegments(body: unknown): Segments {
+  const b = (body ?? {}) as Record<string, { start_ms?: number | null; end_ms?: number | null }[] | undefined>;
+  const first = (k: string) => (Array.isArray(b[k]) ? b[k]![0] : undefined);
+  const out: Segments = {};
+  for (const k of ['intro', 'recap'] as const) {
+    const s = first(k);
+    // Intro/recap: the end is required, the start may be omitted (= from the beginning).
+    if (s && typeof s.end_ms === 'number' && s.end_ms > (s.start_ms ?? 0)) out[k] = { start: (s.start_ms ?? 0) / 1000, end: s.end_ms / 1000 };
+  }
+  const c = first('credits');
+  // Credits: the start is required, the end may be omitted (= to the end).
+  if (c && typeof c.start_ms === 'number' && c.start_ms > 0 && (c.end_ms == null || c.end_ms > c.start_ms)) {
+    out.credits = { start: c.start_ms / 1000, ...(typeof c.end_ms === 'number' ? { end: c.end_ms / 1000 } : {}) };
+  }
+  return out;
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 export async function handleApi(req: Request, env: Env, bindings: ApiBindings = {}): Promise<Response> {
@@ -599,6 +659,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/translate-ai' && req.method === 'POST') res = await translateAi(req, bindings);
       else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings, env);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
+      else if (path === '/api/segments' && get) res = await segments(url.searchParams, bindings);
       else res = err('Not found', 404);
     } catch (e) {
       res = err(describeError(e) || 'Internal error', 500);

@@ -87,7 +87,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
         <div className="gutter rise absolute inset-x-0 bottom-0 flex flex-col items-center pb-6 text-center md:items-start md:pb-10 md:text-left">
           <h1 className="max-w-3xl text-balance text-4xl font-extrabold leading-[1.03] tracking-tight text-white drop-shadow-lg md:text-6xl xl:max-w-4xl xl:text-7xl" dir="auto">{d.title}</h1>
           <p className="mt-3 flex flex-wrap items-center justify-center gap-x-2 text-[13px] font-medium text-white/70 md:justify-start">
-            {[details?.genres.slice(0, 2).join(' · '), d.year, details?.runtime ? `${details.runtime} min` : ''].filter(Boolean).join(' · ')}
+            {[details?.genres?.slice(0, 2).join(' · '), d.year, details?.runtime ? `${details.runtime} min` : ''].filter(Boolean).join(' · ')}
             {d.rating ? <span className="inline-flex items-center gap-1 text-white/90"><IconStar size={12} />{d.rating.toFixed(1)}</span> : null}
           </p>
           <div className="mt-5 w-full max-w-sm">
