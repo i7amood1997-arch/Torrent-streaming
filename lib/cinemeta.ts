@@ -86,8 +86,12 @@ export const cinemeta = {
     const item = meta && toItem(meta, type);
     if (!item) throw new Error('Title not found');
     const seasons = new Map<number, number>();
+    const today = new Date().toISOString().slice(0, 10);
+    let last: Video | undefined;
     for (const v of (meta.videos ?? []) as Video[]) {
       if (typeof v.season === 'number' && v.season > 0) seasons.set(v.season, (seasons.get(v.season) ?? 0) + 1);
+      const day = v.released?.slice(0, 10);
+      if (typeof v.season === 'number' && v.season > 0 && day && day <= today && (!last || day > last.released!.slice(0, 10) || (day === last.released!.slice(0, 10) && (v.season > last.season! || (v.season === last.season && (v.episode ?? 0) > (last.episode ?? 0)))))) last = v;
     }
     return {
       ...item,
@@ -96,6 +100,7 @@ export const cinemeta = {
       seasons: type === 'series'
         ? [...seasons.entries()].sort((a, b) => a[0] - b[0]).map(([seasonNumber, episodeCount]) => ({ seasonNumber, name: `Season ${seasonNumber}`, episodeCount }))
         : undefined,
+      lastAired: type === 'series' && last ? { season: last.season!, episode: last.episode ?? last.number ?? 0, name: last.name ?? last.title, airDate: last.released!.slice(0, 10), still: last.thumbnail ?? null } : undefined,
     };
   },
 

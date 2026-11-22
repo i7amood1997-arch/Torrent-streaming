@@ -44,16 +44,40 @@ export interface ApiBindings {
   USERDATA?: { idFromName(name: string): unknown; get(id: unknown): { fetch(req: Request): Promise<Response> } };
 }
 
-/** Pairing (/api/pair…) and sync (/api/sync/<key>): handed to the user's storage on the relay. */
+/** One action on the relay's user storage (a Durable Object per name). */
+export function userDataCall(ns: NonNullable<ApiBindings['USERDATA']>, name: string, op: string, body?: unknown): Promise<Response> {
+  return ns.get(ns.idFromName(name)).fetch(new Request('https://userdata.internal/', {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: { 'x-op': op, 'content-type': 'application/json' },
+    body: body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body),
+  }));
+}
+
+/** Pairing (/api/pair…), sync (/api/sync/<key>) and alerts (/api/push…): handed to the user's storage on the relay. */
 async function userStore(req: Request, path: string, bindings: ApiBindings): Promise<Response | undefined> {
   const pair = path.match(/^\/api\/pair(?:\/([A-Z0-9]{8}))?(\/take)?$/);
   const sync = path.match(/^\/api\/sync\/([a-f0-9]{32})$/);
-  if (!pair && !sync) return undefined;
+  const push = path.match(/^\/api\/push\/(key|[a-f0-9]{32})(?:\/(remove|test))?$/);
+  if (!pair && !sync && !push) return undefined;
   if (!bindings.USERDATA) return err('This relay has no storage for pairing or sync yet. Update it (redeploy).', 501);
+  const ns = bindings.USERDATA;
   const call = async (name: string, op: string, body?: string) => {
-    const ns = bindings.USERDATA!;
-    return ns.get(ns.idFromName(name)).fetch(new Request(req.url, { method: body == null ? 'GET' : 'POST', headers: { 'x-op': op, 'content-type': 'application/json' }, body }));
+    return userDataCall(ns, name, op, body);
   };
+  if (push) {
+    if (push[1] === 'key') return userDataCall(ns, 'push-index', 'vapid-get', { subject: new URL(req.url).origin });
+    if (req.method !== 'POST') return err('Not found', 404);
+    const key = push[1];
+    if (push[2] === 'test') {
+      const vapid = await (await userDataCall(ns, 'push-index', 'vapid-full', { subject: new URL(req.url).origin })).json();
+      return userDataCall(ns, `sync:${key}`, 'push-test', { vapid });
+    }
+    const body = await req.text();
+    const res = await userDataCall(ns, `sync:${key}`, push[2] === 'remove' ? 'push-unsub' : 'push-sub', body);
+    const out = (await res.json()) as { devices?: number; error?: string };
+    if (res.ok) await userDataCall(ns, 'push-index', push[2] === 'remove' && !out.devices ? 'index-remove' : 'index-add', { key });
+    return json(out, res.status);
+  }
   if (sync) return call(`sync:${sync[1]}`, req.method === 'POST' ? 'sync-merge' : 'sync-get', req.method === 'POST' ? await req.text() : undefined);
   const code = pair![1];
   if (!code) {
@@ -65,7 +89,9 @@ async function userStore(req: Request, path: string, bindings: ApiBindings): Pro
     const body = (await res.json()) as { expires?: number };
     return json({ code: newCode, secret, expires: body.expires });
   }
-  if (pair![2]) return call(`pair:${code}`, 'pair-take');
+  if (pair![2]) {
+    return ns.get(ns.idFromName(`pair:${code}`)).fetch(new Request(req.url, { headers: { 'x-op': 'pair-take' } }));
+  }
   return req.method === 'POST' ? call(`pair:${code}`, 'pair-send', await req.text()) : call(`pair:${code}`, 'pair-check');
 }
 
@@ -639,7 +665,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
   // <video> and media fetches can't send custom headers, so the token may also come as ?t=.
   const token = req.headers.get('x-access-token') ?? url.searchParams.get('t');
   // Pairing and sync carry their own secrets (a new TV doesn't know the access token yet).
-  const ownSecret = /^\/api\/(pair|sync)(\/|$)/.test(path);
+  const ownSecret = /^\/api\/(pair|sync|push)(\/|$)/.test(path);
   if (env.ACCESS_TOKEN && path !== '/api/config' && path !== '' && !ownSecret && token !== env.ACCESS_TOKEN) {
     res = err('Access token required — enter it in the app Settings.', 401);
   } else {

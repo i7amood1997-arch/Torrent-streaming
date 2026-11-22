@@ -139,6 +139,8 @@ export interface TmdbDetails extends TmdbItem {
   runtime?: number;
   genres: string[];
   seasons?: { seasonNumber: number; name: string; episodeCount: number }[];
+  /** Series: the latest episode that has aired (new-episode alerts). */
+  lastAired?: { season: number; episode: number; name?: string; airDate: string; still?: string | null };
 }
 
 export interface TmdbEpisode {

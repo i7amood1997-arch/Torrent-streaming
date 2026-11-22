@@ -3,7 +3,7 @@
  *  - /api/stream/*  built-in torrent streaming (Durable Object, worker/stream-do.ts)
  *  - everything else: lib/server/handlers.ts (search, TMDB, Debrid, subtitles)
  */
-import { handleApi, type ApiBindings, type Env } from '../lib/server/handlers';
+import { handleApi, userDataCall, type ApiBindings, type Env } from '../lib/server/handlers';
 import { TorrentStream } from './stream-do';
 import { UserData } from './user-do';
 import Anthropic from '@anthropic-ai/sdk';
@@ -19,7 +19,30 @@ interface Bindings {
 
 const CORS_HEADERS = 'content-type, x-access-token, range';
 
+/**
+ * Every few hours (wrangler.toml [triggers]): new-episode alerts for each household that turned
+ * them on. Each household's check runs in its own storage object.
+ */
+async function alerts(bindings: Bindings) {
+  const ns = bindings.USERDATA as ApiBindings['USERDATA'];
+  if (!ns) return;
+  const { keys } = (await (await userDataCall(ns, 'push-index', 'index-list')).json()) as { keys: string[] };
+  if (!keys?.length) return;
+  const vapid = await (await userDataCall(ns, 'push-index', 'vapid-full', {})).json();
+  const tmdbKey = typeof bindings.TMDB_API_KEY === 'string' ? bindings.TMDB_API_KEY : undefined;
+  for (const key of keys) {
+    try {
+      const r = (await (await userDataCall(ns, `sync:${key}`, 'push-run', { vapid, tmdbKey })).json()) as { devices?: number };
+      if (!r.devices) await userDataCall(ns, 'push-index', 'index-remove', { key });
+    } catch { /* next household */ }
+  }
+}
+
 export default {
+  async scheduled(_event: unknown, bindings: Bindings, ctx: { waitUntil(p: Promise<unknown>): void }): Promise<void> {
+    ctx.waitUntil(alerts(bindings));
+  },
+
   async fetch(request: Request, bindings: Bindings): Promise<Response> {
     // String-valued settings only; `STREAM_ENABLED` tells /api/config that streaming is available.
     const env: Env = {};

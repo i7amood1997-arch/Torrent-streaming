@@ -7,9 +7,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
-import type { TmdbItem } from '@/lib/types';
+import type { TmdbDetails, TmdbItem } from '@/lib/types';
 import { initialFocus, isTV } from '@/lib/tv';
 import { useWatchlist } from '@/lib/library';
+import { detailsId, followedSeries, newEpisode } from '@/lib/new-episodes';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
 export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: number; wide?: boolean }) {
@@ -161,6 +162,53 @@ function Hero({ items }: { items: TmdbItem[] }) {
   );
 }
 
+/** New Episodes: shows you follow (My List, or watching) with an episode out in the last two weeks you haven't seen. */
+function NewEpisodes() {
+  const syncState = useApp((s) => s.syncState);
+  const caps = useApp((s) => s.caps);
+  const open = useApp((s) => s.openDetail);
+  const [found, setFound] = useState<{ item: TmdbItem; ep: NonNullable<TmdbDetails['lastAired']> }[]>([]);
+  const followedKey = followedSeries(syncState).map((f) => `${f.tmdbId ?? f.imdbId}:${f.watched?.season}:${f.watched?.episode}`).join(',');
+  useEffect(() => {
+    if (!caps || caps.offline) return;
+    let live = true;
+    const tmdb = !!caps.tmdb;
+    (async () => {
+      const out: typeof found = [];
+      for (const f of followedSeries(useApp.getState().syncState, 15)) {
+        const id = detailsId(f, tmdb);
+        if (!id) continue;
+        const d = await api.tmdbDetails('series', id).catch(() => undefined);
+        const ep = d && newEpisode(f, d);
+        if (d && ep) out.push({ item: { ...d, id, type: 'series', source: tmdb ? 'tmdb' : 'cinemeta' }, ep });
+      }
+      if (live) setFound(out);
+    })();
+    return () => { live = false; };
+  }, [followedKey, caps]); // eslint-disable-line react-hooks/exhaustive-deps
+  if (!found.length) return null;
+  return (
+    <section className="space-y-1">
+      <ShelfTitle>New Episodes</ShelfTitle>
+      <Shelf>
+        {found.map(({ item, ep }) => (
+          <button key={item.id} className="group w-60 text-left outline-none md:w-72 xl:w-80" onClick={() => open(item, { season: ep.season, episode: ep.episode })} aria-label={`${item.title}, new episode ${ep.season}×${ep.episode}`}>
+            <span className="lift relative block aspect-video overflow-hidden rounded-xl bg-ink-800">
+              {(ep.still || item.backdropPath) && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img decoding="async" src={posterUrl(ep.still || item.backdropPath, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
+              )}
+              <span className="absolute left-2.5 top-2.5 rounded-full bg-[#4ba3ff] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">New</span>
+            </span>
+            <span className="mt-2 block truncate text-[13px] font-medium text-ink-200" dir="auto">{item.title}</span>
+            <span className="block truncate text-[11px] text-ink-400" dir="auto">S{ep.season} · E{ep.episode}{ep.name ? ` · ${ep.name}` : ''}</span>
+          </button>
+        ))}
+      </Shelf>
+    </section>
+  );
+}
+
 /** My List: titles saved with + on their page (shared with the user's other devices). */
 function MyList() {
   const items = useWatchlist();
@@ -249,6 +297,7 @@ export function Home({ active }: { active: boolean }) {
     <div className="space-y-7 pb-10">
       <Hero items={featured} />
       <ContinueWatching />
+      <NewEpisodes />
       <MyList />
       <section className="space-y-1">
         <ShelfTitle>Top 10 This Week</ShelfTitle>

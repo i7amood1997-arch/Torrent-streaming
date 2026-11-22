@@ -102,7 +102,9 @@ interface AppState {
   nowPlaying?: PlayRequest;
   /** Title page shown over the current view. */
   detail?: TmdbItem;
-  openDetail: (item: TmdbItem) => void;
+  /** Open the title page at this episode (e.g. from New Episodes). */
+  detailStart?: { season: number; episode: number };
+  openDetail: (item: TmdbItem, start?: { season: number; episode: number }) => void;
   closeDetail: () => void;
   /** Recently played, newest first (Continue Watching). */
   history: Omit<PlayRequest, 'nonce'>[];
@@ -189,7 +191,7 @@ export const useApp = create<AppState>()(
         set({ history: get().history.filter((_, i) => i !== index) });
         if (gone) get().touch('history', historyKey(gone), undefined);
       },
-      openDetail: (detail) => set(get().view === 'player' ? { detail, view: get().listView } : { detail }),
+      openDetail: (detail, detailStart) => set(get().view === 'player' ? { detail, detailStart, view: get().listView } : { detail, detailStart }),
       closeDetail: () => set({ detail: undefined }),
       setView: (view) => set(view === 'player' ? { view } : { view, listView: view, detail: get().view === 'player' ? get().detail : undefined }),
       setMode: (mode) => set({ mode }),

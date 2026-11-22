@@ -29,6 +29,17 @@ const NAV: { id: Exclude<View, 'player'>; label: string; icon: ReactNode }[] = [
   { id: 'settings', label: 'Settings', icon: <IconGearFill size={27} /> },
 ];
 
+/** Opened from a new-episode alert: ?open=series:t<TMDB id>|i<IMDb id>:<season>:<episode> → that episode's page. */
+function openFromAlert() {
+  const open = new URLSearchParams(location.search).get('open')?.match(/^series:(t(\d+)|i(tt\d+)):(\d+):(\d+)$/);
+  if (!open) return;
+  const tmdbId = open[2] ? Number(open[2]) : undefined;
+  const imdbId = open[3];
+  const id = tmdbId ?? Number(imdbId!.slice(2));
+  useApp.getState().openDetail({ id, type: 'series', title: '', overview: '', imdbId, source: tmdbId ? 'tmdb' : 'cinemeta' }, { season: Number(open[4]), episode: Number(open[5]) });
+  history.replaceState(null, '', location.pathname + location.hash);
+}
+
 export default function App() {
   const { view, listView, setView, nowPlaying, detail } = useApp();
   const apiBaseSetting = useApp((s) => s.settings.apiBase);
@@ -43,6 +54,7 @@ export default function App() {
     const q = new URLSearchParams(location.search);
     const code = q.get('pair');
     if (code) setPairing({ code: code.toUpperCase(), relay: q.get('relay') ?? undefined });
+
   }, []);
   const closePairing = () => {
     setPairing(undefined);
@@ -82,7 +94,11 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    Promise.resolve(useApp.persist.rehydrate()).then(() => { setHydrated(true); startSync(); });
+    Promise.resolve(useApp.persist.rehydrate()).then(() => {
+      setHydrated(true);
+      startSync();
+      openFromAlert(); // after settings load: the title page needs the relay address
+    });
     if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register(asset('/sw.js'), { scope: `${BASE_PATH}/` }).catch(() => undefined);
     }

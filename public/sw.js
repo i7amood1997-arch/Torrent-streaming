@@ -2,11 +2,12 @@
  * 1. WebTorrent stream proxy: serves <scope>webtorrent/<infoHash>/<file> from the
  *    in-page WebTorrent client (registered first so it can respondWith those URLs).
  * 2. App-shell caching for offline launch / fast PWA start.
+ * 3. New-episode alerts: shows the relay's push messages; tapping one opens the show.
  */
 importScripts('vendor/webtorrent/sw.min.js'); // resolved relative to this script
 
 const SCOPE = new URL(self.registration.scope).pathname; // e.g. "/Torrent-streaming/"
-const SHELL_CACHE = 'streamdeck-shell-v7';
+const SHELL_CACHE = 'streamdeck-shell-v8';
 const SHELL = ['', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-192.png'].map((p) => SCOPE + p);
 
 self.addEventListener('install', (event) => {
@@ -57,4 +58,32 @@ self.addEventListener('fetch', (event) => {
         .catch(() => caches.match(SCOPE).then((r) => r || Response.error())),
     );
   }
+});
+
+self.addEventListener('push', (event) => {
+  let m = {};
+  try { m = event.data ? event.data.json() : {}; } catch (e) { m = { title: 'Streamdeck', body: event.data ? event.data.text() : '' }; }
+  event.waitUntil(self.registration.showNotification(m.title || 'Streamdeck', {
+    body: m.body || '',
+    tag: m.tag || undefined,
+    icon: SCOPE + 'icons/icon-192.png',
+    badge: SCOPE + 'icons/icon-192.png',
+    data: { url: m.url || SCOPE },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || SCOPE;
+  event.waitUntil((async () => {
+    // Reuse an open window of the app when there is one.
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const w of wins) {
+      if (new URL(w.url).pathname.startsWith(SCOPE) && 'navigate' in w) {
+        await w.focus();
+        return w.navigate(target);
+      }
+    }
+    return self.clients.openWindow(target);
+  })());
 });

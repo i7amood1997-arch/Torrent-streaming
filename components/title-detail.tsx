@@ -52,7 +52,10 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
     setDetails(undefined); setSeason(undefined); setEpisodes([]); setEpisode(undefined); setError(undefined); setMore(false);
     api.tmdbDetails(item.type, item.id).then((d) => {
       setDetails(d);
-      if (d.type === 'series') setSeason(d.seasons?.[0]?.seasonNumber ?? 1);
+      if (d.type === 'series') {
+        const start = useApp.getState().detailStart;
+        setSeason(start && d.seasons?.some((x) => x.seasonNumber === start.season) ? start.season : d.seasons?.[0]?.seasonNumber ?? 1);
+      }
     }).catch((e) => setError(e.message));
   }, [item]);
 
@@ -60,7 +63,12 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
     if (item.type !== 'series' || season == null) return;
     setEpisodes([]);
     setEpisode(undefined);
-    api.tmdbSeason(item.id, season).then((r) => { const eps = r?.episodes ?? []; setEpisodes(eps); setEpisode(eps[0]?.episodeNumber); }).catch((e) => setError(e.message));
+    api.tmdbSeason(item.id, season).then((r) => {
+      const eps = r?.episodes ?? [];
+      setEpisodes(eps);
+      const start = useApp.getState().detailStart;
+      setEpisode(start?.season === season && eps.some((e) => e.episodeNumber === start.episode) ? start.episode : eps[0]?.episodeNumber);
+    }).catch((e) => setError(e.message));
   }, [item, season]);
 
   // TV: start on Play if a stream is already found, else on Back until it is (FocusPlay moves it).

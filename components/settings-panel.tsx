@@ -11,6 +11,7 @@ import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
 import { isTV } from '@/lib/tv';
 import { lastSync, syncSoon } from '@/lib/sync-client';
+import { alertState, disableAlerts, enableAlerts, testAlert, type AlertState } from '@/lib/alerts';
 import { SYNC_KEY } from '@/lib/sync';
 import { PairSheet } from './pair-sheet';
 import { Disclosure, Row, Section, Segmented, Switch } from './ui';
@@ -49,6 +50,41 @@ function KeyField({ label, hint, value, onChange }: { label: string; hint?: Reac
       <input type="password" autoComplete="off" spellCheck={false} className="input mt-2 font-mono text-xs" value={value} onChange={(e) => onChange(e.target.value.trim())} />
       {hint && <span className="mt-1.5 block text-xs text-ink-400">{hint}</span>}
     </label>
+  );
+}
+
+/** New-episode alerts (phones, tablets, computers): a switch, and a test notification. */
+function AlertsSection() {
+  const caps = useApp((s) => s.caps);
+  const [state, setState] = useState<AlertState>();
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string>();
+  useEffect(() => { alertState().then(setState).catch(() => setState('unsupported')); }, []);
+  if (!state || state === 'unsupported') return null;
+  const relayOk = !!caps?.sync && !caps.offline;
+  const flip = async (on: boolean) => {
+    setBusy(true); setMsg(undefined);
+    try {
+      if (on) { await enableAlerts(); setMsg('On. You’ll hear about new episodes of the shows in My List and the ones you’re watching.'); }
+      else await disableAlerts();
+    } catch (e) { setMsg((e as Error).message); }
+    setState(await alertState().catch(() => 'off' as const));
+    setBusy(false);
+  };
+  const hint = state === 'needs-home-screen' ? 'On iPhone and iPad: add Streamdeck to your Home Screen (Share → Add to Home Screen), open it from there, then turn this on.'
+    : state === 'blocked' ? 'Notifications are blocked for this app. Allow them in your device’s settings, then come back.'
+    : !relayOk ? 'Needs your relay, updated to the latest version.' : 'A notification when a show you follow has a new episode (checked every few hours by your relay).';
+  return (
+    <Section title="New-episode alerts" footer={msg ?? hint}>
+      <Row label="Notify me">
+        <Switch checked={state === 'on'} disabled={busy || !relayOk || state === 'needs-home-screen' || state === 'blocked'} onChange={flip} label="New-episode alerts" />
+      </Row>
+      {state === 'on' && (
+        <Row label="Send a test" onClick={() => { setMsg(undefined); testAlert().then((r) => setMsg(r.sent ? 'Sent. It should appear in a moment.' : 'Couldn’t reach this device. Turn alerts off and on again.')).catch((e) => setMsg(e.message)); }}>
+          <span className="text-xs text-accent">Test</span>
+        </Row>
+      )}
+    </Section>
   );
 }
 
@@ -168,6 +204,7 @@ export function SettingsPanel() {
       </Disclosure>
 
       <SyncSection />
+      {!tv && <AlertsSection />}
       {tv && (
         <Section footer="Shows a code to scan with your phone, which sends its settings here.">
           <Row label="Set up from your phone" onClick={() => setTvSetupDone(false)}><span className="text-xs text-accent">Open</span></Row>

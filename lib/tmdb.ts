@@ -66,6 +66,9 @@ export function createTmdbClient({ apiKey, language = 'en-US' }: TmdbClientOptio
         seasons: d.seasons
           ?.filter((s: any) => s.season_number > 0)
           .map((s: any) => ({ seasonNumber: s.season_number, name: s.name, episodeCount: s.episode_count })),
+        lastAired: d.last_episode_to_air?.air_date && d.last_episode_to_air.season_number > 0
+          ? { season: d.last_episode_to_air.season_number, episode: d.last_episode_to_air.episode_number, name: d.last_episode_to_air.name, airDate: d.last_episode_to_air.air_date, still: d.last_episode_to_air.still_path }
+          : undefined,
       };
     },
 

@@ -28,6 +28,10 @@ binding = "AI"
 name = "USERDATA"
 class_name = "UserData"
 
+# New-episode alerts: checked every 6 hours (worker/index.ts scheduled).
+[triggers]
+crons = ["23 */6 * * *"]
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TorrentStream"]
