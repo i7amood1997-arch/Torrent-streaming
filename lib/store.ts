@@ -210,7 +210,9 @@ export const useApp = create<AppState>()(
       syncState: emptyState(),
       touch: (c, key, v) => {
         const cur = get().syncState;
-        set({ syncState: { ...cur, [c]: { ...cur[c], [key]: v === undefined ? { at: Date.now() } : { at: Date.now(), v } } } });
+        // Always later than the version it replaces, even within the same millisecond.
+        const at = Math.max(Date.now(), (cur[c][key]?.at ?? 0) + 1);
+        set({ syncState: { ...cur, [c]: { ...cur[c], [key]: v === undefined ? { at } : { at, v } } } });
       },
       applyRemote: (remote) => {
         const merged = mergeState(get().syncState, remote);
