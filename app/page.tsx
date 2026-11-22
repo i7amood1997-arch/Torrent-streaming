@@ -18,6 +18,7 @@ import { VideoPlayer } from '@/components/VideoPlayer';
 import { api } from '@/lib/client-api';
 import { asset, BASE_PATH } from '@/lib/config';
 import { startLiquidGlass } from '@/lib/liquid-glass';
+import { startSync } from '@/lib/sync-client';
 import { useApp, type View } from '@/lib/store';
 import { initialFocus, isTV, onTvBack, popFocus, pushFocus, startTvMode } from '@/lib/tv';
 
@@ -73,7 +74,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    Promise.resolve(useApp.persist.rehydrate()).then(() => setHydrated(true));
+    Promise.resolve(useApp.persist.rehydrate()).then(() => { setHydrated(true); startSync(); });
     if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
       navigator.serviceWorker.register(asset('/sw.js'), { scope: `${BASE_PATH}/` }).catch(() => undefined);
     }

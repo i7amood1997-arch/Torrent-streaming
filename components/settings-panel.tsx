@@ -10,6 +10,8 @@ import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
 import { isTV } from '@/lib/tv';
+import { lastSync, syncSoon } from '@/lib/sync-client';
+import { SYNC_KEY } from '@/lib/sync';
 import { PairSheet } from './pair-sheet';
 import { Disclosure, Row, Section, Segmented, Switch } from './ui';
 
@@ -47,6 +49,41 @@ function KeyField({ label, hint, value, onChange }: { label: string; hint?: Reac
       <input type="password" autoComplete="off" spellCheck={false} className="input mt-2 font-mono text-xs" value={value} onChange={(e) => onChange(e.target.value.trim())} />
       {hint && <span className="mt-1.5 block text-xs text-ink-400">{hint}</span>}
     </label>
+  );
+}
+
+/** Sync between devices: status, the shared key, and taking another device's key. */
+function SyncSection() {
+  const { settings, updateSettings, caps } = useApp();
+  const [draft, setDraft] = useState<string>();
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((x) => x + 1), 3000); return () => clearInterval(t); }, []);
+  const state = !caps || caps.direct ? { text: 'Needs a relay', tone: 'bg-ink-700 text-ink-400' }
+    : caps.offline ? { text: 'Relay not reachable', tone: 'bg-red-500/15 text-red-300' }
+    : !caps.sync ? { text: 'Update your relay', tone: 'bg-ink-700 text-ink-400' }
+    : lastSync && !lastSync.ok ? { text: 'Not syncing', tone: 'bg-red-500/15 text-red-300' }
+    : { text: lastSync ? 'On' : 'Starting', tone: 'bg-hd/15 text-hd' };
+  const value = draft ?? settings.syncKey;
+  const valid = SYNC_KEY.test(value);
+  return (
+    <Section title="Sync between devices" footer="My List, Continue Watching, where you stopped and each show’s subtitle choices follow you to every device with the same sync key. Setting up a TV from your phone gives it this key; on another phone, tablet or computer, paste it below.">
+      <Row label="Status"><span className={`rounded-md px-2 py-0.5 text-xs font-semibold ${state.tone}`}>{state.text}</span></Row>
+      <label className="block px-4 py-3">
+        <span className="block text-sm text-ink-200">Sync key</span>
+        <span className="mt-2 flex gap-2">
+          <input className="input flex-1 font-mono text-xs" spellCheck={false} autoComplete="off" value={value} placeholder="Made automatically once your relay is connected"
+            onChange={(e) => setDraft(e.target.value.trim().toLowerCase())} aria-label="Sync key" />
+          {draft != null && draft !== settings.syncKey ? (
+            <button type="button" className="btn-primary rounded-full px-4" disabled={!valid} onClick={() => { updateSettings({ syncKey: draft }); setDraft(undefined); syncSoon(); }}>Use</button>
+          ) : (
+            <button type="button" className="btn-glass rounded-full px-4" disabled={!settings.syncKey} onClick={() => navigator.clipboard?.writeText(settings.syncKey).catch(() => undefined)}>Copy</button>
+          )}
+        </span>
+        {draft != null && draft !== settings.syncKey && !valid && <span className="mt-1.5 block text-xs text-red-300/90">A sync key is 32 letters and digits (0–9, a–f).</span>}
+        {lastSync?.error && <span className="mt-1.5 block text-xs text-red-300/90">{lastSync.error}</span>}
+      </label>
+      <Row label="Sync now" onClick={() => syncSoon()}><span className="text-xs text-accent">Sync</span></Row>
+    </Section>
   );
 }
 
@@ -130,6 +167,7 @@ export function SettingsPanel() {
         </div>
       </Disclosure>
 
+      <SyncSection />
       {tv && (
         <Section footer="Shows a code to scan with your phone, which sends its settings here.">
           <Row label="Set up from your phone" onClick={() => setTvSetupDone(false)}><span className="text-xs text-accent">Open</span></Row>

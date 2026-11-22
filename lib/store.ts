@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { unlockAudio } from './audio-tap';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { DebridProvider, MediaType, TmdbItem, TorrentResult } from './types';
+import { emptyState, mergeState, values, type SyncCollection, type SyncState } from './sync';
 
 export type View = 'discover' | 'search' | 'player' | 'settings';
 export type SearchMode = 'catalog' | 'torrent';
@@ -116,6 +117,15 @@ interface AppState {
   updateSettings: (p: Partial<Settings>) => void;
   updateSubtitleStyle: (p: Partial<SubtitleStyle>) => void;
   setCaps: (c: ServerCaps) => void;
+  /**
+   * What this device shares with the user's other devices (lib/sync.ts): watchlist, history,
+   * per-series settings, playback positions. Changes go through `touch`; lib/sync-client.ts
+   * merges it with the relay.
+   */
+  syncState: SyncState;
+  touch: (c: SyncCollection, key: string, v: unknown) => void;
+  /** Take in the state merged on the relay (keeps anything changed here meanwhile). */
+  applyRemote: (s: SyncState) => void;
   /** TV app: the first-run screen (set up from your phone) was finished or skipped. */
   tvSetupDone: boolean;
   setTvSetupDone: (v: boolean) => void;
@@ -174,7 +184,11 @@ export const useApp = create<AppState>()(
       submittedQuery: '',
       settings: DEFAULT_SETTINGS,
       history: [],
-      forget: (index) => set({ history: get().history.filter((_, i) => i !== index) }),
+      forget: (index) => {
+        const gone = get().history[index];
+        set({ history: get().history.filter((_, i) => i !== index) });
+        if (gone) get().touch('history', historyKey(gone), undefined);
+      },
       openDetail: (detail) => set(get().view === 'player' ? { detail, view: get().listView } : { detail }),
       closeDetail: () => set({ detail: undefined }),
       setView: (view) => set(view === 'player' ? { view } : { view, listView: view, detail: get().view === 'player' ? get().detail : undefined }),
@@ -188,10 +202,21 @@ export const useApp = create<AppState>()(
         unlockAudio(); // called from a tap: lets subtitle auto-sync listen to the audio later
         const same = (h: Omit<PlayRequest, 'nonce'>) => (r.imdbId ? h.imdbId === r.imdbId && h.season === r.season && h.episode === r.episode : (h.result?.id ?? h.url) === (r.result?.id ?? r.url));
         set({ nowPlaying: { ...r, nonce: Date.now() }, view: 'player', history: [r, ...get().history.filter((h) => !same(h))].slice(0, 12) });
+        get().touch('history', historyKey(r), r);
       },
       updateSettings: (p) => set({ settings: { ...get().settings, ...p } }),
       updateSubtitleStyle: (p) => set({ settings: { ...get().settings, subtitle: { ...get().settings.subtitle, ...p } } }),
       setCaps: (caps) => set({ caps }),
+      syncState: emptyState(),
+      touch: (c, key, v) => {
+        const cur = get().syncState;
+        set({ syncState: { ...cur, [c]: { ...cur[c], [key]: v === undefined ? { at: Date.now() } : { at: Date.now(), v } } } });
+      },
+      applyRemote: (remote) => {
+        const merged = mergeState(get().syncState, remote);
+        const history = values<Omit<PlayRequest, 'nonce'>>(merged, 'history').slice(0, 12).map((x) => x.v);
+        set({ syncState: merged, history });
+      },
       tvSetupDone: false,
       setTvSetupDone: (tvSetupDone) => set({ tvSetupDone }),
     }),
@@ -219,10 +244,11 @@ export const useApp = create<AppState>()(
       },
       skipHydration: true, // rehydrated in a client effect to avoid SSR mismatch
       storage: createJSONStorage(safeStorage),
-      partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history, tvSetupDone: s.tvSetupDone }),
+      partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history, tvSetupDone: s.tvSetupDone, syncState: s.syncState }),
       merge: (persisted: any, current) => ({
         ...current,
         ...persisted,
+        syncState: mergeState(emptyState(), persisted?.syncState),
         settings: {
           ...DEFAULT_SETTINGS,
           ...persisted?.settings,
@@ -233,6 +259,17 @@ export const useApp = create<AppState>()(
     },
   ),
 );
+
+/**
+ * Which title (and episode) a play request is, the same on every device whatever file it
+ * plays: Continue Watching and resume positions are kept under this.
+ */
+export function historyKey(r: Pick<PlayRequest, 'tmdbId' | 'imdbId' | 'type' | 'season' | 'episode' | 'url'> & { result?: { id: string } }): string {
+  const ep = r.season != null ? `:${r.season}:${r.episode ?? 0}` : '';
+  if (r.tmdbId) return `${r.type ?? 'movie'}:${r.tmdbId}${ep}`;
+  if (r.imdbId) return `imdb:${r.imdbId}${ep}`;
+  return `src:${r.result?.id ?? r.url ?? ''}`;
+}
 
 /** True when a torrent will stream through the user's relay (same choice the player makes). */
 export function usesRelayStreaming(s: Settings, caps?: ServerCaps): boolean {

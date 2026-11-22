@@ -9,6 +9,7 @@ import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbItem } from '@/lib/types';
 import { initialFocus, isTV } from '@/lib/tv';
+import { useWatchlist } from '@/lib/library';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
 export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: number; wide?: boolean }) {
@@ -160,6 +161,18 @@ function Hero({ items }: { items: TmdbItem[] }) {
   );
 }
 
+/** My List: titles saved with + on their page (shared with the user's other devices). */
+function MyList() {
+  const items = useWatchlist();
+  if (!items.length) return null;
+  return (
+    <section className="space-y-1">
+      <ShelfTitle>My List</ShelfTitle>
+      <Shelf>{items.map((it) => <Poster key={`${it.type}-${it.id}`} item={it} />)}</Shelf>
+    </section>
+  );
+}
+
 function ContinueWatching() {
   const history = useApp((s) => s.history) ?? [];
   const play = useApp((s) => s.play);
@@ -236,6 +249,7 @@ export function Home({ active }: { active: boolean }) {
     <div className="space-y-7 pb-10">
       <Hero items={featured} />
       <ContinueWatching />
+      <MyList />
       <section className="space-y-1">
         <ShelfTitle>Top 10 This Week</ShelfTitle>
         <Shelf className="!gap-1">{items.length ? items.slice(0, 10).map((it, i) => <Poster key={`${it.type}-${it.id}`} item={it} numeral={i + 1} />) : <Skeleton />}</Shelf>

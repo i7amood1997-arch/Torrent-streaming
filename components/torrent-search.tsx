@@ -15,6 +15,7 @@ import { searchProgressive } from '@/lib/search-progressive';
 import { formatBytes, qualityLabel } from '@/lib/release-parser';
 import { applyFilters, countByQuality, DEFAULT_FILTERS, pickBest, rankResults, type ResultFilters, type SortKey } from '@/lib/result-filters';
 import { audioPlayable, canPlayMkv } from '@/lib/platform';
+import { seriesPrefs } from '@/lib/library';
 import { hasDebrid, useApp, usesRelayStreaming } from '@/lib/store';
 import type { IndexerError, MediaType, QualityTier, TorrentResult } from '@/lib/types';
 import { IconCopy, IconFilter, IconLeech, IconPlay, IconSeed } from './icons';
@@ -139,7 +140,8 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
     }, loading ? 2500 : 800);
     return () => { clearTimeout(t); ac.abort(); };
   }, [renderHeader, usesDebrid, loading, results]); // eslint-disable-line react-hooks/exhaustive-deps
-  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable, cache }) : undefined), [results, debrid, renderHeader, cache]);
+  const preferQuality = context?.type === 'series' ? seriesPrefs(context.tmdbId)?.quality : undefined;
+  const best = useMemo(() => (renderHeader ? pickBest(results, { debrid, preferMp4: !canPlayMkv(), audioOk: audioPlayable, cache, preferQuality }) : undefined), [results, debrid, renderHeader, cache, preferQuality]);
 
   // Title page, streaming through the relay: open the torrent there now, so peers are connected and
   // the start of the file is downloading before Play is pressed (the relay drops it if unused).

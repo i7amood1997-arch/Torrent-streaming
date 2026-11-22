@@ -54,6 +54,8 @@ export interface PickOptions {
   audioOk?: (audio: string[] | undefined) => boolean;
   /** Debrid cache check by result id: 'instant' starts at once, 'not' has to be fetched first. */
   cache?: Record<string, 'instant' | 'not' | 'unknown'>;
+  /** The quality played last for this series: its next episode leans the same way. */
+  preferQuality?: string;
 }
 
 export function pickBest(results: TorrentResult[], opts: PickOptions = {}): TorrentResult | undefined {
@@ -74,7 +76,8 @@ export function rankResults(results: TorrentResult[], opts: PickOptions = {}): T
       (r.remux ? 0.8 : 0) - // huge files
       ((r.sizeBytes ?? 0) > 25e9 ? 0.6 : 0) +
       // Ready on the debrid service: starts at once (a level of quality is worth less than that).
-      (opts.cache?.[r.id] === 'instant' ? 2.5 : opts.cache?.[r.id] === 'not' ? -1.5 : 0)
+      (opts.cache?.[r.id] === 'instant' ? 2.5 : opts.cache?.[r.id] === 'not' ? -1.5 : 0) +
+      (opts.preferQuality && r.quality === opts.preferQuality ? 1.1 : 0)
     );
   };
   return applyFilters(results, DEFAULT_FILTERS).map((r) => ({ r, s: score(r) })).sort((a, b) => b.s - a.s).map((x) => x.r);

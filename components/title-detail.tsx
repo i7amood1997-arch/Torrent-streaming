@@ -12,7 +12,8 @@ import { posterUrl } from '@/lib/tmdb';
 import type { TmdbDetails, TmdbEpisode, TmdbItem, TorrentResult } from '@/lib/types';
 import { initialFocus } from '@/lib/tv';
 import { Shelf } from './home';
-import { IconBack, IconPlay, IconStar } from './icons';
+import { toggleWatchlist, useInWatchlist } from '@/lib/library';
+import { IconBack, IconCheck, IconPlay, IconPlus, IconStar } from './icons';
 import { TorrentSearch } from './torrent-search';
 
 /** TV: once the Play button works, move focus to it (unless the viewer already moved on). */
@@ -23,6 +24,17 @@ function FocusPlay({ ready }: { ready: boolean }) {
     if (!el || el === document.body || el.hasAttribute('data-tv-back')) initialFocus('[data-tv-play]', true);
   }, [ready]);
   return null;
+}
+
+/** Add to / remove from My List (synced to the user's other devices). */
+function WatchlistButton({ item }: { item: TmdbItem }) {
+  const on = useInWatchlist(item);
+  return (
+    <button className="glass-btn grid h-12 w-12 shrink-0 place-items-center rounded-full text-white" onClick={() => toggleWatchlist(item)}
+      aria-pressed={on} aria-label={on ? 'Remove from My List' : 'Add to My List'} title={on ? 'In My List' : 'Add to My List'}>
+      {on ? <IconCheck size={22} strokeWidth={2.6} /> : <IconPlus size={22} strokeWidth={2.4} />}
+    </button>
+  );
 }
 
 interface StreamState { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number; instant?: boolean }
@@ -80,10 +92,13 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
           </p>
           <div className="mt-5 w-full max-w-sm">
             <FocusPlay ready={!!stream?.best} />
-            <button data-tv-play data-tv-start className="btn-primary h-12 min-w-[10.5rem] rounded-full px-8 text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
-              onClick={() => stream?.best && stream.play(stream.best)}>
-              {stream?.best ? <><IconPlay size={18} /> Play{tag ? ` ${tag}` : ''}</> : !ready || !stream || stream.loading ? <span className="animate-pulse">Finding streams…</span> : 'No streams found'}
-            </button>
+            <div className="flex items-center justify-center gap-3 md:justify-start">
+              <button data-tv-play data-tv-start className="btn-primary h-12 min-w-[10.5rem] rounded-full px-8 text-[17px] disabled:bg-white/25 disabled:text-white/70 disabled:opacity-100" disabled={!stream?.best}
+                onClick={() => stream?.best && stream.play(stream.best)}>
+                {stream?.best ? <><IconPlay size={18} /> Play{tag ? ` ${tag}` : ''}</> : !ready || !stream || stream.loading ? <span className="animate-pulse">Finding streams…</span> : 'No streams found'}
+              </button>
+              <WatchlistButton item={item} />
+            </div>
             {stream?.best && (
               <p className="mt-2 text-[11px] text-white/55">
                 {[stream.best.quality !== 'Unknown' ? stream.best.quality : '', formatBytes(stream.best.sizeBytes), stream.best.url ? 'direct link' : stream.instant ? '⚡ Instant on Real-Debrid' : `${stream.best.seeders} seeders`].filter(Boolean).join(' · ')}

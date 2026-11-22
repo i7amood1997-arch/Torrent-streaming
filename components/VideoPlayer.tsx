@@ -26,6 +26,7 @@ import { debridStalled, type DebridProgress } from '@/lib/debrid-wait';
 import { deadLinkMessage } from '@/lib/playback-errors';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
+import { applySeriesPrefs, rememberSeries, resumePosition, savePosition } from '@/lib/library';
 import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
 import { openAudioSource } from '@/lib/speech/audio-source';
@@ -65,7 +66,6 @@ const fmtTime = (s: number) => {
   return h ? `${h}:${m.toString().padStart(2, '0')}:${sec}` : `${m}:${sec}`;
 };
 
-const resumeKey = (id: string) => `resume:${id}`;
 
 /** Links to the playing file that page code can read with Range requests (direct, alternate, relay copy). */
 function readableUrls(source: Source): string[] | undefined {
@@ -104,6 +104,19 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const view = useApp((s) => s.view);
   const settings = useApp((s) => s.settings);
   const caps = useApp((s) => s.caps);
+
+  // Per series: its subtitle choices come back on the next episode; changes and the quality played are remembered.
+  const reqNonce = req?.nonce;
+  useEffect(() => {
+    if (!req) return;
+    applySeriesPrefs(req);
+    if (req.type === 'series' && req.result?.quality && req.result.quality !== 'Unknown') rememberSeries(req.tmdbId, { quality: req.result.quality });
+  }, [reqNonce]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (req?.type !== 'series') return;
+    const sub = useApp.getState().settings.subtitle; // as just applied above, not this render's copy
+    rememberSeries(req.tmdbId, { lang: sub.primaryLang, dual: sub.dual });
+  }, [settings.subtitle.primaryLang, settings.subtitle.dual, reqNonce]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -498,7 +511,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     let live = true;
     const offs = [
       on('play', () => { setPlaying(true); nativeTV()?.setKeepScreenOn(true); }),
-      on('pause', () => { setPlaying(false); nativeTV()?.setKeepScreenOn(false); }),
+      on('pause', () => { setPlaying(false); nativeTV()?.setKeepScreenOn(false); if (req && v.currentTime > 1) savePosition(req, resumeId, v.currentTime, v.duration, true); }),
       on('waiting', () => setWaiting(true)),
       on('playing', () => setWaiting(false)),
       on('canplay', () => setWaiting(false)),
@@ -507,19 +520,18 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       on('loadedmetadata', () => {
         setDuration(v.duration);
         if (!resumeId) return;
-        try {
-          const saved = Number(localStorage.getItem(resumeKey(resumeId)));
-          if (saved > 30 && saved < v.duration - 60) v.currentTime = saved;
-        } catch { /* storage blocked */ }
+        // Where you stopped, on this device or another one.
+        const saved = req ? resumePosition(req, resumeId) : 0;
+        if (saved > 30 && saved < v.duration - 60) v.currentTime = saved;
       }),
       on('timeupdate', () => {
         setTime(v.currentTime);
         genRef.current?.setTime(v.currentTime);
         setSubtitlePlayhead(v.currentTime);
         if (v.buffered.length) setBuffered(v.buffered.end(v.buffered.length - 1));
-        if (resumeId && Math.abs(v.currentTime - lastSave) > 5) {
+        if (req && Math.abs(v.currentTime - lastSave) > 5) {
           lastSave = v.currentTime;
-          try { localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
+          savePosition(req, resumeId, v.currentTime, v.duration);
         }
       }),
       on('error', () => {
@@ -556,7 +568,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
         }
       }),
     ];
-    return () => { live = false; offs.forEach((f) => f()); };
+    return () => {
+      live = false;
+      offs.forEach((f) => f());
+      // Leaving the video (closed, or another one started): keep the place for every device.
+      if (req && v.currentTime > 1) savePosition(req, resumeId, v.currentTime, v.duration, true);
+    };
   }, [resumeId, source]);
 
   // ── Silent video: the browser plays the picture but can't decode the audio (Dolby/DTS in Chrome/Firefox) ──
@@ -573,14 +590,14 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       if (!silent) return;
       if (isMkv && mkvAudioConvertSupported() && source.engine !== 'webtor' && source.engine !== 'webtorrent') {
         // Convert the audio in the page and continue from here.
-        try { if (resumeId) localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
+        if (req) savePosition(req, resumeId, v.currentTime, v.duration, true);
         setStatus('Converting this file’s audio for this browser…');
         const viaRelay = source.engine !== 'cloud' && !source.url.includes('/api/proxy') ? api.proxyUrl(source.url) : undefined;
         if (isTapped(v)) setVideoKey((k) => k + 1);
         setSource({ ...source, alt: source.alt && !isHlsUrl(source.alt) ? source.alt : viaRelay, remux: true });
       } else if (source.alt && isHlsUrl(source.alt)) {
         // Same video from the Debrid service, transcoded with AAC audio: continue from here.
-        try { if (resumeId) localStorage.setItem(resumeKey(resumeId), String(Math.floor(v.currentTime))); } catch { /* ignore */ }
+        if (req) savePosition(req, resumeId, v.currentTime, v.duration, true);
         setStatus('This file’s audio doesn’t play in this browser; switching to a version that does…');
         setSource({ ...source, url: source.alt, alt: source.url, mime: 'application/vnd.apple.mpegurl' });
       } else {
@@ -752,7 +769,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
       return [{ lang: l, label: l === 'ar' ? 'العربية' : 'English', vtt: toVtt(t.cues, (shiftMs - timelineShift) / 1000, false, scale), primary: l === settings.subtitle.primaryLang }];
     }) : [];
     let position = v && v.currentTime > 1 ? v.currentTime - timelineShift / 1000 : 0;
-    if (!position && resumeId) { try { position = Number(localStorage.getItem(resumeKey(resumeId))) || 0; } catch { /* ignore */ } }
+    if (!position) position = resumePosition(req, resumeId);
     bridge.playNative(JSON.stringify({ url: source.url, title: `${req.title}${req.season != null ? ` · S${req.season} E${req.episode}` : ''}`, position, subtitles }));
   }, [source, req, settings.subtitle.primaryLang, resumeId]);
 
@@ -766,7 +783,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   useEffect(() => {
     if (!tv) return;
     (window as unknown as { __tvNativeClosed?: (pos: number) => void }).__tvNativeClosed = (pos: number) => {
-      if (resumeId && pos > 0) { try { localStorage.setItem(resumeKey(resumeId), String(Math.floor(pos))); } catch { /* ignore */ } }
+      const r = useApp.getState().nowPlaying;
+      if (r && pos > 0) savePosition(r, resumeId, pos, 0, true);
       const st = useApp.getState();
       if (st.view === 'player') st.setView(st.listView);
     };
