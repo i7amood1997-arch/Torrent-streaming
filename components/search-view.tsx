@@ -8,9 +8,10 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { parseMagnet } from '@/lib/magnet';
 import { useApp } from '@/lib/store';
+import { canVoiceSearch, nativeTV } from '@/lib/tv';
 import type { TmdbItem } from '@/lib/types';
 import { Poster } from './home';
-import { IconBack, IconSearch, IconX } from './icons';
+import { IconBack, IconMic, IconSearch, IconX } from './icons';
 import { TorrentSearch } from './torrent-search';
 import { Segmented } from './ui';
 
@@ -65,6 +66,16 @@ export function SearchView({ active }: { active: boolean }) {
   const [items, setItems] = useState<TmdbItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string>();
+  // TV app: voice search with the TV's own speech recognizer.
+  const [voice, setVoice] = useState(false);
+  const [missed, setMissed] = useState(false);
+  useEffect(() => {
+    setVoice(canVoiceSearch());
+    const miss = () => setMissed(true);
+    window.addEventListener('tv-voice-missed', miss);
+    return () => window.removeEventListener('tv-voice-missed', miss);
+  }, []);
+  useEffect(() => setMissed(false), [submittedQuery]);
   const [browse, setBrowse] = useState<(typeof TILES)[number]>();
 
   const q = submittedQuery;
@@ -91,7 +102,8 @@ export function SearchView({ active }: { active: boolean }) {
   return (
     <div className="gutter mx-auto max-w-[1600px] space-y-5 pb-12 pt-[max(1.25rem,env(safe-area-inset-top))] md:pt-24">
       <h1 className="text-[34px] font-extrabold tracking-tight text-white md:hidden">Search</h1>
-      <form onSubmit={onSubmit} className="relative mx-auto md:max-w-2xl" role="search">
+      <div className="mx-auto flex items-center gap-3 md:max-w-2xl">
+      <form onSubmit={onSubmit} className="relative min-w-0 flex-1" role="search">
         <IconSearch size={18} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-400" />
         <input
           id={SEARCH_INPUT_ID}
@@ -109,6 +121,13 @@ export function SearchView({ active }: { active: boolean }) {
           </button>
         )}
       </form>
+      {voice && (
+        <button type="button" className="glass-btn grid h-12 w-12 shrink-0 place-items-center rounded-full text-white" onClick={() => { setMissed(false); nativeTV()?.voiceSearch?.(); }} aria-label="Search by voice">
+          <IconMic size={22} />
+        </button>
+      )}
+      </div>
+      {missed && <p className="-mt-2 text-center text-sm text-ink-400">Didn’t catch that. Try the microphone again.</p>}
       <div className="flex justify-center">
         <Segmented label="Search in" value={mode} onChange={(m) => { setMode(m); if (query.trim()) submit(); }}
           options={[{ value: 'catalog', label: 'Movies & Shows' }, { value: 'torrent', label: 'Torrents' }]} />

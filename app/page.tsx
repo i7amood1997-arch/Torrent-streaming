@@ -54,6 +54,14 @@ export default function App() {
     startTvMode();
     startLiquidGlass();
     if (!isTV()) return;
+    // Voice search (TV app): what was said becomes a search; nothing heard → the search screen says so.
+    (window as unknown as { __tvVoice?: (t: string | null) => void }).__tvVoice = (text) => {
+      const said = (text ?? '').trim();
+      if (!said) { window.dispatchEvent(new Event('tv-voice-missed')); return; }
+      const st = useApp.getState();
+      st.setMode('catalog');
+      st.submit(said);
+    };
     // Remember the poster/button that opened a title or the player, to return to it.
     const unsub = useApp.subscribe((s, prev) => {
       if ((s.detail && s.detail !== prev.detail) || (s.view === 'player' && prev.view !== 'player')) pushFocus();

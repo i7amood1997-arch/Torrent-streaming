@@ -13,7 +13,15 @@
 export interface NativeBridge {
   playNative(json: string): void;
   setKeepScreenOn(on: boolean): void;
+  /** Newer TV app versions: the TV's speech recognizer (what was said comes back via window.__tvVoice). */
+  hasVoice?(): boolean;
+  voiceSearch?(): void;
 }
+
+/** Voice search is available (TV app with a speech recognizer). */
+export const canVoiceSearch = (): boolean => {
+  try { return !!nativeTV()?.hasVoice?.(); } catch { return false; }
+};
 
 export const nativeTV = (): NativeBridge | undefined =>
   typeof window === 'undefined' ? undefined : (window as unknown as { StreamdeckTV?: NativeBridge }).StreamdeckTV;

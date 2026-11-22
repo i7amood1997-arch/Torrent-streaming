@@ -8,6 +8,7 @@ import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
+import android.speech.RecognizerIntent;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,6 +22,10 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+
 /**
  * Streamdeck for Android TV: the web app full screen in a WebView, driven by the remote.
  * The page does its own focus navigation (lib/tv.ts); this activity forwards Back to it,
@@ -28,6 +33,7 @@ import android.widget.FrameLayout;
  */
 public class MainActivity extends Activity {
     private static final int REQ_PLAYER = 1;
+    private static final int REQ_VOICE = 2;
     private static final String APP_URL = BuildConfig.APP_URL;
 
     private FrameLayout root;
@@ -152,6 +158,11 @@ public class MainActivity extends Activity {
     public boolean dispatchKeyEvent(KeyEvent event) {
         // The remote's centre button reaches the page as Enter, which clicks the focused control.
         int code = event.getKeyCode();
+        // The remote's search / microphone button (when the TV hands it to the app): voice search.
+        if (customView == null && code == KeyEvent.KEYCODE_SEARCH) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) startVoiceSearch();
+            return true;
+        }
         if (customView == null && (code == KeyEvent.KEYCODE_DPAD_CENTER || code == KeyEvent.KEYCODE_NUMPAD_ENTER)) {
             KeyEvent enter = new KeyEvent(event.getDownTime(), event.getEventTime(), event.getAction(), KeyEvent.KEYCODE_ENTER,
                     event.getRepeatCount(), event.getMetaState(), event.getDeviceId(), event.getScanCode(), event.getFlags(), event.getSource());
@@ -173,6 +184,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VOICE) {
+            ArrayList<String> said = resultCode == RESULT_OK && data != null ? data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) : null;
+            String text = said != null && !said.isEmpty() ? said.get(0) : "";
+            web.evaluateJavascript("window.__tvVoice && window.__tvVoice(" + JSONObject.quote(text) + ")", null);
+            return;
+        }
         if (requestCode != REQ_PLAYER) return;
         double seconds = data != null ? data.getLongExtra("position", 0) / 1000.0 : 0;
         web.evaluateJavascript("window.__tvNativeClosed && window.__tvNativeClosed(" + seconds + ")", null);
@@ -202,6 +219,23 @@ public class MainActivity extends Activity {
         super.onDestroy();
     }
 
+    private Intent voiceIntent() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Say a movie or show");
+        i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+        return i;
+    }
+
+    /** The TV's own speech recognizer (Google's on Android TV); what was said goes to the page's search. */
+    private void startVoiceSearch() {
+        try {
+            startActivityForResult(voiceIntent(), REQ_VOICE);
+        } catch (ActivityNotFoundException e) {
+            web.evaluateJavascript("window.__tvVoice && window.__tvVoice(null)", null);
+        }
+    }
+
     /** Called from the page (window.StreamdeckTV). */
     private class Bridge {
         @JavascriptInterface
@@ -219,6 +253,16 @@ public class MainActivity extends Activity {
                 if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
                 else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             });
+        }
+
+        @JavascriptInterface
+        public boolean hasVoice() {
+            return !getPackageManager().queryIntentActivities(voiceIntent(), 0).isEmpty();
+        }
+
+        @JavascriptInterface
+        public void voiceSearch() {
+            runOnUiThread(MainActivity.this::startVoiceSearch);
         }
 
         @JavascriptInterface
