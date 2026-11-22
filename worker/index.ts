@@ -5,12 +5,14 @@
  */
 import { handleApi, type ApiBindings, type Env } from '../lib/server/handlers';
 import { TorrentStream } from './stream-do';
+import { UserData } from './user-do';
 import Anthropic from '@anthropic-ai/sdk';
 
-export { TorrentStream };
+export { TorrentStream, UserData };
 
 interface Bindings {
   STREAM?: DurableObjectNamespaceLike;
+  USERDATA?: DurableObjectNamespaceLike;
   AI?: ApiBindings['AI'];
   [key: string]: unknown;
 }
@@ -29,7 +31,7 @@ export default {
     if (!m) {
       if (url.pathname.startsWith('/api/stream/')) return new Response('Not found', { status: 404 });
       const claude = env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: env.ANTHROPIC_API_KEY }) : undefined;
-      return handleApi(request, env, { AI: bindings.AI, claude });
+      return handleApi(request, env, { AI: bindings.AI, claude, USERDATA: bindings.USERDATA });
     }
 
     const cors: Record<string, string> = {

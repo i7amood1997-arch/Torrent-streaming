@@ -38,6 +38,33 @@ export interface ApiBindings {
   groqFetch?: typeof fetch;
   /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
   claude?: Pick<Anthropic, 'messages'>;
+  /** Small per-user storage (Worker only): TV pairing and syncing between devices (lib/server/userdata.ts). */
+  USERDATA?: { idFromName(name: string): unknown; get(id: unknown): { fetch(req: Request): Promise<Response> } };
+}
+
+/** Pairing (/api/pair…) and sync (/api/sync/<key>): handed to the user's storage on the relay. */
+async function userStore(req: Request, path: string, bindings: ApiBindings): Promise<Response | undefined> {
+  const pair = path.match(/^\/api\/pair(?:\/([A-Z0-9]{8}))?(\/take)?$/);
+  const sync = path.match(/^\/api\/sync\/([a-f0-9]{32})$/);
+  if (!pair && !sync) return undefined;
+  if (!bindings.USERDATA) return err('This relay has no storage for pairing or sync yet. Update it (redeploy).', 501);
+  const call = async (name: string, op: string, body?: string) => {
+    const ns = bindings.USERDATA!;
+    return ns.get(ns.idFromName(name)).fetch(new Request(req.url, { method: body == null ? 'GET' : 'POST', headers: { 'x-op': op, 'content-type': 'application/json' }, body }));
+  };
+  if (sync) return call(`sync:${sync[1]}`, req.method === 'POST' ? 'sync-merge' : 'sync-get', req.method === 'POST' ? await req.text() : undefined);
+  const code = pair![1];
+  if (!code) {
+    if (req.method !== 'POST') return err('Not found', 404);
+    const { pairingCode, randomKey } = await import('../sync');
+    const newCode = pairingCode();
+    const secret = randomKey();
+    const res = await call(`pair:${newCode}`, 'pair-open', JSON.stringify({ secret }));
+    const body = (await res.json()) as { expires?: number };
+    return json({ code: newCode, secret, expires: body.expires });
+  }
+  if (pair![2]) return call(`pair:${code}`, 'pair-take');
+  return req.method === 'POST' ? call(`pair:${code}`, 'pair-send', await req.text()) : call(`pair:${code}`, 'pair-check');
 }
 
 const ALLOWED_HEADERS = [
@@ -100,6 +127,8 @@ function config(env: Env, b: ApiBindings) {
     stream: env.STREAM_ENABLED === 'true',
     ai: !!b.AI,
     claude: !!b.claude,
+    /** TV pairing and syncing between devices. */
+    sync: !!b.USERDATA,
   });
 }
 
@@ -549,12 +578,16 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
   // Optional shared secret: protects server-side keys (e.g. your Debrid account) from strangers.
   // <video> and media fetches can't send custom headers, so the token may also come as ?t=.
   const token = req.headers.get('x-access-token') ?? url.searchParams.get('t');
-  if (env.ACCESS_TOKEN && path !== '/api/config' && path !== '' && token !== env.ACCESS_TOKEN) {
+  // Pairing and sync carry their own secrets (a new TV doesn't know the access token yet).
+  const ownSecret = /^\/api\/(pair|sync)(\/|$)/.test(path);
+  if (env.ACCESS_TOKEN && path !== '/api/config' && path !== '' && !ownSecret && token !== env.ACCESS_TOKEN) {
     res = err('Access token required — enter it in the app Settings.', 401);
   } else {
     try {
       const get = req.method === 'GET';
-      if (path === '' || path === '/api') res = json({ ok: true, service: 'streamdeck-api' });
+      const stored = ownSecret ? await userStore(req, path, bindings) : undefined;
+      if (stored) res = new Response(stored.body, stored);
+      else if (path === '' || path === '/api') res = json({ ok: true, service: 'streamdeck-api' });
       else if (path === '/api/config' && get) res = config(env, bindings);
       else if (path === '/api/search' && get) res = await search(req, env, url.searchParams);
       else if (path === '/api/tmdb' && get) res = await tmdb(req, env, url.searchParams);

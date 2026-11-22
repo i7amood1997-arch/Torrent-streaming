@@ -8,6 +8,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { GlassTabs } from '@/components/glass-tabs';
 import { Home } from '@/components/home';
+import { PairSheet } from '@/components/pair-sheet';
+import { TvSetup } from '@/components/tv-setup';
 import { IconGearFill, IconHomeFill, IconPlay, IconSearch } from '@/components/icons';
 import { SEARCH_INPUT_ID, SearchView } from '@/components/search-view';
 import { SettingsPanel } from '@/components/settings-panel';
@@ -31,6 +33,20 @@ export default function App() {
   const apiBaseSetting = useApp((s) => s.settings.apiBase);
   const accessToken = useApp((s) => s.settings.accessToken);
   const [hydrated, setHydrated] = useState(false);
+  const tvSetupDone = useApp((s) => s.tvSetupDone);
+  const [tv, setTv] = useState(false);
+  // Opened from a TV's QR code: ?pair=CODE&relay=…
+  const [pairing, setPairing] = useState<{ code: string; relay?: string }>();
+  useEffect(() => {
+    setTv(isTV());
+    const q = new URLSearchParams(location.search);
+    const code = q.get('pair');
+    if (code) setPairing({ code: code.toUpperCase(), relay: q.get('relay') ?? undefined });
+  }, []);
+  const closePairing = () => {
+    setPairing(undefined);
+    history.replaceState(null, '', location.pathname + location.hash);
+  };
 
   // Android TV app: remote-control navigation, and Back walks back through the app before leaving it.
   useEffect(() => {
@@ -152,6 +168,8 @@ export default function App() {
           </div>
         </>
       )}
+      {hydrated && tv && !tvSetupDone && <TvSetup />}
+      {hydrated && pairing && <PairSheet code={pairing.code} relay={pairing.relay} onClose={closePairing} />}
     </div>
   );
 }

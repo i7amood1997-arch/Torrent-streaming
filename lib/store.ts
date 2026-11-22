@@ -46,6 +46,8 @@ export interface Settings {
   publicRelays: boolean;
   engine: EnginePref;
   subtitle: SubtitleStyle;
+  /** Shared by the user's devices: their synced history, watchlist and settings on the relay ('' = not yet made). */
+  syncKey: string;
 }
 
 /** What the player is asked to play, plus metadata context for subtitles. */
@@ -81,6 +83,8 @@ export interface ServerCaps {
   ai?: boolean;
   /** The relay has a Claude API key: last-resort translator when everything else refused. */
   claude?: boolean;
+  /** The relay can pair a TV and sync between devices. */
+  sync?: boolean;
   /** True when running without a backend (API code runs in the browser). */
   direct?: boolean;
   /** Set when a configured backend could not be reached or rejected us. */
@@ -112,6 +116,9 @@ interface AppState {
   updateSettings: (p: Partial<Settings>) => void;
   updateSubtitleStyle: (p: Partial<SubtitleStyle>) => void;
   setCaps: (c: ServerCaps) => void;
+  /** TV app: the first-run screen (set up from your phone) was finished or skipped. */
+  tvSetupDone: boolean;
+  setTvSetupDone: (v: boolean) => void;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -129,6 +136,7 @@ export const DEFAULT_SETTINGS: Settings = {
   publicRelays: true,
   engine: 'auto',
   subtitle: { scale: 1, bgOpacity: 0.55, color: '#ffffff', arabicFont: 'Cairo', position: 8, primaryLang: 'ar', dual: true, autoSync: true, autoTranslate: true, autoGenerate: true, translator: 'ai' },
+  syncKey: '',
 };
 
 /**
@@ -184,6 +192,8 @@ export const useApp = create<AppState>()(
       updateSettings: (p) => set({ settings: { ...get().settings, ...p } }),
       updateSubtitleStyle: (p) => set({ settings: { ...get().settings, subtitle: { ...get().settings.subtitle, ...p } } }),
       setCaps: (caps) => set({ caps }),
+      tvSetupDone: false,
+      setTvSetupDone: (tvSetupDone) => set({ tvSetupDone }),
     }),
     {
       name: 'ts-settings',
@@ -209,7 +219,7 @@ export const useApp = create<AppState>()(
       },
       skipHydration: true, // rehydrated in a client effect to avoid SSR mismatch
       storage: createJSONStorage(safeStorage),
-      partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history }),
+      partialize: (s) => ({ settings: s.settings, mode: s.mode, history: s.history, tvSetupDone: s.tvSetupDone }),
       merge: (persisted: any, current) => ({
         ...current,
         ...persisted,

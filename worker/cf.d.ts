@@ -22,6 +22,8 @@ declare module 'cloudflare:workers' {
     storage: {
       get<T = unknown>(key: string): Promise<T | undefined>;
       put(key: string, value: unknown): Promise<void>;
+      deleteAll(): Promise<void>;
+      setAlarm(at: number): Promise<void>;
     };
   }
 }

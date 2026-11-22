@@ -23,9 +23,18 @@ class_name = "TorrentStream"
 [ai]
 binding = "AI"
 
+[[durable_objects.bindings]]
+# Small per-user storage: TV pairing codes and the state your devices sync (worker/user-do.ts).
+name = "USERDATA"
+class_name = "UserData"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["TorrentStream"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["UserData"]
 
 [vars]
 INDEXERS = "torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons,archive,torrentsdb,bitsearch"

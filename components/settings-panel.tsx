@@ -9,6 +9,8 @@ import { asset, DEFAULT_API_BASE } from '@/lib/config';
 import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
+import { isTV } from '@/lib/tv';
+import { PairSheet } from './pair-sheet';
 import { Disclosure, Row, Section, Segmented, Switch } from './ui';
 
 const DEPLOY_URL = 'https://deploy.workers.cloudflare.com/?url=https://github.com/i7amood1997-arch/Torrent-streaming';
@@ -57,6 +59,11 @@ export function SettingsPanel() {
   const [apkAddress, setApkAddress] = useState(asset('/tv.apk'));
   useEffect(() => setApkAddress(`${location.host}${asset('/tv.apk')}`), []);
   const sourcesOn = SOURCES.filter((s) => settings.indexers.includes(s.id)).length;
+  const [tv, setTv] = useState(false);
+  useEffect(() => setTv(isTV()), []);
+  const setTvSetupDone = useApp((s) => s.setTvSetupDone);
+  const [tvCode, setTvCode] = useState('');
+  const [pairOpen, setPairOpen] = useState(false);
 
   return (
     <div className="mx-auto max-w-2xl space-y-7 pb-8">
@@ -123,7 +130,22 @@ export function SettingsPanel() {
         </div>
       </Disclosure>
 
+      {tv && (
+        <Section footer="Shows a code to scan with your phone, which sends its settings here.">
+          <Row label="Set up from your phone" onClick={() => setTvSetupDone(false)}><span className="text-xs text-accent">Open</span></Row>
+        </Section>
+      )}
       <Disclosure title="Android TV app">
+      {!tv && (
+        <Section title="Set up a TV" footer="Type the code the TV app shows on its first screen (or scan its QR code with your camera). Your settings go to the TV through your relay.">
+          <form className="flex gap-2 px-4 py-3" onSubmit={(e) => { e.preventDefault(); if (tvCode.length === 8) setPairOpen(true); }}>
+            <input className="input flex-1 font-mono uppercase tracking-[0.2em]" placeholder="ABCD EFGH" maxLength={9} autoCapitalize="characters" autoCorrect="off" spellCheck={false}
+              value={tvCode} onChange={(e) => setTvCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))} aria-label="TV code" />
+            <button type="submit" className="btn-primary rounded-full px-5" disabled={tvCode.length !== 8}>Next</button>
+          </form>
+        </Section>
+      )}
+      {pairOpen && <PairSheet code={tvCode} onClose={() => { setPairOpen(false); setTvCode(''); }} />}
       <Section footer={<>Updates install over the previous version. The app opens this site full screen, works with the remote, and plays files the TV’s browser can’t handle (for example MKV with Dolby audio) in the TV’s own player, with your subtitles.</>}>
         <div className="space-y-2 px-4 py-3 text-sm text-ink-200">
           <p>1. On the TV, install <b>Downloader</b> (by AFTVnews) from the Play Store.</p>
