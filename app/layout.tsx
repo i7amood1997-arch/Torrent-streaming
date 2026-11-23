@@ -28,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" dir="ltr">
       <head>
+        <meta name="streamdeck-build" content={process.env.NEXT_PUBLIC_BUILD_ID} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link

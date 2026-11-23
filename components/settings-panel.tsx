@@ -10,6 +10,7 @@ import { useApp, type EnginePref } from '@/lib/store';
 import { usePlatform } from '@/lib/platform';
 import type { DebridProvider } from '@/lib/types';
 import { isTV } from '@/lib/tv';
+import { BUILD_ID } from '@/lib/update-check';
 import { lastSync, syncSoon } from '@/lib/sync-client';
 import { alertState, disableAlerts, enableAlerts, testAlert, type AlertState } from '@/lib/alerts';
 import { SYNC_KEY } from '@/lib/sync';
@@ -287,6 +288,7 @@ export function SettingsPanel() {
       <p className="px-1 text-xs leading-relaxed text-ink-400">
         Keys stay in this browser and go only to the service they belong to (or your own relay). Only stream content you have the rights to access; you are responsible for complying with the laws of your country.
       </p>
+      <p className="px-1 text-xs text-ink-600">Version {BUILD_ID}</p>
     </div>
   );
 }
