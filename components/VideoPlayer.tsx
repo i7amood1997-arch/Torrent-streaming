@@ -735,6 +735,14 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     return () => setTvKeyOverride(undefined);
   }, [tv, phase, panel, togglePlay, seekBy, poke]);
 
+  // Remote: the subtitle sheet closed → back to the button that opened it, not to nothing.
+  const ccRef = useRef<HTMLButtonElement>(null);
+  const panelWasOpen = useRef(false);
+  useEffect(() => {
+    if (tv && panelWasOpen.current && !panel) { poke(); setTimeout(() => ccRef.current?.focus({ preventScroll: true }), 40); }
+    panelWasOpen.current = panel;
+  }, [tv, panel, poke]);
+
   useEffect(() => onTvBack(() => {
     if (useApp.getState().view !== 'player') return false;
     const el = document.activeElement as HTMLElement | null;
@@ -1098,7 +1106,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 <button className="btn-ghost p-2 text-white" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={muted ? 'Unmute' : 'Mute'}>{muted || volume === 0 ? <IconMute size={18} /> : <IconVolume size={18} />}</button>
                 <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(+e.target.value)} className="w-0 opacity-0 transition-all group-hover:w-20 group-hover:opacity-100 focus:w-20 focus:opacity-100" aria-label="Volume" />
               </div>
-              <button className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen || tv ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
+              <button ref={ccRef} className={`btn-ghost p-2 ${subsHidden ? 'text-white/40' : 'text-white'}`} onClick={onCC} aria-label={fullscreen || tv ? 'Subtitle settings' : subsHidden ? 'Show subtitles' : 'Hide subtitles'} aria-pressed={!subsHidden}>
                 <IconCC size={20} />
               </button>
               {tv ? (
