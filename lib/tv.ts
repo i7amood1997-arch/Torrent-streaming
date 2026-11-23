@@ -134,8 +134,16 @@ function visible(el: HTMLElement): DOMRect | undefined {
 
 const focusables = (root: ParentNode | null | undefined): HTMLElement[] => (root ? [...root.querySelectorAll<HTMLElement>(FOCUSABLE)] : []);
 
+/**
+ * Which open window the remote works in: a drop-down's list when one is open, otherwise the most
+ * recently opened window (the last in the page: a sheet opened over another one), else the player.
+ */
+export function topLayer<T>(dialogs: T[], picker: T | undefined, fallback: T | null): T | null {
+  return picker ?? dialogs.at(-1) ?? fallback;
+}
+
 function zones() {
-  const layer = (document.querySelector('[role="dialog"]') ?? document.querySelector('[data-tv-layer]')) as HTMLElement | null;
+  const layer = topLayer([...document.querySelectorAll<HTMLElement>('[role="dialog"]')], picker?.wrap, document.querySelector<HTMLElement>('[data-tv-layer]'));
   const pane = document.querySelector<HTMLElement>('[data-tv-pane]');
   const nav = [...document.querySelectorAll<HTMLElement>('[data-tv-nav]')].find((n) => n.getBoundingClientRect().width > 0) ?? null;
   return { layer, pane, nav };

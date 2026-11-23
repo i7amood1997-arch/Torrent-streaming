@@ -735,6 +735,28 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
     return () => setTvKeyOverride(undefined);
   }, [tv, phase, panel, togglePlay, seekBy, poke]);
 
+  // Seek bar: the video reports its time only ~4 times a second; while it plays and the bar is on
+  // screen, move the bar every frame instead (no re-render, just its width and the thumb).
+  const seekFillRef = useRef<HTMLDivElement>(null);
+  const seekRef = useRef<HTMLInputElement>(null);
+  const dragging = useRef(false);
+  useEffect(() => {
+    if (!playing || !controls || scrub != null) return;
+    let raf = 0;
+    const step = () => {
+      const v = videoRef.current;
+      const d = v?.duration;
+      if (v && d && isFinite(d)) {
+        if (seekFillRef.current) seekFillRef.current.style.width = `${(v.currentTime / d) * 100}%`;
+        const input = seekRef.current;
+        if (input && !dragging.current) input.value = String(v.currentTime);
+      }
+      raf = requestAnimationFrame(step);
+    };
+    raf = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf);
+  }, [playing, controls, scrub]);
+
   // Remote: the subtitle sheet closed → back to the button that opened it, not to nothing.
   const ccRef = useRef<HTMLButtonElement>(null);
   const panelWasOpen = useRef(false);
@@ -947,7 +969,8 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   }
 
   const showSubs = !subsHidden && LANGS.some((l) => subs.loaded[l]?.cues.length);
-  const shownTime = scrub ?? time;
+  // Read the video's own clock when drawing, so a re-render never pulls the bar back behind the frame loop below.
+  const shownTime = scrub ?? (playing && videoRef.current ? videoRef.current.currentTime : time);
   const pad = (n?: number) => String(n ?? '').padStart(2, '0');
   const epTag = req?.season != null ? `S${pad(req.season)}E${pad(req.episode)}` : '';
   const engineName = !source ? undefined
@@ -1119,9 +1142,9 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
             <div className="relative h-5">
               <div className="absolute inset-x-1 top-1/2 h-1 -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
                 <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
-                <div className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${duration ? (shownTime / duration) * 100 : 0}%` }} />
+                <div ref={seekFillRef} className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${duration ? (shownTime / duration) * 100 : 0}%` }} />
               </div>
-              <input type="range" aria-label="Seek" min={0} max={duration || 0} step={0.1} value={shownTime}
+              <input ref={seekRef} type="range" aria-label="Seek" onPointerDown={() => { dragging.current = true; }} onPointerUp={() => { dragging.current = false; }} onPointerCancel={() => { dragging.current = false; }} min={0} max={duration || 0} step={0.1} value={shownTime}
                 onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = +e.target.value; }}
                 className="seek absolute inset-0 h-5 w-full cursor-pointer appearance-none bg-transparent" />
             </div>

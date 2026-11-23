@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { playerBack, rank, type Box } from '@/lib/tv';
+import { playerBack, rank, topLayer, type Box } from '@/lib/tv';
 
 const box = (left: number, top: number, width: number, height: number): Box => ({ left, top, width, height, right: left + width, bottom: top + height });
 const at = (items: Record<string, Box>) => Object.entries(items).map(([item, r]) => ({ item, r }));
@@ -61,5 +61,17 @@ describe('TV remote: Back in the player', () => {
   });
   it('a sheet open: Back closes it first', () => {
     expect(playerBack({ panel: true, playing: false, focusInPlayer: true })).toBe('close-panel');
+  });
+});
+
+describe('TV remote: which window the arrows work in', () => {
+  it('a drop-down list opened from a sheet: the list, not the sheet behind it', () => {
+    expect(topLayer(['subtitle sheet'], 'drop-down list', 'player')).toBe('drop-down list');
+  });
+  it('a sheet opened over another one: the newer one', () => {
+    expect(topLayer(['sheet', 'sheet on top'], undefined, 'player')).toBe('sheet on top');
+  });
+  it('no window open: the player', () => {
+    expect(topLayer([], undefined, 'player')).toBe('player');
   });
 });
