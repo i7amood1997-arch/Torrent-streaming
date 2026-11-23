@@ -78,6 +78,17 @@ export function initialFocus(selector: string, force = false) {
 }
 
 /** Called by the TV app on Back. Returns false when the app should close. */
+/**
+ * Back in the player: a sheet open → close it; playing with the controls up → hide them (one more
+ * Back leaves); otherwise → leave the player. While paused the controls stay on screen, so hiding
+ * them would do nothing and Back must leave at once.
+ */
+export function playerBack(s: { panel: boolean; playing: boolean; focusInPlayer: boolean }): 'close-panel' | 'hide-controls' | 'leave' {
+  if (s.panel) return 'close-panel';
+  if (s.playing && s.focusInPlayer) return 'hide-controls';
+  return 'leave';
+}
+
 function handleBack(): boolean {
   // (Android closes the on-screen keyboard itself before Back reaches the app.)
   if (closePicker()) return true;

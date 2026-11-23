@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { rank, type Box } from '@/lib/tv';
+import { playerBack, rank, type Box } from '@/lib/tv';
 
 const box = (left: number, top: number, width: number, height: number): Box => ({ left, top, width, height, right: left + width, bottom: top + height });
 const at = (items: Record<string, Box>) => Object.entries(items).map(([item, r]) => ({ item, r }));
@@ -46,5 +46,20 @@ describe('TV remote: where a press goes', () => {
     // A tall poster to the right whose centre is lower must not win Down from a short button.
     const items = at({ tall: box(300, 10, 150, 225), below: box(48, 120, 120, 40) });
     expect(rank(box(48, 40, 120, 40), items, 'down')[0]).toBe('below');
+  });
+});
+
+describe('TV remote: Back in the player', () => {
+  it('paused (controls stay up): Back leaves the player at once, even with a control focused', () => {
+    expect(playerBack({ panel: false, playing: false, focusInPlayer: true })).toBe('leave');
+  });
+  it('playing with a control focused: Back first hides the controls', () => {
+    expect(playerBack({ panel: false, playing: true, focusInPlayer: true })).toBe('hide-controls');
+  });
+  it('playing with the controls already hidden: Back leaves', () => {
+    expect(playerBack({ panel: false, playing: true, focusInPlayer: false })).toBe('leave');
+  });
+  it('a sheet open: Back closes it first', () => {
+    expect(playerBack({ panel: true, playing: false, focusInPlayer: true })).toBe('close-panel');
   });
 });

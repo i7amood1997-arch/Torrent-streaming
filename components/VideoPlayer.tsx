@@ -34,7 +34,7 @@ import { openAudioSource } from '@/lib/speech/audio-source';
 import { SubtitleGenerator, type GeneratorStatus } from '@/lib/speech/generate';
 import { IconBack, IconBack10, IconCC, IconCopy, IconExpand, IconFwd10, IconMute, IconPause, IconPip, IconPlay, IconShrink, IconVolume } from './icons';
 import { usePresync } from './use-presync';
-import { isTV, moveFocus, nativeTV, onTvBack, setTvKeyOverride } from '@/lib/tv';
+import { isTV, moveFocus, nativeTV, onTvBack, playerBack, setTvKeyOverride } from '@/lib/tv';
 import { LANGS, setSubtitlePlayhead, SubtitleOverlay, SubtitleSettings, useSubtitles, type GenerateControl, type Lang, type PlayingFile } from './subtitles';
 
 
@@ -737,9 +737,12 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
 
   useEffect(() => onTvBack(() => {
     if (useApp.getState().view !== 'player') return false;
-    if (panel) { setPanel(false); return true; }
     const el = document.activeElement as HTMLElement | null;
-    if (el && el !== document.body && containerRef.current?.contains(el)) { el.blur(); setControls(false); return true; }
+    const focusInPlayer = !!el && el !== document.body && !!containerRef.current?.contains(el);
+    const v = videoRef.current;
+    const act = playerBack({ panel, playing: !!v && !v.paused && !v.ended, focusInPlayer });
+    if (act === 'close-panel') { setPanel(false); return true; }
+    if (act === 'hide-controls') { el!.blur(); setControls(false); return true; }
     return false;
   }), [panel]);
 
