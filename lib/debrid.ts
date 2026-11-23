@@ -31,7 +31,7 @@ export interface ResolveInput {
 }
 
 export function envDebridKey(p: DebridProvider, env: Record<string, string | undefined>): string | undefined {
-  return { realdebrid: env.REALDEBRID_API_KEY, torbox: env.TORBOX_API_KEY, debridlink: env.DEBRIDLINK_API_KEY }[p];
+  return { realdebrid: env.REALDEBRID_API_KEY, torbox: env.TORBOX_API_KEY, debridlink: env.DEBRIDLINK_API_KEY, premiumize: env.PREMIUMIZE_API_KEY, alldebrid: env.ALLDEBRID_API_KEY }[p];
 }
 
 export function mimeFromName(name?: string): string | undefined {
@@ -216,12 +216,106 @@ async function resolveDebridLink(i: ResolveInput): Promise<ResolvedStream> {
   return { status: 'ready', url: chosen.downloadUrl, fileName: chosen.name, mimeType: mimeFromName(chosen.name), provider: 'debridlink' };
 }
 
+// ─── Premiumize ─────────────────────────────────────────────────────────────
+// https://www.premiumize.me/api — the account's API key goes in ?apikey=.
+
+const PM = 'https://www.premiumize.me/api/';
+
+async function pm<T>(endpoint: string, apiKey: string, params: Record<string, string> = {}, form?: Record<string, string>): Promise<T> {
+  const u = new URL(PM + endpoint);
+  for (const [k, v] of Object.entries({ ...params, apikey: apiKey })) u.searchParams.append(k, v);
+  const body = await http<any>(u.toString(), form ? { method: 'POST', body: new URLSearchParams(form) } : {});
+  if (body?.status === 'error') throw new DebridError(explainDebridError(String(body.message ?? 'Premiumize error')), 400, body.message);
+  return body as T;
+}
+
+async function resolvePremiumize(i: ResolveInput): Promise<ResolvedStream> {
+  // Cached: the files' direct links at once.
+  const dl = await pm<{ content?: { path?: string; size?: number; link?: string; stream_link?: string }[] }>('transfer/directdl', i.apiKey, {}, { src: i.magnet })
+    .catch((e) => { if (e instanceof DebridError && (e.status === 401 || /api ?key|auth|customer/i.test(e.message))) throw e; return undefined; });
+  const content = dl?.content?.filter((c) => c.link) ?? [];
+  if (content.length) {
+    const files = content.map((c, idx) => ({ index: idx, id: idx, name: (c.path ?? '').split('/').pop() || `file${idx}`, size: c.size ?? 0, link: c.link!, stream: c.stream_link }));
+    const chosen = pickFile(files, undefined, i.season, i.episode);
+    if (!chosen) throw new DebridError('No playable file in torrent', 404);
+    return { status: 'ready', url: chosen.link, fileName: chosen.name, mimeType: mimeFromName(chosen.name), provider: 'premiumize' };
+  }
+  // Not cached: download it to the cloud and report progress (the app asks again).
+  const list = await pm<{ transfers?: { id: string; name?: string; src?: string; status?: string; progress?: number; message?: string }[] }>('transfer/list', i.apiKey);
+  const t = list.transfers?.find((x) => (x.src ?? '').toLowerCase().includes(i.infoHash));
+  if (!t) {
+    await pm('transfer/create', i.apiKey, {}, { src: i.magnet });
+    return { status: 'queued', progress: 0, message: 'Premiumize: added to your cloud', provider: 'premiumize' };
+  }
+  if (t.status === 'error' || t.status === 'deleted') throw new DebridError(t.message || 'Premiumize couldn’t download this torrent.');
+  return { status: 'queued', progress: Math.round((t.progress ?? 0) * 100), message: `Premiumize: ${t.message || t.status || 'downloading'}`, provider: 'premiumize' };
+}
+
+// ─── AllDebrid ──────────────────────────────────────────────────────────────
+// https://docs.alldebrid.com — key as a Bearer token; every call names the app (agent).
+
+const AD = 'https://api.alldebrid.com';
+const AD_AGENT = 'streamdeck';
+
+async function ad<T>(path: string, apiKey: string, params: Record<string, string> = {}, form?: Record<string, string>): Promise<T> {
+  const u = new URL(AD + path);
+  for (const [k, v] of Object.entries({ ...params, agent: AD_AGENT })) u.searchParams.append(k, v);
+  const body = await http<any>(u.toString(), { method: form ? 'POST' : 'GET', headers: { Authorization: `Bearer ${apiKey}` }, body: form ? new URLSearchParams(form) : undefined });
+  if (body?.status === 'error') {
+    const code = String(body.error?.code ?? 'ERROR');
+    throw new DebridError(explainDebridError(ALLDEBRID_ERRORS[code] ?? body.error?.message ?? code), /AUTH/.test(code) ? 401 : 400, code);
+  }
+  return body?.data as T;
+}
+
+const ALLDEBRID_ERRORS: Record<string, string> = {
+  AUTH_BAD_APIKEY: 'bad_token',
+  AUTH_MISSING_APIKEY: 'bad_token',
+  AUTH_BLOCKED: 'AllDebrid blocked this connection (VPN or server address). Try without a VPN, or unblock it in your AllDebrid account.',
+  MUST_BE_PREMIUM: 'permission_denied',
+  MAGNET_TOO_MANY_ACTIVE: 'too_many_requests',
+};
+
+interface AdNode { n: string; s?: number; l?: string; e?: AdNode[] }
+
+/** AllDebrid lists files as a tree (folders hold `e`): flatten it in order. */
+export function flattenAllDebrid(nodes: AdNode[] | undefined, prefix = ''): { name: string; size: number; link: string }[] {
+  const out: { name: string; size: number; link: string }[] = [];
+  for (const n of nodes ?? []) {
+    if (n.e) out.push(...flattenAllDebrid(n.e, `${prefix}${n.n}/`));
+    else if (n.l) out.push({ name: n.n, size: n.s ?? 0, link: n.l });
+  }
+  return out;
+}
+
+async function resolveAllDebrid(i: ResolveInput): Promise<ResolvedStream> {
+  const up = await ad<{ magnets?: { id?: number; ready?: boolean; error?: { code?: string; message?: string } }[] }>('/v4/magnet/upload', i.apiKey, {}, { 'magnets[]': i.magnet });
+  const m = up?.magnets?.[0];
+  if (!m || m.error || m.id == null) throw new DebridError(m?.error?.message ?? 'AllDebrid couldn’t add this torrent.', 400, m?.error?.code);
+  if (!m.ready) {
+    const st = await ad<{ magnets?: { status?: string; statusCode?: number; size?: number; downloaded?: number } }>('/v4.1/magnet/status', i.apiKey, { id: String(m.id) }).catch(() => undefined);
+    const s = st?.magnets;
+    if (s?.statusCode != null && s.statusCode > 4) throw new DebridError(`AllDebrid: ${s.status ?? 'error'}`);
+    if (s?.statusCode !== 4) return { status: 'queued', progress: s?.size ? Math.round(((s.downloaded ?? 0) / s.size) * 100) : 0, message: `AllDebrid: ${s?.status ?? 'downloading'}`, provider: 'alldebrid' };
+  }
+  const f = await ad<{ magnets?: { files?: AdNode[] }[] }>('/v4/magnet/files', i.apiKey, { 'id[]': String(m.id) });
+  const files = flattenAllDebrid(f?.magnets?.[0]?.files).map((x, idx) => ({ ...x, index: idx, id: idx }));
+  const chosen = pickFile(files, undefined, i.season, i.episode);
+  if (!chosen) throw new DebridError('No playable file in torrent', 404);
+  const un = await ad<{ link?: string; filename?: string }>('/v4/link/unlock', i.apiKey, { link: chosen.link });
+  if (!un?.link) throw new DebridError('AllDebrid didn’t return a link for this file.');
+  const name = un.filename ?? chosen.name;
+  return { status: 'ready', url: un.link, fileName: name, mimeType: mimeFromName(name), provider: 'alldebrid' };
+}
+
 // ─── Entry point ────────────────────────────────────────────────────────────
 
 const RESOLVERS: Record<DebridProvider, (i: ResolveInput) => Promise<ResolvedStream>> = {
   realdebrid: resolveRealDebrid,
   torbox: resolveTorBox,
   debridlink: resolveDebridLink,
+  premiumize: resolvePremiumize,
+  alldebrid: resolveAllDebrid,
 };
 
 export async function resolveDebridStream(input: ResolveInput): Promise<ResolvedStream> {

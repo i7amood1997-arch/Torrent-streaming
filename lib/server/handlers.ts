@@ -20,7 +20,7 @@ import { checkRealDebridCache, DebridError, envDebridKey, resolveDebridStream } 
 import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
 import { createTmdbClient, TmdbError } from '../tmdb';
-import { ALL_INDEXERS, configFromEnv, parseAddonList, searchTorrents, type IndexerId } from '../torrent-indexer';
+import { ALL_INDEXERS, configFromEnv, parseAddonList, pickArchiveFile, searchTorrents, type IaFile, type IndexerId } from '../torrent-indexer';
 import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
@@ -38,6 +38,8 @@ export interface ApiBindings {
   groqFetch?: typeof fetch;
   /** Tests only: stands in for fetch when calling TheIntroDB. */
   introFetch?: typeof fetch;
+  /** Tests only: stands in for fetch when calling the Internet Archive. */
+  archiveFetch?: typeof fetch;
   /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
   claude?: Pick<Anthropic, 'messages'>;
   /** Small per-user storage (Worker only): TV pairing and syncing between devices (lib/server/userdata.ts). */
@@ -147,7 +149,7 @@ function config(env: Env, b: ApiBindings) {
   const c = configFromEnv(env);
   return json({
     tmdb: !!env.TMDB_API_KEY,
-    debrid: { realdebrid: !!env.REALDEBRID_API_KEY, torbox: !!env.TORBOX_API_KEY, debridlink: !!env.DEBRIDLINK_API_KEY },
+    debrid: { realdebrid: !!env.REALDEBRID_API_KEY, torbox: !!env.TORBOX_API_KEY, debridlink: !!env.DEBRIDLINK_API_KEY, premiumize: !!env.PREMIUMIZE_API_KEY, alldebrid: !!env.ALLDEBRID_API_KEY },
     subtitles: { opensubtitles: !!env.OPENSUBTITLES_API_KEY, subdl: !!env.SUBDL_API_KEY },
     indexers: c.enabled.filter((i) => i !== 'torznab' || !!c.torznabUrl),
     clientTorznab: env.ALLOW_CLIENT_TORZNAB === 'true',
@@ -241,7 +243,7 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
   }
 }
 
-const PROVIDERS: DebridProvider[] = ['realdebrid', 'torbox', 'debridlink'];
+const PROVIDERS: DebridProvider[] = ['realdebrid', 'torbox', 'debridlink', 'premiumize', 'alldebrid'];
 
 async function debridResolve(req: Request, env: Env) {
   let body: any;
@@ -651,6 +653,43 @@ export function parseSegments(body: unknown): Segments {
   return out;
 }
 
+// ─── Free libraries (Internet Archive collections) ─────────────────────────
+
+/** Collections the app offers as rows: public-domain and openly licensed films. */
+export const ARCHIVE_COLLECTIONS = ['feature_films', 'film_noir', 'SciFi_Horror', 'animationandcartoons', 'silent_films', 'classic_tv'];
+
+export interface ArchiveItem { id: string; title: string; year?: number; poster: string }
+
+async function archiveShelf(env: Env, sp: URLSearchParams, b: ApiBindings): Promise<Response> {
+  const c = sp.get('collection') ?? '';
+  if (!ARCHIVE_COLLECTIONS.includes(c)) return err('Unknown collection', 400);
+  const base = (env.ARCHIVE_URL || 'https://archive.org').replace(/\/+$/, '');
+  const q = `collection:(${c}) AND mediatype:(movies)`;
+  const f = b.archiveFetch ?? fetch;
+  const res = await f(`${base}/advancedsearch.php?q=${encodeURIComponent(q)}&fl[]=identifier&fl[]=title&fl[]=year&sort[]=downloads+desc&rows=40&output=json`, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) return err(`Internet Archive: HTTP ${res.status}`, 502);
+  const body = (await res.json()) as { response?: { docs?: { identifier: string; title?: string; year?: string | number }[] } };
+  const results: ArchiveItem[] = (body.response?.docs ?? [])
+    .filter((d) => d.identifier && d.title)
+    .map((d) => ({ id: d.identifier, title: String(d.title).slice(0, 120), year: Number(String(d.year ?? '').slice(0, 4)) || undefined, poster: `${base}/services/img/${encodeURIComponent(d.identifier)}` }));
+  return json({ results }, 200, { 'Cache-Control': 'public, max-age=86400' });
+}
+
+async function archivePlay(env: Env, sp: URLSearchParams, b: ApiBindings): Promise<Response> {
+  const id = sp.get('id') ?? '';
+  if (!/^[\w.-]{1,120}$/.test(id)) return err('Bad id', 400);
+  const base = (env.ARCHIVE_URL || 'https://archive.org').replace(/\/+$/, '');
+  const f = b.archiveFetch ?? fetch;
+  const res = await f(`${base}/metadata/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(12000) });
+  if (!res.ok) return err(`Internet Archive: HTTP ${res.status}`, 502);
+  const m = (await res.json()) as { files?: IaFile[]; metadata?: { title?: string } };
+  // Cartoons and shorts are short: anything over two minutes counts.
+  const file = pickArchiveFile(m.files ?? [], 120);
+  if (!file) return err('This title has no video that plays in a browser.', 404);
+  const url = `${base}/download/${encodeURIComponent(id)}/${file.name.split('/').map(encodeURIComponent).join('/')}`;
+  return json({ url, title: m.metadata?.title ?? id, fileName: file.name.split('/').pop() }, 200, { 'Cache-Control': 'public, max-age=86400' });
+}
+
 // ─── Router ─────────────────────────────────────────────────────────────────
 
 export async function handleApi(req: Request, env: Env, bindings: ApiBindings = {}): Promise<Response> {
@@ -686,6 +725,8 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings, env);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
       else if (path === '/api/segments' && get) res = await segments(url.searchParams, bindings);
+      else if (path === '/api/archive' && get) res = await archiveShelf(env, url.searchParams, bindings);
+      else if (path === '/api/archive/play' && get) res = await archivePlay(env, url.searchParams, bindings);
       else res = err('Not found', 404);
     } catch (e) {
       res = err(describeError(e) || 'Internal error', 500);

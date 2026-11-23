@@ -38,6 +38,8 @@ const PROVIDERS: { id: DebridProvider; name: string; help: string }[] = [
   { id: 'realdebrid', name: 'Real-Debrid', help: 'real-debrid.com/apitoken' },
   { id: 'torbox', name: 'TorBox', help: 'torbox.app/settings → API key' },
   { id: 'debridlink', name: 'Debrid-Link', help: 'debrid-link.com/webapp/apikey' },
+  { id: 'premiumize', name: 'Premiumize', help: 'premiumize.me/account (API key)' },
+  { id: 'alldebrid', name: 'AllDebrid', help: 'alldebrid.com/apikeys' },
 ];
 
 const ServerBadge = ({ on }: { on?: boolean }) =>
@@ -156,9 +158,12 @@ export function SettingsPanel() {
             <option value="webtorrent" disabled={!platform.webTorrent}>WebTorrent</option>
           </select>
         </Row>
-        <Row label="Service" wrap>
-          <Segmented label="Debrid service" size="sm" value={settings.debridProvider} onChange={(v) => updateSettings({ debridProvider: v })}
-            options={PROVIDERS.map((p) => ({ value: p.id, label: p.name }))} />
+        <Row label="Service">
+          {/* Five services don't fit side by side on a phone: a list instead. */}
+          <select className="input w-auto max-w-[11rem] py-1.5 text-sm" aria-label="Debrid service" value={settings.debridProvider}
+            onChange={(e) => updateSettings({ debridProvider: e.target.value as DebridProvider })}>
+            {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
         </Row>
         <KeyField label={`${provider.name} API key`} hint={<>Find it at {provider.help}<ServerBadge on={caps?.debrid[provider.id]} /></>}
           value={settings.debridKeys[provider.id]} onChange={(v) => updateSettings({ debridKeys: { ...settings.debridKeys, [provider.id]: v } })} />

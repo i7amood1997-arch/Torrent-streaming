@@ -138,7 +138,7 @@ export const DEFAULT_SETTINGS: Settings = {
   accessToken: '',
   tmdbKey: '',
   debridProvider: 'realdebrid',
-  debridKeys: { realdebrid: '', torbox: '', debridlink: '' },
+  debridKeys: { realdebrid: '', torbox: '', debridlink: '', premiumize: '', alldebrid: '' },
   openSubtitlesKey: '',
   subdlKey: '',
   torznabUrl: '',

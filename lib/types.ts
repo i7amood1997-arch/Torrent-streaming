@@ -74,7 +74,7 @@ export interface SearchQuery {
   year?: number;
 }
 
-export type DebridProvider = 'realdebrid' | 'torbox' | 'debridlink';
+export type DebridProvider = 'realdebrid' | 'torbox' | 'debridlink' | 'premiumize' | 'alldebrid';
 
 export type StreamEngine = 'debrid' | 'webtorrent' | 'direct';
 

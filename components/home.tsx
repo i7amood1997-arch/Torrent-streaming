@@ -8,6 +8,7 @@ import { api } from '@/lib/client-api';
 import { useApp } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbDetails, TmdbItem } from '@/lib/types';
+import type { ArchiveItem } from '@/lib/server/handlers';
 import { initialFocus, isTV } from '@/lib/tv';
 import { useWatchlist } from '@/lib/library';
 import { detailsId, followedSeries, newEpisode } from '@/lib/new-episodes';
@@ -265,6 +266,61 @@ const SHELVES: { title: string; type: 'movie' | 'series'; genre?: string }[] = [
   { title: 'Documentaries', type: 'movie', genre: 'Documentary' },
 ];
 
+/** Free libraries: public-domain and openly licensed films from the Internet Archive, legal to watch. */
+const FREE_ROWS: { title: string; collection: string }[] = [
+  { title: 'Free Classic Films · Internet Archive', collection: 'feature_films' },
+  { title: 'Film Noir · Free', collection: 'film_noir' },
+  { title: 'Classic Sci-Fi & Horror · Free', collection: 'SciFi_Horror' },
+  { title: 'Classic Cartoons · Free', collection: 'animationandcartoons' },
+];
+
+function FreeShelf({ title, collection, order }: { title: string; collection: string; order: number }) {
+  const ref = useRef<HTMLElement>(null);
+  const [items, setItems] = useState<ArchiveItem[]>();
+  const [busy, setBusy] = useState<string>();
+  const [note, setNote] = useState<string>();
+  const play = useApp((s) => s.play);
+  useEffect(() => {
+    const load = () => api.archiveShelf(collection).then((r) => setItems(r.results ?? [])).catch(() => setItems([]));
+    if (isTV()) { const t = setTimeout(load, 1200 + (SHELVES.length + order) * 350); return () => clearTimeout(t); }
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) { io.disconnect(); load(); } }, { rootMargin: '400px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [collection, order]);
+  if (items && !items.length) return null;
+  const start = async (it: ArchiveItem) => {
+    setBusy(it.id); setNote(undefined);
+    try {
+      const r = await api.archivePlay(it.id);
+      play({ kind: 'url', url: r.url, title: it.title, poster: it.poster });
+    } catch (e) { setNote((e as Error).message); }
+    setBusy(undefined);
+  };
+  return (
+    <section ref={ref} className="space-y-1">
+      <ShelfTitle>{title}</ShelfTitle>
+      {note && <p className="gutter text-xs text-red-300/90">{note}</p>}
+      <Shelf>
+        {items ? items.map((it) => (
+          <button key={it.id} className="group block rounded-xl text-left outline-none" onClick={() => start(it)} aria-label={`Play ${it.title}`}>
+            <span className="block w-[7.4rem] md:w-40 xl:w-48 2xl:w-52">
+              <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img decoding="async" src={it.poster} alt="" loading="lazy" className="h-full w-full object-cover" />
+                {busy === it.id && <span className="absolute inset-0 grid place-items-center bg-black/50"><span className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" /></span>}
+              </span>
+              <span className="mt-2 block truncate text-[13px] font-medium text-ink-200">{it.title}</span>
+              <span className="block truncate text-[11px] text-ink-400">{[it.year, 'Free'].filter(Boolean).join(' · ')}</span>
+            </span>
+          </button>
+        )) : <Skeleton />}
+      </Shelf>
+    </section>
+  );
+}
+
 export function Home({ active }: { active: boolean }) {
   const caps = useApp((s) => s.caps);
   const setView = useApp((s) => s.setView);
@@ -304,6 +360,7 @@ export function Home({ active }: { active: boolean }) {
         <Shelf className="!gap-1">{items.length ? items.slice(0, 10).map((it, i) => <Poster key={`${it.type}-${it.id}`} item={it} numeral={i + 1} />) : <Skeleton />}</Shelf>
       </section>
       {ready && SHELVES.map((s, i) => <LazyShelf key={s.title} {...s} order={i} />)}
+      {ready && FREE_ROWS.map((r, i) => <FreeShelf key={r.collection} {...r} order={i} />)}
     </div>
   );
 }

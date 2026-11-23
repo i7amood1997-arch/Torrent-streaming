@@ -663,7 +663,7 @@ const animetosho: IndexerAdapter = {
 
 // ─── Internet Archive (free, legal direct links: public-domain and openly licensed films) ─
 
-interface IaFile { name: string; format?: string; size?: string; height?: string; length?: string; source?: string }
+export interface IaFile { name: string; format?: string; size?: string; height?: string; length?: string; source?: string }
 
 /** "01:32:10", "5530.2" → seconds */
 const iaSeconds = (len?: string) => {
@@ -673,8 +673,8 @@ const iaSeconds = (len?: string) => {
 };
 
 /** Best browser-playable video file of an item: MP4/H.264, highest resolution, not a trailer. */
-export function pickArchiveFile(files: IaFile[]): IaFile | undefined {
-  const videos = files.filter((f) => /\.(mp4|m4v)$/i.test(f.name) && !/(trailer|sample|preview)/i.test(f.name) && (iaSeconds(f.length) ?? 9999) >= 600);
+export function pickArchiveFile(files: IaFile[], minSeconds = 600): IaFile | undefined {
+  const videos = files.filter((f) => /\.(mp4|m4v)$/i.test(f.name) && !/(trailer|sample|preview)/i.test(f.name) && (iaSeconds(f.length) ?? 9999) >= minSeconds);
   return videos.sort((a, b) => (Number(b.height) || 0) - (Number(a.height) || 0) || (Number(b.size) || 0) - (Number(a.size) || 0))[0];
 }
 

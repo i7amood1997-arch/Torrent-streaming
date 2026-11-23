@@ -80,6 +80,10 @@ export const api = {
   search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
     get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
 
+  /** A free-library row (Internet Archive collection) and the file to play for one of its titles. */
+  archiveShelf: (collection: string, signal?: AbortSignal) => get<{ results: import('./server/handlers').ArchiveItem[] }>('/api/archive', { collection }, signal),
+  archivePlay: (id: string) => get<{ url: string; title: string; fileName?: string }>('/api/archive/play', { id }),
+
   /** Intro / recap / credits times for an episode or movie (TheIntroDB, through the relay). */
   segments: (p: { tmdb?: number; imdb?: string; type?: string; season?: number; episode?: number; duration?: number }, signal?: AbortSignal) =>
     get<import('./server/handlers').Segments>('/api/segments', p, signal),
@@ -223,7 +227,7 @@ export const api = {
       return set({ ...(await res.json()), direct: true });
     }
     const offline = (reason: string): ServerCaps => ({
-      tmdb: false, debrid: { realdebrid: false, torbox: false, debridlink: false },
+      tmdb: false, debrid: { realdebrid: false, torbox: false, debridlink: false, premiumize: false, alldebrid: false },
       subtitles: { opensubtitles: false, subdl: false }, indexers: [], clientTorznab: false, offline: reason,
     });
     try {

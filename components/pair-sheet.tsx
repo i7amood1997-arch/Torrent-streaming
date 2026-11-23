@@ -9,7 +9,7 @@ import { sendToTv, trustedRelays } from '@/lib/pairing';
 import { useApp } from '@/lib/store';
 import { PAIR_CODE } from '@/lib/sync';
 
-const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link' };
+const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link', premiumize: 'Premiumize', alldebrid: 'AllDebrid' };
 
 export function PairSheet({ code, relay, onClose }: { code: string; relay?: string; onClose: () => void }) {
   const s = useApp((x) => x.settings);

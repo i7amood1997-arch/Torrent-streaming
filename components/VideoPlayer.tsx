@@ -91,7 +91,7 @@ function audioUrls(source: Source): string[] | undefined {
   return urls.length ? [...new Set(urls)] : undefined;
 }
 
-const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link' };
+const PROVIDER_NAMES: Record<string, string> = { realdebrid: 'Real-Debrid', torbox: 'TorBox', debridlink: 'Debrid-Link', premiumize: 'Premiumize', alldebrid: 'AllDebrid' };
 
 /**
  * webtor.io opens a magnet as a top-level page via /ext/magnet?url=… (the route its
