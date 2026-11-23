@@ -62,6 +62,9 @@ describe('which episode is next', () => {
     expect(pickNext(1, 4, [ep(4)], [ep(1, '2027-03-01')], '2026-11-22')).toBeUndefined();
     expect(pickNext(1, 4, [ep(4)], undefined, '2026-11-22')).toBeUndefined();
   });
+  it('the season’s episode list came back empty: doesn’t skip ahead to the next season', () => {
+    expect(pickNext(1, 3, [], [ep(1), ep(2)], '2026-11-22')).toBeUndefined();
+  });
 });
 
 describe('which id the catalog knows a show by', () => {

@@ -15,6 +15,7 @@ const aired = (e: TmdbEpisode, today: string) => !e.airDate || e.airDate <= toda
 
 /** Pure part: given the current season's episodes (and the next season's, if fetched). */
 export function pickNext(season: number, episode: number, eps: TmdbEpisode[], nextSeasonEps: TmdbEpisode[] | undefined, today: string): NextEp | undefined {
+  if (!eps.length) return undefined; // this season's list didn't come: can't tell it has ended
   const later = eps.filter((e) => e.episodeNumber > episode && aired(e, today)).sort((a, b) => a.episodeNumber - b.episodeNumber)[0];
   if (later) return { season, episode: later.episodeNumber, name: later.name, still: later.stillPath };
   if (eps.some((e) => e.episodeNumber > episode)) return undefined; // the rest hasn't aired yet
@@ -37,7 +38,7 @@ export async function findNext(r: PlayRequest): Promise<NextEp | undefined> {
   if (r.type !== 'series' || !id || r.season == null || r.episode == null) return undefined;
   const today = new Date().toISOString().slice(0, 10);
   const cur = (await api.tmdbSeason(id, r.season))?.episodes ?? [];
-  const needNextSeason = !cur.some((e) => e.episodeNumber > r.episode!);
+  const needNextSeason = cur.length > 0 && !cur.some((e) => e.episodeNumber > r.episode!);
   const nxt = needNextSeason ? (await api.tmdbSeason(id, r.season + 1).catch(() => undefined))?.episodes : undefined;
   return pickNext(r.season, r.episode, cur, nxt, today);
 }
