@@ -22,12 +22,23 @@ export function pickNext(season: number, episode: number, eps: TmdbEpisode[], ne
   return first ? { season: season + 1, episode: first.episodeNumber, name: first.name, still: first.stillPath } : undefined;
 }
 
+/**
+ * The id the relay's catalog knows this show by: its TMDB id when the relay has a TMDB key,
+ * otherwise the number in its IMDb id (the keyless catalog's ids).
+ */
+export function catalogId(r: Pick<PlayRequest, 'tmdbId' | 'imdbId'>, relayHasTmdb: boolean): number | undefined {
+  if (relayHasTmdb && r.tmdbId) return r.tmdbId;
+  const m = r.imdbId?.match(/^tt(\d+)$/);
+  return m ? Number(m[1]) : relayHasTmdb ? undefined : r.tmdbId;
+}
+
 export async function findNext(r: PlayRequest): Promise<NextEp | undefined> {
-  if (r.type !== 'series' || !r.tmdbId || r.season == null || r.episode == null) return undefined;
+  const id = catalogId(r, !!useApp.getState().caps?.tmdb);
+  if (r.type !== 'series' || !id || r.season == null || r.episode == null) return undefined;
   const today = new Date().toISOString().slice(0, 10);
-  const cur = (await api.tmdbSeason(r.tmdbId, r.season))?.episodes ?? [];
+  const cur = (await api.tmdbSeason(id, r.season))?.episodes ?? [];
   const needNextSeason = !cur.some((e) => e.episodeNumber > r.episode!);
-  const nxt = needNextSeason ? (await api.tmdbSeason(r.tmdbId, r.season + 1).catch(() => undefined))?.episodes : undefined;
+  const nxt = needNextSeason ? (await api.tmdbSeason(id, r.season + 1).catch(() => undefined))?.episodes : undefined;
   return pickNext(r.season, r.episode, cur, nxt, today);
 }
 

@@ -38,6 +38,8 @@ export interface ApiBindings {
   groqFetch?: typeof fetch;
   /** Tests only: stands in for fetch when calling TheIntroDB. */
   introFetch?: typeof fetch;
+  /** Tests only: stands in for fetch when reading the keyless catalog (Cinemeta). */
+  catalogFetch?: typeof fetch;
   /** Tests only: stands in for fetch when calling the Internet Archive. */
   archiveFetch?: typeof fetch;
   /** Claude API client (Worker only, when ANTHROPIC_API_KEY is set): the last-resort translator. */
@@ -607,31 +609,55 @@ export interface Segments {
 const INTRODB = 'https://api.theintrodb.org/v4/media';
 
 /** Community-submitted times (seconds) for an episode or movie, or {} when none are known. */
+/**
+ * The ids TheIntroDB knows a show by, from its IMDb id: the keyless catalog (Cinemeta) lists
+ * the TVDB id (TheIntroDB's own key) and the TMDB id. For relays without a TMDB key.
+ */
+async function idsFromImdb(imdb: string, type: 'movie' | 'series', f: typeof fetch): Promise<{ tvdb?: number; tmdb?: number }> {
+  try {
+    const res = await f(`https://v3-cinemeta.strem.io/meta/${type}/${imdb}.json`, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return {};
+    const m = ((await res.json()) as { meta?: { tvdb_id?: number | string; moviedb_id?: number | string } }).meta ?? {};
+    const num = (v: unknown) => (Number(v) > 0 ? Number(v) : undefined);
+    return { tvdb: num(m.tvdb_id), tmdb: num(m.moviedb_id) };
+  } catch {
+    return {};
+  }
+}
+
+/** Community-submitted times (seconds) for an episode or movie, or {} when none are known. */
 async function segments(q: URLSearchParams, bindings: ApiBindings): Promise<Response> {
-  const tmdb = intParam(q.get('tmdb'));
-  const imdb = q.get('imdb') ?? '';
+  let tmdb = intParam(q.get('tmdb'));
+  const imdb = /^tt\d{6,9}$/.test(q.get('imdb') ?? '') ? q.get('imdb')! : '';
   const type = q.get('type') === 'series' ? 'series' : 'movie';
   const season = intParam(q.get('season'));
   const episode = intParam(q.get('episode'));
   const duration = Number(q.get('duration')) || 0;
+  if (type === 'series' && (season == null || episode == null)) return err('season and episode are needed', 400);
+  const f = bindings.introFetch ?? fetch;
+  // No TMDB id (a relay without a TMDB key): find the show's TVDB / TMDB id from its IMDb id.
+  let tvdb: number | undefined;
+  if (!tmdb && imdb) ({ tvdb, tmdb } = await idsFromImdb(imdb, type, bindings.catalogFetch ?? f));
   const qs = new URLSearchParams();
-  // Episodes only by TMDB id (an IMDb id there could mean the series or the episode); movies by either.
-  if (tmdb) qs.set('tmdb_id', String(tmdb));
-  else if (type === 'movie' && /^tt\d{6,9}$/.test(imdb)) qs.set('imdb_id', imdb);
-  else return json({}, 200, { 'Cache-Control': 'public, max-age=86400' });
+  if (tvdb) qs.set('tvdb_id', String(tvdb));
+  else if (tmdb) qs.set('tmdb_id', String(tmdb));
+  // An IMDb id is unambiguous only for a movie (for an episode it could mean the series or the episode).
+  else if (type === 'movie' && imdb) qs.set('imdb_id', imdb);
+  else return json({}, 200, { 'Cache-Control': 'public, max-age=86400', 'X-Segments': 'no id' });
   if (type === 'series') {
-    if (season == null || episode == null) return err('season and episode are needed', 400);
     qs.set('season', String(season));
     qs.set('episode', String(episode));
   }
   if (duration > 60) qs.set('duration_ms', String(Math.round(duration * 1000)));
-  const f = bindings.introFetch ?? fetch;
+  // What was asked and what came back, for diagnosing a missing Skip button (no personal data).
+  const asked = [...qs.keys()].filter((k) => k.endsWith('_id')).map((k) => `${k}=${qs.get(k)}`).join(' ');
   try {
     const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json' } });
-    if (!res.ok) return json({}, 200, { 'Cache-Control': `public, max-age=${res.status === 404 ? 21600 : 300}` });
-    return json(parseSegments(await res.json()), 200, { 'Cache-Control': 'public, max-age=43200' });
-  } catch {
-    return json({}, 200, { 'Cache-Control': 'no-store' });
+    if (!res.ok) return json({}, 200, { 'Cache-Control': `public, max-age=${res.status === 404 ? 21600 : 300}`, 'X-Segments': `${asked} -> HTTP ${res.status}` });
+    const out = parseSegments(await res.json());
+    return json(out, 200, { 'Cache-Control': 'public, max-age=43200', 'X-Segments': `${asked} -> ${Object.keys(out).join(',') || 'none'}` });
+  } catch (e) {
+    return json({}, 200, { 'Cache-Control': 'no-store', 'X-Segments': `${asked} -> ${(e as Error).message}` });
   }
 }
 
