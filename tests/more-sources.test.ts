@@ -85,3 +85,16 @@ describe('Kickass Torrents', () => {
     expect(res.results.map((r) => r.seeders)).toEqual([56, 49, 42, 35, 28, 21]);
   });
 });
+
+describe('LimeTorrents and GloTorrents', () => {
+  it('LimeTorrents: rows with the hash in their .torrent link need no extra page', async () => {
+    const { parseLimeTorrentsList } = await import('@/lib/torrent-indexer');
+    const html = `<table class="table2"><tr><th>Name</th></tr><tr bgcolor="#F4F4F4"><td class="tdleft"><div class="tt-name"><a href="http://itorrents.org/torrent/${H1.toUpperCase()}.torrent?title=x" rel="nofollow" class="csprite_dl14"></a><a href="/Severance-S02E01-1080p-torrent-1.html">Severance S02E01 1080p</a></div></td><td class="tdnormal">2 days ago</td><td class="tdnormal">1.9 GB</td><td class="tdseed">1,234</td><td class="tdleech">56</td></tr></table>`;
+    expect(parseLimeTorrentsList(html, 'https://lime.test')).toEqual([{ title: 'Severance S02E01 1080p', page: 'https://lime.test/Severance-S02E01-1080p-torrent-1.html', hash: H1, size: expect.any(Number), seeders: 1234, leechers: 56 }]);
+  });
+  it('GloTorrents: magnet, size and swarm from each row', async () => {
+    const { parseGloTorrentsHtml } = await import('@/lib/torrent-indexer');
+    const html = `<tr class='t-row'><td class='ttable_col1'><a title="Dune Part Two 2024 1080p WEB" href="/x.html"><b>Dune</b></a></td><td class='ttable_col1' align='center'><a href="magnet:?xt=urn:btih:${H2}&amp;dn=Dune"><img></a></td><td class='ttable_col1' align='center'>6.2 GB</td><td align='center'><font color='green'><b>321</b></font></td><td align='center'><font color='#ff0000'><b>12</b></font></td></tr>`;
+    expect(parseGloTorrentsHtml(html)).toEqual([expect.objectContaining({ infoHash: H2, title: 'Dune Part Two 2024 1080p WEB', seeders: 321, leechers: 12 })]);
+  });
+});

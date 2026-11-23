@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch' | 'torrentclaw' | 'torrentdownload' | 'torrentgalaxy' | 'therarbg' | 'kickass';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch' | 'torrentclaw' | 'torrentdownload' | 'torrentgalaxy' | 'therarbg' | 'kickass' | 'limetorrents' | 'glotorrents';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch', 'torrentclaw', 'torrentdownload', 'torrentgalaxy', 'therarbg', 'kickass'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch', 'torrentclaw', 'torrentdownload', 'torrentgalaxy', 'therarbg', 'kickass', 'limetorrents', 'glotorrents'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -55,6 +55,8 @@ export interface IndexerConfig {
   torrentgalaxyUrl: string;
   therarbgUrl: string;
   kickassUrl: string;
+  limetorrentsUrl: string;
+  glotorrentsUrl: string;
   timeoutMs: number;
   /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
   publicRelays?: boolean;
@@ -92,6 +94,8 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     torrentgalaxyUrl: trimSlash(env.TORRENTGALAXY_URL || 'https://torrentgalaxy.to'),
     therarbgUrl: trimSlash(env.THERARBG_URL || 'https://therarbg.com'),
     kickassUrl: trimSlash(env.KICKASS_URL || 'https://katcr.to'),
+    limetorrentsUrl: trimSlash(env.LIMETORRENTS_URL || 'https://www.limetorrents.lol'),
+    glotorrentsUrl: trimSlash(env.GLOTORRENTS_URL || 'https://glodls.to'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 6500),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
@@ -802,6 +806,70 @@ const kickass: IndexerAdapter = {
   }),
 };
 
+// ─── LimeTorrents (HTML table; the hash is in the row's .torrent link, else on its page) ─
+
+export function parseLimeTorrentsList(html: string, base: string): { title: string; page: string; hash?: string; size?: number; seeders: number; leechers: number }[] {
+  const table = /class="table2"[\s\S]*?<\/table>/i.exec(html)?.[0] ?? '';
+  const rows = table.match(/<tr[^>]*bgcolor="#(?:F4F4F4|FFFFFF)"[^>]*>[\s\S]*?<\/tr>/gi) ?? [];
+  const text = (c?: string) => decodeEntities((c ?? '').replace(/<[^>]+>/g, '')).trim();
+  return rows.flatMap((row) => {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1]);
+    const page = [...(cells[0] ?? '').matchAll(/<a[^>]*href="([^"]+\.html)"[^>]*>([\s\S]*?)<\/a>/gi)].pop();
+    if (!page) return [];
+    const hash = /\/torrent\/([a-f0-9]{40})\.torrent/i.exec(cells[0] ?? '')?.[1]?.toLowerCase();
+    const num = (c?: string) => Number(text(c).replace(/[^\d]/g, '')) || 0;
+    return [{ title: text(page[2]), page: page[1].startsWith('http') ? page[1] : `${base}${page[1].startsWith('/') ? '' : '/'}${page[1]}`, hash, size: parseSize(text(cells[2])), seeders: num(cells[3]), leechers: num(cells[4]) }];
+  }).filter((r) => r.title);
+}
+
+const limetorrents: IndexerAdapter = {
+  id: 'limetorrents',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    const cat = q.type === 'series' ? 'tv' : q.type === 'movie' ? 'movies' : 'all';
+    const html = await fetchText(`${config.limetorrentsUrl}/search/${cat}/${encodeURIComponent(term)}/seeds/1/`);
+    const list = parseLimeTorrentsList(html, config.limetorrentsUrl).filter((r) => r.seeders > 0).sort((a, b) => b.seeders - a.seeders);
+    if (!list.length && !/table2|No results|not found/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    // Rows that carry their hash need nothing more; the others: open the best few pages.
+    const withHash = list.filter((r) => r.hash);
+    const open = list.filter((r) => !r.hash).slice(0, THERARBG_PAGES);
+    const pages = await Promise.allSettled(open.map((r) => fetchText(r.page)));
+    const opened = open.map((r, i) => {
+      const p = pages[i];
+      const magnet = p.status === 'fulfilled' ? /href\s*=\s*"(magnet:\?xt=urn:btih:[^"]+)"/i.exec(p.value)?.[1]?.replace(/&amp;/g, '&') : undefined;
+      return { ...r, hash: magnet ? parseMagnet(magnet)?.infoHash : undefined };
+    });
+    return [...withHash, ...opened].flatMap((r) => (r.hash ? [makeResult({ title: r.title, infoHash: r.hash, sizeBytes: r.size, seeders: r.seeders, leechers: r.leechers, indexer: 'limetorrents', tracker: 'LimeTorrents' })] : []));
+  }),
+};
+
+// ─── GloTorrents (HTML; magnet links in the results) ──────────────────────────
+
+export function parseGloTorrentsHtml(html: string): TorrentResult[] {
+  const flat = html.replace(/\s+/g, ' ');
+  const re = /title="(.+?)".+?href="(.+?)".+?<\/a>.+?align='center'>.+?href="(magnet:.*?)".+?([0-9,.]+ (?:TB|GB|MB|KB)).+?<font color='green'><b>([0-9,]+)<\/b>.+?<font color='#[0-9a-zA-Z]{6}'><b>([0-9,]+)<\/b>/g;
+  const out: TorrentResult[] = [];
+  for (const m of flat.matchAll(re)) {
+    const parsed = parseMagnet(m[3].replace(/&amp;/g, '&'));
+    if (!parsed) continue;
+    out.push(makeResult({ title: decodeEntities(m[1]), infoHash: parsed.infoHash, magnet: parsed.magnet, sizeBytes: parseSize(m[4]), seeders: Number(m[5].replace(/,/g, '')) || 0, leechers: Number(m[6].replace(/,/g, '')) || 0, indexer: 'glotorrents', tracker: 'GloTorrents' }));
+  }
+  return out;
+}
+
+const glotorrents: IndexerAdapter = {
+  id: 'glotorrents',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    // cat 1 = movies, 41 = TV (its own ids); 0 = all.
+    const cat = q.type === 'series' ? 41 : q.type === 'movie' ? 1 : 0;
+    const html = await fetchText(`${config.glotorrentsUrl}/search_results.php?search=${encodeURIComponent(term).replace(/%20/g, '+')}&cat=${cat}&sort=seeders&order=desc&page=0&incldead=0&inclexternal=0`);
+    const out = parseGloTorrentsHtml(html);
+    if (!out.length && !/search_results|ttable|No torrents|Nothing found/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    return out;
+  }),
+};
+
 // ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────
 
 /** Parse a Nyaa RSS feed (nyaa:infoHash / nyaa:seeders / nyaa:size extensions). */
@@ -903,7 +971,7 @@ const archive: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch, torrentclaw, torrentdownload, torrentgalaxy, therarbg, kickass };
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch, torrentclaw, torrentdownload, torrentgalaxy, therarbg, kickass, limetorrents, glotorrents };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
