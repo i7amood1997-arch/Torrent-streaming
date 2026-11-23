@@ -132,7 +132,7 @@ describe('up-front sync', () => {
         expect(Math.abs(fast!.z - full!.z)).toBeLessThan(full!.z * 0.15);
       }
     }
-  });
+  }, 30_000); // checks every step by brute force on purpose: slow on shared CI machines
 
   it('finds a large shift (a release with a different opening: subtitles 34 s late)', () => {
     const starts = planWindows(film, 5400, 4, 60);
