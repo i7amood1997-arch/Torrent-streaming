@@ -8,6 +8,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: read # to see GitHub's own "pages build and deployment" run (deploy job)
 
 concurrency:
   group: pages
@@ -73,5 +74,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # If Settings → Pages → Source is "Deploy from a branch", GitHub also publishes the raw
+      # repository (the README) on every push, racing this deploy: whichever finishes last is
+      # the site. Wait for that run (same commit) to finish, so the app is always published last.
+      # (Setting the source to "GitHub Actions" stops that run altogether.)
+      - name: Wait for GitHub's branch publish to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 40); do
+            busy=$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}&per_page=50" \
+              --jq '[.workflow_runs[] | select(.name == "pages build and deployment" and .status != "completed")] | length')
+            [ "${busy:-0}" = "0" ] && exit 0
+            echo "GitHub's branch publish still running; waiting…"; sleep 10
+          done
       - id: deployment
         uses: actions/deploy-pages@v4
