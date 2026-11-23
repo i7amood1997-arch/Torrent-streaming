@@ -655,7 +655,7 @@ const torrentclaw: IndexerAdapter = {
     if (!out.length && !Array.isArray(body?.results)) throw new Error(`unexpected answer (${Object.keys(body ?? {}).slice(0, 6).join(', ') || 'empty'})`);
     if (!out.length && Array.isArray(body.results) && body.results.length) {
       const first = (body.results as Record<string, unknown>[])[0] ?? {};
-      const shape = Object.entries(first).map(([k, v]) => Array.isArray(v) ? `${k}[${v.length}]{${Object.keys((v[0] as object) ?? {}).slice(0, 12).join(' ')}}` : k).join(', ');
+      const shape = Object.entries(first).map(([k, v]) => Array.isArray(v) ? `${k}[${v.length}]{${Object.keys((v[0] as object) ?? {}).slice(0, 40).join(' ')}}` : k).join(', ');
       throw new Error(`answer without torrents (${shape})`);
     }
     return out;
