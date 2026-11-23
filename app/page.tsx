@@ -46,6 +46,7 @@ export default function App() {
   const accessToken = useApp((s) => s.settings.accessToken);
   const [hydrated, setHydrated] = useState(false);
   const tvSetupDone = useApp((s) => s.tvSetupDone);
+  const linking = useApp((s) => s.linking);
   const [tv, setTv] = useState(false);
   // Opened from a TV's QR code: ?pair=CODE&relay=…
   const [pairing, setPairing] = useState<{ code: string; relay?: string }>();
@@ -193,7 +194,7 @@ export default function App() {
           </div>
         </>
       )}
-      {hydrated && tv && !tvSetupDone && <TvSetup />}
+      {hydrated && ((tv && !tvSetupDone) || linking) && <TvSetup />}
       {hydrated && pairing && <PairSheet code={pairing.code} relay={pairing.relay} onClose={closePairing} />}
     </div>
   );
