@@ -15,6 +15,8 @@ let started = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let running = false;
 let again = false;
+/** True while the relay's answer is being taken in (that change is not a local one to send). */
+let applying = false;
 
 /** Did the last sync work? (Settings shows it.) */
 export let lastSync: { at: number; ok: boolean; error?: string } | undefined;
@@ -37,7 +39,10 @@ async function syncNow() {
     const body = (await res.json().catch(() => ({}))) as { state?: unknown; error?: string };
     if (!res.ok || !body.state) throw new Error(body.error ?? `HTTP ${res.status}`);
     // Only if the key didn't change meanwhile (the user typed another one in).
-    if (useApp.getState().settings.syncKey === key) useApp.getState().applyRemote(body.state as never);
+    if (useApp.getState().settings.syncKey === key) {
+      applying = true;
+      try { useApp.getState().applyRemote(body.state as never); } finally { applying = false; }
+    }
     lastSync = { at: Date.now(), ok: true };
   } catch (e) {
     lastSync = { at: Date.now(), ok: false, error: (e as Error).message };
@@ -71,7 +76,11 @@ export function startSync() {
   seedHistory();
   // Local changes: send them shortly after (several quick changes go together).
   useApp.subscribe((s, prev) => {
-    if (s.syncState !== prev.syncState && !running) schedule(AFTER_CHANGE_MS);
+    // A change made while a sync is on its way: send it once that one is back.
+    if (s.syncState !== prev.syncState && !applying) {
+      if (running) again = true;
+      else schedule(AFTER_CHANGE_MS);
+    }
     // Relay just became known/reachable, or the key was changed: sync now.
     if (s.caps !== prev.caps || s.settings.syncKey !== prev.settings.syncKey) schedule(300);
   });
