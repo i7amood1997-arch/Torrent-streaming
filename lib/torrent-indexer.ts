@@ -653,7 +653,11 @@ const torrentclaw: IndexerAdapter = {
     const out = parseTorrentClaw(body as never);
     // An answer of another shape: say what it holds instead of silently finding nothing.
     if (!out.length && !Array.isArray(body?.results)) throw new Error(`unexpected answer (${Object.keys(body ?? {}).slice(0, 6).join(', ') || 'empty'})`);
-    if (!out.length && Array.isArray(body.results) && body.results.length) throw new Error(`answer without torrents (${Object.keys((body.results as Record<string, unknown>[])[0] ?? {}).slice(0, 8).join(', ')})`);
+    if (!out.length && Array.isArray(body.results) && body.results.length) {
+      const first = (body.results as Record<string, unknown>[])[0] ?? {};
+      const shape = Object.entries(first).map(([k, v]) => Array.isArray(v) ? `${k}[${v.length}]{${Object.keys((v[0] as object) ?? {}).slice(0, 12).join(' ')}}` : k).join(', ');
+      throw new Error(`answer without torrents (${shape})`);
+    }
     return out;
   }),
 };
