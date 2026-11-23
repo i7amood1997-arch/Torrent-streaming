@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch' | 'torrentclaw' | 'torrentdownload' | 'torrentgalaxy' | 'therarbg';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch', 'torrentclaw', 'torrentdownload', 'torrentgalaxy', 'therarbg'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -48,6 +48,10 @@ export interface IndexerConfig {
   nyaaUrl: string;
   torrentsdbUrl: string;
   bitsearchUrl: string;
+  torrentclawUrl: string;
+  torrentdownloadUrl: string;
+  torrentgalaxyUrl: string;
+  therarbgUrl: string;
   timeoutMs: number;
   /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
   publicRelays?: boolean;
@@ -79,6 +83,10 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     nyaaUrl: trimSlash(env.NYAA_URL || 'https://nyaa.si'),
     torrentsdbUrl: trimSlash(env.TORRENTSDB_URL || 'https://torrentsdb.com'),
     bitsearchUrl: trimSlash(env.BITSEARCH_URL || 'https://bitsearch.to'),
+    torrentclawUrl: trimSlash(env.TORRENTCLAW_URL || 'https://torrentclaw.com'),
+    torrentdownloadUrl: trimSlash(env.TORRENTDOWNLOAD_URL || 'https://www.torrentdownload.info'),
+    torrentgalaxyUrl: trimSlash(env.TORRENTGALAXY_URL || 'https://torrentgalaxy.to'),
+    therarbgUrl: trimSlash(env.THERARBG_URL || 'https://therarbg.com'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 6500),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
@@ -615,6 +623,137 @@ const bitsearch: IndexerAdapter = {
   }),
 };
 
+// ─── TorrentClaw (JSON API: aggregates public sources, with a quality score) ───
+// Learned from its official qBittorrent plugin (LightDestory/qBittorrent-Search-Plugins).
+
+interface ClawTorrent { infoHash?: string; rawTitle?: string; sizeBytes?: number; seeders?: number; leechers?: number }
+
+export function parseTorrentClaw(body: { results?: { title?: string; torrents?: ClawTorrent[] }[] }): TorrentResult[] {
+  return (body?.results ?? []).flatMap((c) => (c.torrents ?? []).flatMap((t) => {
+    const hash = String(t.infoHash ?? '').toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(hash)) return [];
+    return [makeResult({
+      title: t.rawTitle || c.title || hash,
+      infoHash: hash,
+      sizeBytes: Number(t.sizeBytes) || undefined,
+      seeders: Number(t.seeders) || 0,
+      leechers: Number(t.leechers) || 0,
+      indexer: 'torrentclaw',
+      tracker: 'TorrentClaw',
+    })];
+  }));
+}
+
+const torrentclaw: IndexerAdapter = {
+  id: 'torrentclaw',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
+    const type = q.type === 'series' ? '&type=show' : q.type === 'movie' ? '&type=movie' : '';
+    return parseTorrentClaw(await fetchJson(`${config.torrentclawUrl}/api/v1/search?q=${encodeURIComponent(term)}&limit=50${type}`));
+  }),
+};
+
+// ─── TorrentDownload.info (HTML; the info-hash is in each result's link) ──────
+
+export function parseTorrentDownloadHtml(html: string): TorrentResult[] {
+  const flat = html.replace(/\s+/g, ' ');
+  const rows = flat.match(/<tr><td.+?tt-name.+?<\/tr>/g) ?? [];
+  const num = (v?: string) => { const n = Number((v ?? '').replace(/[^\d]/g, '')); return Number.isFinite(n) ? n : 0; };
+  return rows.flatMap((row) => {
+    const m = /href="\/([0-9a-f]{40})\/[^"]*">(.*?)<\/a>.*?<td class="tdnormal">[^<]*<\/td>\s*<td class="tdnormal">([^<]*)<\/td>\s*<td class="tdseed">([^<]*)<\/td>\s*<td class="tdleech">([^<]*)<\/td>/i.exec(row);
+    if (!m) return [];
+    const title = decodeEntities(m[2].replace(/<[^>]+>/g, '')).trim();
+    if (!title) return [];
+    return [makeResult({ title, infoHash: m[1], sizeBytes: parseSize(m[3]), seeders: num(m[4]), leechers: num(m[5]), indexer: 'torrentdownload', tracker: 'TorrentDownload' })];
+  });
+}
+
+const torrentdownload: IndexerAdapter = {
+  id: 'torrentdownload',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    const html = await fetchText(`${config.torrentdownloadUrl}/search?q=${encodeURIComponent(term).replace(/%20/g, '+')}`);
+    const out = parseTorrentDownloadHtml(html);
+    if (!out.length && !/tt-name|No results|did not match/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    return out;
+  }),
+};
+
+// ─── TorrentGalaxy (HTML; magnet links in the results) ─────────────────────────
+
+export function parseTorrentGalaxyHtml(html: string): TorrentResult[] {
+  const rows = html.split(/<div[^>]*class="[^"]*tgxtablerow[^"]*"/i).slice(1);
+  const num = (v?: string) => Number((v ?? '').replace(/[^\d]/g, '')) || 0;
+  return rows.flatMap((row) => {
+    const magnet = /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(row)?.[1]?.replace(/&amp;/g, '&');
+    const parsed = magnet ? parseMagnet(magnet) : undefined;
+    if (!parsed) return [];
+    const title = decodeEntities(/<a[^>]*class="[^"]*txlight[^"]*"[^>]*title="([^"]+)"/i.exec(row)?.[1] ?? /<a[^>]*title="([^"]+)"[^>]*class="[^"]*txlight/i.exec(row)?.[1] ?? '');
+    if (!title) return [];
+    return [makeResult({
+      title,
+      infoHash: parsed.infoHash,
+      magnet: parsed.magnet,
+      sizeBytes: parseSize(/badge badge-secondary[^>]*>([^<]+)</i.exec(row)?.[1]),
+      seeders: num(/<font color=['"]?green['"]?[^>]*>(?:<b>)?([\d,]+)/i.exec(row)?.[1]),
+      leechers: num(/<font color=['"]?#ff0000['"]?[^>]*>(?:<b>)?([\d,]+)/i.exec(row)?.[1]),
+      indexer: 'torrentgalaxy',
+      tracker: 'TorrentGalaxy',
+    })];
+  });
+}
+
+const torrentgalaxy: IndexerAdapter = {
+  id: 'torrentgalaxy',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    // Movies, TV and anime categories, most seeded first.
+    const cats = 'c3=1&c46=1&c45=1&c42=1&c4=1&c1=1&c41=1&c5=1&c6=1&c7=1&c28=1&';
+    const html = await fetchText(`${config.torrentgalaxyUrl}/torrents.php?${cats}sort=seeders&order=desc&search=${encodeURIComponent(term).replace(/%20/g, '+')}`);
+    const out = parseTorrentGalaxyHtml(html);
+    if (!out.length && !/tgxtable|No results/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    return out;
+  }),
+};
+
+// ─── TheRARBG (HTML; the magnet is on each result's page: only the best few are opened) ─
+
+export function parseTheRarbgList(html: string, base: string): { title: string; page: string; size?: number; seeders: number; leechers: number }[] {
+  const body = /<tbody[^>]*>([\s\S]*?)<\/tbody>/i.exec(html)?.[1] ?? '';
+  const rows = body.split(/<tr[\s>]/i).slice(1);
+  const text = (c?: string) => decodeEntities((c ?? '').replace(/<[^>]+>/g, '')).trim();
+  return rows.flatMap((row) => {
+    const cells = [...row.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((m) => m[1]);
+    const link = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i.exec(cells[1] ?? '');
+    if (!link) return [];
+    const href = link[1].startsWith('http') ? link[1] : `${base}/${link[1].replace(/^\/+/, '')}`;
+    const seeders = Number(text(cells[6]).replace(/[^\d]/g, '')) || 0;
+    return [{ title: text(link[2]), page: href, size: parseSize(text(cells[5])), seeders, leechers: Number(text(cells[7]).replace(/[^\d]/g, '')) || 0 }];
+  }).filter((r) => r.title);
+}
+
+/** How many result pages TheRARBG search may open for their magnet links. */
+const THERARBG_PAGES = 6;
+
+const therarbg: IndexerAdapter = {
+  id: 'therarbg',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    const cat = q.type === 'series' ? 'category:TV:' : q.type === 'movie' ? 'category:Movies:' : '';
+    const html = await fetchText(`${config.therarbgUrl}/get-posts/order:-se:${cat}keywords:${encodeURIComponent(term)}/`);
+    const list = parseTheRarbgList(html, config.therarbgUrl).filter((r) => r.seeders > 0).sort((a, b) => b.seeders - a.seeders).slice(0, THERARBG_PAGES);
+    if (!list.length && !/<title>Search for/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    const pages = await Promise.allSettled(list.map((r) => fetchText(r.page)));
+    return list.flatMap((r, i) => {
+      const p = pages[i];
+      const magnet = p.status === 'fulfilled' ? /href="(magnet:\?xt=urn:btih:[^"]+)"/i.exec(p.value)?.[1]?.replace(/&amp;/g, '&') : undefined;
+      const parsed = magnet ? parseMagnet(magnet) : undefined;
+      if (!parsed) return [];
+      return [makeResult({ title: r.title, infoHash: parsed.infoHash, magnet: parsed.magnet, sizeBytes: r.size, seeders: r.seeders, leechers: r.leechers, indexer: 'therarbg', tracker: 'TheRARBG' })];
+    });
+  }),
+};
+
 // ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────
 
 /** Parse a Nyaa RSS feed (nyaa:infoHash / nyaa:seeders / nyaa:size extensions). */
@@ -716,7 +855,7 @@ const archive: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch };
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch, torrentclaw, torrentdownload, torrentgalaxy, therarbg };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
