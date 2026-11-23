@@ -14,6 +14,20 @@ describe('TorrentClaw', () => {
     expect(r[0]).toMatchObject({ infoHash: H1, seeders: 812, leechers: 40, quality: '1080p', indexer: 'torrentclaw' });
     expect(r[0].magnet).toContain(H1);
   });
+
+  it('without a key it says so instead of finding nothing', async () => {
+    vi.stubGlobal('fetch', (async () => new Response(JSON.stringify({ results: [{ title: 'x', torrents: [{ rawTitle: 'no hash' }] }] }))) as unknown as typeof fetch);
+    const res = await searchTorrents({ q: 'x' }, configFromEnv({ INDEXERS: 'torrentclaw' }));
+    expect(res.errors[0].message).toMatch(/API key/);
+  });
+
+  it('with a key it sends it', async () => {
+    let auth = '';
+    vi.stubGlobal('fetch', (async (_u: string, init: RequestInit) => { auth = (init.headers as Record<string, string>).Authorization; return new Response(JSON.stringify({ results: [{ title: 'x', torrents: [{ infoHash: H1, rawTitle: 'X.2024.1080p', seeders: 5 }] }] })); }) as unknown as typeof fetch);
+    const res = await searchTorrents({ q: 'x' }, configFromEnv({ INDEXERS: 'torrentclaw', TORRENTCLAW_API_KEY: 'k1' }));
+    expect(auth).toBe('Bearer k1');
+    expect(res.results).toHaveLength(1);
+  });
 });
 
 describe('TorrentDownload', () => {

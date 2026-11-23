@@ -29,7 +29,7 @@ const SOURCES = [
   { id: 'archive', name: 'Internet Archive', help: 'Free, legal films (public domain and openly licensed), streamed directly — no seeders.' },
   { id: 'torrentsdb', name: 'TorrentsDB', help: 'Large catalogue of movies, shows and anime (Catalog mode), like Torrentio.' },
   { id: 'bitsearch', name: 'Bitsearch', help: 'Large search engine across many sites, with seeders.' },
-  { id: 'torrentclaw', name: 'TorrentClaw', help: 'Combines 10+ public sources for movies and shows, with seeders.' },
+  { id: 'torrentclaw', name: 'TorrentClaw', help: 'Combines 10+ public sources, with seeders. Needs a TorrentClaw API key on your relay (TORRENTCLAW_API_KEY).' },
   { id: 'torrentgalaxy', name: 'TorrentGalaxy', help: 'Big movie and TV site. Off by default: it doesn’t answer from the relay at the moment.' },
   { id: 'therarbg', name: 'TheRARBG', help: 'Movies and TV in the style of the old RARBG (its best few results).' },
   { id: 'torrentdownload', name: 'TorrentDownload', help: 'Large general torrent search, with seeders.' },

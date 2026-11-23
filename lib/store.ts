@@ -146,7 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
-  indexers: ['torrentio', 'torrentsdb', 'knaben', 'bitsearch', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv', 'torrentclaw', 'therarbg', 'torrentdownload'],
+  indexers: ['torrentio', 'torrentsdb', 'knaben', 'bitsearch', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv', 'therarbg', 'torrentdownload'],
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
@@ -245,9 +245,9 @@ export const useApp = create<AppState>()(
         if (version < 5 && Array.isArray(persisted?.settings?.indexers)) {
           persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'torrentsdb', 'bitsearch'])];
         }
-        // v6 added TorrentClaw, TorrentGalaxy, TheRARBG and TorrentDownload.
+        // v6 added TheRARBG and TorrentDownload (TorrentClaw and TorrentGalaxy stay off: see Settings).
         if (version < 6 && Array.isArray(persisted?.settings?.indexers)) {
-          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'torrentclaw', 'therarbg', 'torrentdownload'])];
+          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'therarbg', 'torrentdownload'])];
         }
         // v3 added AnimeTosho and MediaFusion.
         if (version < 3 && Array.isArray(persisted?.settings?.indexers)) {

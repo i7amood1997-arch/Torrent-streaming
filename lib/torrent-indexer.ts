@@ -49,6 +49,8 @@ export interface IndexerConfig {
   torrentsdbUrl: string;
   bitsearchUrl: string;
   torrentclawUrl: string;
+  /** TorrentClaw only gives each torrent's info-hash to requests with an API key. */
+  torrentclawKey?: string;
   torrentdownloadUrl: string;
   torrentgalaxyUrl: string;
   therarbgUrl: string;
@@ -84,6 +86,7 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     torrentsdbUrl: trimSlash(env.TORRENTSDB_URL || 'https://torrentsdb.com'),
     bitsearchUrl: trimSlash(env.BITSEARCH_URL || 'https://bitsearch.to'),
     torrentclawUrl: trimSlash(env.TORRENTCLAW_URL || 'https://torrentclaw.com'),
+    torrentclawKey: env.TORRENTCLAW_API_KEY || undefined,
     torrentdownloadUrl: trimSlash(env.TORRENTDOWNLOAD_URL || 'https://www.torrentdownload.info'),
     torrentgalaxyUrl: trimSlash(env.TORRENTGALAXY_URL || 'https://torrentgalaxy.to'),
     therarbgUrl: trimSlash(env.THERARBG_URL || 'https://therarbg.com'),
@@ -626,11 +629,11 @@ const bitsearch: IndexerAdapter = {
 // ─── TorrentClaw (JSON API: aggregates public sources, with a quality score) ───
 // Learned from its official qBittorrent plugin (LightDestory/qBittorrent-Search-Plugins).
 
-interface ClawTorrent { infoHash?: string; rawTitle?: string; sizeBytes?: number; seeders?: number; leechers?: number }
+interface ClawTorrent { infoHash?: string; magnetUrl?: string; rawTitle?: string; sizeBytes?: number; seeders?: number; leechers?: number }
 
 export function parseTorrentClaw(body: { results?: { title?: string; torrents?: ClawTorrent[] }[] }): TorrentResult[] {
   return (body?.results ?? []).flatMap((c) => (c.torrents ?? []).flatMap((t) => {
-    const hash = String(t.infoHash ?? '').toLowerCase();
+    const hash = String(t.infoHash ?? (t.magnetUrl ? parseMagnet(t.magnetUrl)?.infoHash : '') ?? '').toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(hash)) return [];
     return [makeResult({
       title: t.rawTitle || c.title || hash,
@@ -648,8 +651,10 @@ const torrentclaw: IndexerAdapter = {
   id: 'torrentclaw',
   supports: (q) => !!textQueryFor(q),
   search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
+    // Without a key it answers with titles but no info-hashes: nothing playable.
+    if (!config.torrentclawKey) throw new Error('needs an API key on the relay (TORRENTCLAW_API_KEY): without one it gives no torrent links');
     const type = q.type === 'series' ? '&type=show' : q.type === 'movie' ? '&type=movie' : '';
-    const body = await fetchJson<Record<string, unknown>>(`${config.torrentclawUrl}/api/v1/search?q=${encodeURIComponent(term)}&limit=50${type}`);
+    const body = await fetchJson<Record<string, unknown>>(`${config.torrentclawUrl}/api/v1/search?q=${encodeURIComponent(term)}&limit=50${type}`, { headers: { Authorization: `Bearer ${config.torrentclawKey}` } });
     const out = parseTorrentClaw(body as never);
     // An answer of another shape: say what it holds instead of silently finding nothing.
     if (!out.length && !Array.isArray(body?.results)) throw new Error(`unexpected answer (${Object.keys(body ?? {}).slice(0, 6).join(', ') || 'empty'})`);
