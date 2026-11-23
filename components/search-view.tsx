@@ -4,6 +4,7 @@
  * source ("Torrents"). Pasting a magnet, info-hash or video link plays it. With an
  * empty field, genre tiles open a browsable grid.
  */
+import { friendlyError } from '@/lib/friendly-error';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { parseMagnet } from '@/lib/magnet';
@@ -85,7 +86,7 @@ export function SearchView({ active }: { active: boolean }) {
     setLoading(true); setError(undefined); setItems([]);
     (q ? api.tmdbSearch(q, ac.signal) : api.shelf(browse!.type, browse!.genre, ac.signal))
       .then((r) => setItems(r?.results ?? []))
-      .catch((e) => { if (e.name !== 'AbortError') setError(e.message); })
+      .catch((e) => { if (e.name !== 'AbortError') setError(friendlyError(e)); })
       .finally(() => { if (!ac.signal.aborted) setLoading(false); });
     return () => ac.abort();
   }, [active, mode, q, browse]);
@@ -150,7 +151,7 @@ export function SearchView({ active }: { active: boolean }) {
             {browse && !q && <button className="grid h-8 w-8 place-items-center rounded-full bg-ink-800 text-white" onClick={() => setBrowse(undefined)} aria-label="Back to categories"><IconBack size={16} /></button>}
             <h2 className="text-xl font-bold tracking-tight text-white">{q ? <>Results for “{q}”</> : browse!.label}</h2>
           </div>
-          {error && <p className="text-sm text-ink-400">Couldn’t search the catalog ({error}).</p>}
+          {error && <p className="text-sm text-ink-400">Couldn’t search the catalog. {error}</p>}
           <PosterGrid items={items} loading={loading} />
           {!loading && !items.length && q && (
             <div className="space-y-3 text-sm text-ink-400">

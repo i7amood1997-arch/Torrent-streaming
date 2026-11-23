@@ -1,4 +1,5 @@
 'use client';
+import { friendlyError } from './friendly-error';
 import './runtime'; // older Safari: AbortSignal.timeout
 import { DEFAULT_API_BASE } from './config';
 import { parseMagnet } from './magnet';
@@ -235,7 +236,7 @@ export const api = {
       if (!res.ok) return set(offline(`Backend responded with HTTP ${res.status}.`));
       set(await res.json());
     } catch (e) {
-      set(offline(`Can't reach the backend at ${base} (${(e as Error).message}).`));
+      set(offline(`${friendlyError(e)} (Relay: ${base})`));
     }
   },
 };
