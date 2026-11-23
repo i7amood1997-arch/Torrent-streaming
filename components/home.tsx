@@ -269,7 +269,7 @@ const SHELVES: { title: string; type: 'movie' | 'series'; genre?: string }[] = [
 /** Free libraries: public-domain and openly licensed films from the Internet Archive, legal to watch. */
 const FREE_ROWS: { title: string; collection: string }[] = [
   { title: 'Free Classic Films · Internet Archive', collection: 'feature_films' },
-  { title: 'Film Noir · Free', collection: 'film_noir' },
+  { title: 'Film Noir · Free', collection: 'Film_Noir' },
   { title: 'Classic Sci-Fi & Horror · Free', collection: 'SciFi_Horror' },
   { title: 'Classic Cartoons · Free', collection: 'animationandcartoons' },
 ];

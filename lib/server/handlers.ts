@@ -668,7 +668,7 @@ async function segments(q: URLSearchParams, bindings: ApiBindings, env: Env = {}
 // ─── Free libraries (Internet Archive collections) ─────────────────────────
 
 /** Collections the app offers as rows: public-domain and openly licensed films. */
-export const ARCHIVE_COLLECTIONS = ['feature_films', 'film_noir', 'SciFi_Horror', 'animationandcartoons', 'silent_films', 'classic_tv'];
+export const ARCHIVE_COLLECTIONS = ['feature_films', 'Film_Noir', 'SciFi_Horror', 'animationandcartoons', 'silent_films', 'classic_tv'];
 
 export interface ArchiveItem { id: string; title: string; year?: number; poster: string }
 
@@ -684,7 +684,8 @@ async function archiveShelf(env: Env, sp: URLSearchParams, b: ApiBindings): Prom
   const results: ArchiveItem[] = (body.response?.docs ?? [])
     .filter((d) => d.identifier && d.title)
     .map((d) => ({ id: d.identifier, title: String(d.title).slice(0, 120), year: Number(String(d.year ?? '').slice(0, 4)) || undefined, poster: `${base}/services/img/${encodeURIComponent(d.identifier)}` }));
-  return json({ results }, 200, { 'Cache-Control': 'public, max-age=86400' });
+  // An empty answer may be a passing hiccup: don't let it hide the row for a day.
+  return json({ results }, 200, { 'Cache-Control': results.length ? 'public, max-age=86400' : 'public, max-age=300' });
 }
 
 async function archivePlay(env: Env, sp: URLSearchParams, b: ApiBindings): Promise<Response> {

@@ -34,3 +34,17 @@ describe('free library rows (Internet Archive)', () => {
     expect((await handleApi(new Request('https://relay.test/api/archive/play?id=../etc'), {}, { archiveFetch })).status).toBe(400);
   });
 });
+
+describe('free rows: collection names and caching', () => {
+  it('asks for the Internet Archive’s real film noir collection (Film_Noir)', async () => {
+    const asked: string[] = [];
+    const archiveFetch = fake({ advancedsearch: { response: { docs: [{ identifier: 'detour', title: 'Detour', year: '1945' }] } } }, asked);
+    const r = await handleApi(new Request('https://relay.test/api/archive?collection=Film_Noir'), {}, { archiveFetch });
+    expect(r.status).toBe(200);
+    expect(decodeURIComponent(asked[0])).toContain('collection:(Film_Noir)');
+  });
+  it('an empty answer is cached for minutes, not a day', async () => {
+    const r = await handleApi(new Request('https://relay.test/api/archive?collection=SciFi_Horror'), {}, { archiveFetch: fake({ advancedsearch: { response: { docs: [] } } }) });
+    expect(r.headers.get('Cache-Control')).toBe('public, max-age=300');
+  });
+});
