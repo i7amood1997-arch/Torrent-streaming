@@ -67,7 +67,7 @@ export async function userData(kv: KV, op: string, req: Request, now = Date.now(
 
     if (op === 'pair-send') {
       if (!live) return json({ error: 'This code has expired. Ask the TV for a new one.' }, 404);
-      if (slot!.data !== undefined) return json({ error: 'This TV has already received settings.' }, 409);
+      if (slot!.data !== undefined) return json({ error: 'That device has already received settings.' }, 409);
       const { data } = await readJson(req);
       if (!data || typeof data !== 'object') return json({ error: 'Nothing to send.' }, 400);
       await kv.put('slot', { ...slot!, data });

@@ -9,7 +9,7 @@ import { api, apiBase } from '@/lib/client-api';
 import { BASE_PATH } from '@/lib/config';
 import { applyReceived, collect, openPairing, pairLink, type Pairing } from '@/lib/pairing';
 import { useApp } from '@/lib/store';
-import { onTvBack } from '@/lib/tv';
+import { isTV, onTvBack } from '@/lib/tv';
 
 type Phase = { k: 'opening' } | { k: 'waiting'; p: Pairing; svg: string } | { k: 'expired' } | { k: 'done' } | { k: 'failed'; why: string };
 
@@ -17,6 +17,8 @@ const POLL_MS = 2000;
 
 export function TvSetup() {
   const setDone = useApp((s) => s.setTvSetupDone);
+  const [tv, setTv] = useState(true);
+  useEffect(() => setTv(isTV()), []);
   const [phase, setPhase] = useState<Phase>({ k: 'opening' });
   const [left, setLeft] = useState(0);
   const [attempt, setAttempt] = useState(0);
@@ -82,7 +84,7 @@ export function TvSetup() {
   return (
     <div role="dialog" aria-label="Set up with your phone" className="fixed inset-0 z-[90] flex items-center justify-center bg-black">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top_left,rgba(75,163,255,0.18),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(160,90,255,0.14),transparent_55%)]" />
-      <div className="relative grid w-full max-w-5xl grid-cols-[1.1fr_1fr] items-center gap-14 px-14">
+      <div className="relative grid max-h-full w-full max-w-5xl items-center gap-8 overflow-y-auto px-6 py-10 md:grid-cols-[1.1fr_1fr] md:gap-14 md:px-14">
         <div>
           <p className="text-[13px] font-semibold uppercase tracking-[0.2em] text-white/50">Streamdeck</p>
           {phase.k === 'done' ? (
@@ -92,18 +94,18 @@ export function TvSetup() {
             </>
           ) : (
             <>
-              <h1 className="mt-3 text-[40px] font-extrabold leading-tight tracking-tight text-white">Set up with your phone</h1>
+              <h1 className="mt-3 text-[32px] font-extrabold leading-tight tracking-tight text-white md:text-[40px]">{tv ? 'Set up with your phone' : 'Copy settings from your phone'}</h1>
               <ol className="mt-6 space-y-3 text-lg text-white/80">
                 <li className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-bold">1</span><span>Open your phone’s camera and point it at the code.</span></li>
-                <li className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-bold">2</span><span>Tap the link, then <b className="text-white">Send to TV</b>.</span></li>
-                <li className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-bold">3</span><span>Your relay, Debrid key and subtitle choices appear here.</span></li>
+                <li className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-bold">2</span><span>Tap the link, then <b className="text-white">Send</b>.</span></li>
+                <li className="flex gap-3"><span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-white/10 text-sm font-bold">3</span><span>Your relay, Debrid key, subtitle choices, My List and history appear here, and stay in sync.</span></li>
               </ol>
-              <p className="mt-5 text-sm text-white/45">No camera? In the app on your phone: Settings → Android TV app → Set up a TV, and type the code.</p>
+              <p className="mt-5 text-sm text-white/45">No camera? In the app on your phone: Settings → Android TV app → Set up a TV or another device, and type the code.</p>
               <div className="mt-8 flex gap-3">
                 {(phase.k === 'expired' || phase.k === 'failed') && (
                   <button className="btn-primary h-12 rounded-full px-7 text-base" onClick={() => setAttempt((x) => x + 1)}>{phase.k === 'expired' ? 'New code' : 'Try again'}</button>
                 )}
-                <button ref={laterRef} className="btn-glass h-12 rounded-full px-7 text-base" onClick={() => setDone(true)}>Set up later</button>
+                <button ref={laterRef} className="btn-glass h-12 rounded-full px-7 text-base" onClick={() => setDone(true)}>{tv ? 'Set up later' : 'Cancel'}</button>
               </div>
             </>
           )}

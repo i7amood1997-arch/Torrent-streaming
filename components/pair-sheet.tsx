@@ -31,20 +31,20 @@ export function PairSheet({ code, relay, onClose }: { code: string; relay?: stri
   };
 
   return (
-    <div role="dialog" aria-label="Set up your TV" className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 md:items-center" onClick={onClose}>
+    <div role="dialog" aria-label="Send your settings" className="fixed inset-0 z-[80] flex items-end justify-center bg-black/60 md:items-center" onClick={onClose}>
       <div className="w-full max-w-md rounded-t-[28px] bg-ink-900 p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] ring-1 ring-white/10 md:rounded-[28px]" onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-ink-600 md:hidden" />
         {state === 'sent' ? (
           <div className="py-4 text-center">
             <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-[#30d158]/15 text-3xl text-[#30d158]">✓</div>
-            <h2 className="mt-4 text-xl font-bold text-white">Sent to your TV</h2>
-            <p className="mt-1 text-sm text-ink-400">It should open Home in a moment.</p>
+            <h2 className="mt-4 text-xl font-bold text-white">Sent</h2>
+            <p className="mt-1 text-sm text-ink-400">The other device should open Home in a moment.</p>
             <button className="btn-primary mt-6 h-12 w-full rounded-full" onClick={onClose}>Done</button>
           </div>
         ) : (
           <>
-            <h2 className="text-xl font-bold text-white">Set up your TV</h2>
-            <p className="mt-1 text-sm text-ink-400">Send this phone’s settings to the TV showing <b className="font-mono text-white">{code.slice(0, 4)} {code.slice(4)}</b>?</p>
+            <h2 className="text-xl font-bold text-white">Send your settings</h2>
+            <p className="mt-1 text-sm text-ink-400">Send this device’s settings to the screen showing <b className="font-mono text-white">{code.slice(0, 4)} {code.slice(4)}</b>?</p>
             <ul className="mt-4 divide-y divide-white/[0.07] rounded-2xl bg-ink-800/60 text-sm">
               <li className="flex justify-between gap-4 px-4 py-2.5"><span className="text-ink-400">Relay</span><span className="truncate text-white">{host || 'none'}</span></li>
               <li className="flex justify-between gap-4 px-4 py-2.5"><span className="text-ink-400">{PROVIDER_NAMES[s.debridProvider] ?? 'Debrid'}</span><span className="text-white">{key ? 'Key included' : 'No key'}</span></li>
@@ -57,7 +57,7 @@ export function PairSheet({ code, relay, onClose }: { code: string; relay?: stri
             {typeof state === 'object' && <p className="mt-3 text-sm text-red-300">{state.error}</p>}
             <div className="mt-5 flex gap-3">
               <button className="btn-glass h-12 flex-1 rounded-full" onClick={onClose}>Cancel</button>
-              <button className="btn-primary h-12 flex-1 rounded-full" disabled={!valid || !trusted || state === 'sending'} onClick={send}>{state === 'sending' ? 'Sending…' : 'Send to TV'}</button>
+              <button className="btn-primary h-12 flex-1 rounded-full" disabled={!valid || !trusted || state === 'sending'} onClick={send}>{state === 'sending' ? 'Sending…' : 'Send'}</button>
             </div>
           </>
         )}

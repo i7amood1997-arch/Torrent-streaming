@@ -626,7 +626,7 @@ async function idsFromImdb(imdb: string, type: 'movie' | 'series', f: typeof fet
 }
 
 /** Community-submitted times (seconds) for an episode or movie, or {} when none are known. */
-async function segments(q: URLSearchParams, bindings: ApiBindings): Promise<Response> {
+async function segments(q: URLSearchParams, bindings: ApiBindings, env: Env = {}): Promise<Response> {
   let tmdb = intParam(q.get('tmdb'));
   const imdb = /^tt\d{6,9}$/.test(q.get('imdb') ?? '') ? q.get('imdb')! : '';
   const type = q.get('type') === 'series' ? 'series' : 'movie';
@@ -652,8 +652,14 @@ async function segments(q: URLSearchParams, bindings: ApiBindings): Promise<Resp
   // What was asked and what came back, for diagnosing a missing Skip button (no personal data).
   const asked = [...qs.keys()].filter((k) => k.endsWith('_id')).map((k) => `${k}=${qs.get(k)}`).join(' ');
   try {
-    const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json' } });
-    if (!res.ok) return json({}, 200, { 'Cache-Control': `public, max-age=${res.status === 404 ? 21600 : 300}`, 'X-Segments': `${asked} -> HTTP ${res.status}` });
+    // With a TheIntroDB key (free account) the relay gets its own rate limit; without one it
+    // shares Cloudflare's addresses with everyone else's requests and is often turned away (429).
+    const auth: Record<string, string> = env.THEINTRODB_API_KEY ? { Authorization: `Bearer ${env.THEINTRODB_API_KEY}` } : {};
+    const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json', Origin: 'https://app.invalid', ...auth } });
+    if (!res.ok) {
+      const cors = res.headers.get('access-control-allow-origin') ?? 'none';
+      return json({}, 200, { 'Cache-Control': res.status === 404 ? 'public, max-age=21600' : 'no-store', 'X-Segments': `${asked} -> HTTP ${res.status} (cors ${cors}, retry ${res.headers.get('retry-after') ?? '-'})` });
+    }
     const out = parseSegments(await res.json());
     return json(out, 200, { 'Cache-Control': 'public, max-age=43200', 'X-Segments': `${asked} -> ${Object.keys(out).join(',') || 'none'}` });
   } catch (e) {
@@ -750,7 +756,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/translate-ai' && req.method === 'POST') res = await translateAi(req, bindings);
       else if (path === '/api/transcribe' && req.method === 'POST') res = await transcribe(req, url.searchParams, bindings, env);
       else if (path === '/api/proxy' && (get || req.method === 'HEAD')) res = await proxy(req, url);
-      else if (path === '/api/segments' && get) res = await segments(url.searchParams, bindings);
+      else if (path === '/api/segments' && get) res = await segments(url.searchParams, bindings, env);
       else if (path === '/api/archive' && get) res = await archiveShelf(env, url.searchParams, bindings);
       else if (path === '/api/archive/play' && get) res = await archivePlay(env, url.searchParams, bindings);
       else res = err('Not found', 404);

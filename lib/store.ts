@@ -131,6 +131,9 @@ interface AppState {
   /** TV app: the first-run screen (set up from your phone) was finished or skipped. */
   tvSetupDone: boolean;
   setTvSetupDone: (v: boolean) => void;
+  /** Any device: the "copy settings from another device" screen is open (not kept). */
+  linking: boolean;
+  setLinking: (v: boolean) => void;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -222,7 +225,9 @@ export const useApp = create<AppState>()(
         set({ syncState: merged, history });
       },
       tvSetupDone: false,
-      setTvSetupDone: (tvSetupDone) => set({ tvSetupDone }),
+      setTvSetupDone: (tvSetupDone) => set(tvSetupDone ? { tvSetupDone, linking: false } : { tvSetupDone }),
+      linking: false,
+      setLinking: (linking) => set({ linking }),
     }),
     {
       name: 'ts-settings',

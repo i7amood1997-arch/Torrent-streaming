@@ -102,6 +102,8 @@ function SyncSection() {
     : lastSync && !lastSync.ok ? { text: 'Not syncing', tone: 'bg-red-500/15 text-red-300' }
     : { text: lastSync ? 'On' : 'Starting', tone: 'bg-hd/15 text-hd' };
   const value = draft ?? settings.syncKey;
+  const [onTv, setOnTv] = useState(true);
+  useEffect(() => setOnTv(isTV()), []);
   const valid = SYNC_KEY.test(value);
   return (
     <Section title="Sync between devices" footer="My List, Continue Watching, where you stopped and each show’s subtitle choices follow you to every device with the same sync key. Setting up a TV from your phone gives it this key; on another phone, tablet or computer, paste it below.">
@@ -121,6 +123,11 @@ function SyncSection() {
         {lastSync?.error && <span className="mt-1.5 block text-xs text-red-300/90">{lastSync.error}</span>}
       </label>
       <Row label="Sync now" onClick={() => syncSoon()}><span className="text-xs text-accent">Sync</span></Row>
+      {!onTv && (
+        <Row label="Copy settings from your phone" hint="Shows a code to scan with the phone that has your settings: this device gets them, and the same sync key." onClick={() => useApp.getState().setLinking(true)}>
+          <span className="text-xs text-accent">Open</span>
+        </Row>
+      )}
     </Section>
   );
 }
@@ -217,7 +224,7 @@ export function SettingsPanel() {
       )}
       <Disclosure title="Android TV app">
       {!tv && (
-        <Section title="Set up a TV" footer="Type the code the TV app shows on its first screen (or scan its QR code with your camera). Your settings go to the TV through your relay.">
+        <Section title="Set up a TV or another device" footer="Type the code it shows (the TV app on its first screen; other devices in Settings → Copy settings from your phone), or scan its QR code with your camera. Your settings go to it through your relay.">
           <form className="flex gap-2 px-4 py-3" onSubmit={(e) => { e.preventDefault(); if (tvCode.length === 8) setPairOpen(true); }}>
             <input className="input flex-1 font-mono uppercase tracking-[0.2em]" placeholder="ABCD EFGH" maxLength={9} autoCapitalize="characters" autoCorrect="off" spellCheck={false}
               value={tvCode} onChange={(e) => setTvCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8))} aria-label="TV code" />
