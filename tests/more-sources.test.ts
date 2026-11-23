@@ -67,3 +67,21 @@ describe('TheRARBG', () => {
     expect(res.results.map((r) => r.seeders)).toEqual([100, 90, 80, 70, 60, 50]);
   });
 });
+
+describe('Kickass Torrents', () => {
+  it('lists rows, then opens only the most seeded result pages for their magnets', async () => {
+    const { parseKickassList } = await import('@/lib/torrent-indexer');
+    const row = (n: number, seeds: number) => `<tr class="${n % 2 ? 'odd' : 'even'}"><td><div class="torrentname"><a href="/movie-${n}-tt${n}.html" class="cellMainLink">Movie <strong class="red">${n}</strong> 1080p</a></div></td><td class="nobr center">1.4 GB</td><td class="center">x</td><td class="green center">${seeds}</td><td class="red lasttd center">2</td></tr>`;
+    const list = `<table>${Array.from({ length: 8 }, (_, i) => row(i, (i + 1) * 7)).join('')}</table>`;
+    expect(parseKickassList(list, 'https://kat.test')[0]).toMatchObject({ title: 'Movie 0 1080p', page: 'https://kat.test/movie-0-tt0.html', seeders: 7, leechers: 2 });
+    const opened: string[] = [];
+    vi.stubGlobal('fetch', (async (u: string) => {
+      if (u.includes('/search/')) return new Response(list);
+      opened.push(u);
+      return new Response(`<a class="kaGiantButton" href="magnet:?xt=urn:btih:${'c'.repeat(39)}${opened.length}&amp;dn=m">`);
+    }) as unknown as typeof fetch);
+    const res = await searchTorrents({ q: 'movie' }, configFromEnv({ INDEXERS: 'kickass', KICKASS_URL: 'https://kat.test' }));
+    expect(opened).toHaveLength(6);
+    expect(res.results.map((r) => r.seeders)).toEqual([56, 49, 42, 35, 28, 21]);
+  });
+});

@@ -146,7 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subdlKey: '',
   torznabUrl: '',
   torznabKey: '',
-  indexers: ['torrentio', 'torrentsdb', 'knaben', 'bitsearch', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv', 'therarbg', 'torrentdownload'],
+  indexers: ['torrentio', 'torrentsdb', 'knaben', 'bitsearch', 'yts', 'eztv', 'nyaa', 'animetosho', 'archive', 'mediafusion', 'apibay', 'torrentscsv', 'therarbg', 'torrentdownload', 'kickass'],
   stremioAddons: '',
   publicRelays: true,
   engine: 'auto',
@@ -231,7 +231,7 @@ export const useApp = create<AppState>()(
     }),
     {
       name: 'ts-settings',
-      version: 6,
+      version: 7,
       // v2 added sources (Knaben, Nyaa, Torrents-CSV) and made the Pirate Bay API default: switch them on once for existing users.
       migrate: (persisted: any, version) => {
         if (version < 2 && Array.isArray(persisted?.settings?.indexers)) {
@@ -244,6 +244,10 @@ export const useApp = create<AppState>()(
         // v5 added TorrentsDB and Bitsearch.
         if (version < 5 && Array.isArray(persisted?.settings?.indexers)) {
           persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'torrentsdb', 'bitsearch'])];
+        }
+        // v7 added Kickass Torrents.
+        if (version < 7 && Array.isArray(persisted?.settings?.indexers)) {
+          persisted.settings.indexers = [...new Set([...persisted.settings.indexers, 'kickass'])];
         }
         // v6 added TheRARBG and TorrentDownload (TorrentClaw and TorrentGalaxy stay off: see Settings).
         if (version < 6 && Array.isArray(persisted?.settings?.indexers)) {

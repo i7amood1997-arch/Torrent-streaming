@@ -32,6 +32,7 @@ const SOURCES = [
   { id: 'torrentclaw', name: 'TorrentClaw', help: 'Combines 10+ public sources, with seeders. Needs a TorrentClaw API key on your relay (TORRENTCLAW_API_KEY).' },
   { id: 'torrentgalaxy', name: 'TorrentGalaxy', help: 'Big movie and TV site. Off by default: it doesn’t answer from the relay at the moment.' },
   { id: 'therarbg', name: 'TheRARBG', help: 'Movies and TV in the style of the old RARBG (its best few results).' },
+  { id: 'kickass', name: 'Kickass Torrents', help: 'Big general site for movies and TV (its best few results).' },
   { id: 'torrentdownload', name: 'TorrentDownload', help: 'Large general torrent search, with seeders.' },
   { id: 'mediafusion', name: 'MediaFusion', help: 'Big aggregator (Prowlarr, Zilean, Torrentio…). Its public server may hide torrents from free users.' },
   { id: 'apibay', name: 'The Pirate Bay API', help: 'Text search of all video.' },

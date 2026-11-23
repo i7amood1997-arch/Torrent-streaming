@@ -24,7 +24,7 @@ export function apiBase(): string {
  * user's own Settings choose which ones run. Keys still come from request headers.
  */
 export const directEnv = (): Record<string, string> => ({
-  INDEXERS: 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons,archive,torrentsdb,bitsearch,torrentclaw,torrentdownload,torrentgalaxy,therarbg',
+  INDEXERS: 'torrentio,torznab,yts,eztv,apibay,knaben,torrentscsv,nyaa,animetosho,mediafusion,addons,archive,torrentsdb,bitsearch,torrentclaw,torrentdownload,torrentgalaxy,therarbg,kickass',
   ALLOW_CLIENT_TORZNAB: 'true',
   USE_PUBLIC_RELAYS: String(useApp.getState().settings.publicRelays),
 });

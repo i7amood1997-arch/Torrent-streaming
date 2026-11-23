@@ -22,9 +22,9 @@ import type { IndexerError, SearchQuery, SearchResponse, TorrentResult } from '.
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
-export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch' | 'torrentclaw' | 'torrentdownload' | 'torrentgalaxy' | 'therarbg';
+export type IndexerId = 'torrentio' | 'torznab' | 'yts' | 'eztv' | 'apibay' | 'knaben' | 'torrentscsv' | 'nyaa' | 'animetosho' | 'mediafusion' | 'addons' | 'archive' | 'torrentsdb' | 'bitsearch' | 'torrentclaw' | 'torrentdownload' | 'torrentgalaxy' | 'therarbg' | 'kickass';
 
-export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch', 'torrentclaw', 'torrentdownload', 'torrentgalaxy', 'therarbg'];
+export const ALL_INDEXERS: IndexerId[] = ['torrentio', 'torznab', 'yts', 'eztv', 'apibay', 'knaben', 'torrentscsv', 'nyaa', 'animetosho', 'mediafusion', 'addons', 'archive', 'torrentsdb', 'bitsearch', 'torrentclaw', 'torrentdownload', 'torrentgalaxy', 'therarbg', 'kickass'];
 
 export interface IndexerConfig {
   enabled: IndexerId[];
@@ -54,6 +54,7 @@ export interface IndexerConfig {
   torrentdownloadUrl: string;
   torrentgalaxyUrl: string;
   therarbgUrl: string;
+  kickassUrl: string;
   timeoutMs: number;
   /** Browser only: retry keyless JSON indexers through public CORS relays when blocked. */
   publicRelays?: boolean;
@@ -90,6 +91,7 @@ export function configFromEnv(env: Record<string, string | undefined>): IndexerC
     torrentdownloadUrl: trimSlash(env.TORRENTDOWNLOAD_URL || 'https://www.torrentdownload.info'),
     torrentgalaxyUrl: trimSlash(env.TORRENTGALAXY_URL || 'https://torrentgalaxy.to'),
     therarbgUrl: trimSlash(env.THERARBG_URL || 'https://therarbg.com'),
+    kickassUrl: trimSlash(env.KICKASS_URL || 'https://katcr.to'),
     timeoutMs: Number(env.INDEXER_TIMEOUT_MS || 6500),
     publicRelays: env.USE_PUBLIC_RELAYS === 'true',
   };
@@ -768,6 +770,38 @@ const therarbg: IndexerAdapter = {
   }),
 };
 
+// ─── Kickass Torrents (HTML; like TheRARBG, the magnet is on each result's page) ─
+
+export function parseKickassList(html: string, base: string): { title: string; page: string; size?: number; seeders: number; leechers: number }[] {
+  const clean = html.replace(/<strong[^>]*>|<\/strong>/g, '');
+  const rows = clean.match(/<tr class="(?:odd|even)"\s*>[\s\S]*?<\/tr>/g) ?? [];
+  return rows.flatMap((tr) => {
+    const m = /<div class="torrentname">[\s\S]*?<a href="([^"]+)"\s+class="cellMainLink">\s*([\s\S]*?)\s*<\/a>[\s\S]*?<td[^>]*>\s*([\d.]+\s*(?:TB|GB|MB|KB))\s*<\/td>[\s\S]*?<td class="green center">\s*([\d,]+)\s*<\/td>[\s\S]*?<td class="red lasttd center">\s*([\d,]+)\s*<\/td>/.exec(tr);
+    if (!m) return [];
+    const page = m[1].startsWith('http') ? m[1] : `${base}/${m[1].replace(/^\/+/, '')}`;
+    return [{ title: decodeEntities(m[2]), page, size: parseSize(m[3]), seeders: Number(m[4].replace(/,/g, '')) || 0, leechers: Number(m[5].replace(/,/g, '')) || 0 }];
+  }).filter((r) => r.title);
+}
+
+const kickass: IndexerAdapter = {
+  id: 'kickass',
+  supports: (q) => !!textQueryFor(q),
+  search: (q, { config, fetchText }) => eachQuery(q, async (term) => {
+    const cat = q.type === 'series' ? 'category/tv/' : q.type === 'movie' ? 'category/movies/' : '';
+    const html = await fetchText(`${config.kickassUrl}/search/${encodeURIComponent(term)}/${cat}`);
+    const list = parseKickassList(html, config.kickassUrl).filter((r) => r.seeders > 0).sort((a, b) => b.seeders - a.seeders).slice(0, THERARBG_PAGES);
+    if (!list.length && !/torrentname|Nothing found|no results/i.test(html)) throw new Error('unexpected page (the site may have changed)');
+    const pages = await Promise.allSettled(list.map((r) => fetchText(r.page)));
+    return list.flatMap((r, i) => {
+      const p = pages[i];
+      const magnet = p.status === 'fulfilled' ? /"(magnet:\?xt=urn:btih:[^"]+)"/i.exec(p.value)?.[1]?.replace(/&amp;/g, '&') : undefined;
+      const parsed = magnet ? parseMagnet(magnet) : undefined;
+      if (!parsed) return [];
+      return [makeResult({ title: r.title, infoHash: parsed.infoHash, magnet: parsed.magnet, sizeBytes: r.size, seeders: r.seeders, leechers: r.leechers, indexer: 'kickass', tracker: 'Kickass' })];
+    });
+  }),
+};
+
 // ─── Nyaa (anime, RSS) ──────────────────────────────────────────────────────
 
 /** Parse a Nyaa RSS feed (nyaa:infoHash / nyaa:seeders / nyaa:size extensions). */
@@ -869,7 +903,7 @@ const archive: IndexerAdapter = {
   },
 };
 
-const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch, torrentclaw, torrentdownload, torrentgalaxy, therarbg };
+const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, eztv, apibay, knaben, torrentscsv, nyaa, animetosho, mediafusion, addons, archive, torrentsdb, bitsearch, torrentclaw, torrentdownload, torrentgalaxy, therarbg, kickass };
 
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
