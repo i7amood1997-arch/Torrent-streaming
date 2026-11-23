@@ -24,6 +24,8 @@ import { ALL_INDEXERS, configFromEnv, parseAddonList, pickArchiveFile, searchTor
 import { cinemeta } from '../cinemeta';
 import { describeError } from '../runtime';
 import { toVtt } from '../subtitle-parser';
+import { INTRODB, parseSegments, type Segments } from '../segments';
+export { parseSegments, type Segments } from '../segments';
 import { buildSubtitlePrompt, googleTranslate, parseNumberedLines, readLlmText } from '../translate';
 import type { DebridProvider, SearchQuery } from '../types';
 // Type only: the Claude client is made in the Worker (worker/index.ts), keeping the SDK out of the web app.
@@ -599,14 +601,7 @@ export const encodeProxyHeaders = b64urlJson.enc;
 
 // ─── Intro / recap / credits times (TheIntroDB) ─────────────────────────────
 
-export interface Segments {
-  intro?: { start: number; end: number };
-  recap?: { start: number; end: number };
-  /** Where the end credits start (seconds); the next episode is offered from here. */
-  credits?: { start: number; end?: number };
-}
 
-const INTRODB = 'https://api.theintrodb.org/v4/media';
 
 /** Community-submitted times (seconds) for an episode or movie, or {} when none are known. */
 /**
@@ -655,10 +650,12 @@ async function segments(q: URLSearchParams, bindings: ApiBindings, env: Env = {}
     // With a TheIntroDB key (free account) the relay gets its own rate limit; without one it
     // shares Cloudflare's addresses with everyone else's requests and is often turned away (429).
     const auth: Record<string, string> = env.THEINTRODB_API_KEY ? { Authorization: `Bearer ${env.THEINTRODB_API_KEY}` } : {};
-    const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json', Origin: 'https://app.invalid', ...auth } });
+    const res = await f(`${INTRODB}?${qs}`, { headers: { 'User-Agent': 'streamdeck-relay', Accept: 'application/json', ...auth } });
     if (!res.ok) {
-      const cors = res.headers.get('access-control-allow-origin') ?? 'none';
-      return json({}, 200, { 'Cache-Control': res.status === 404 ? 'public, max-age=21600' : 'no-store', 'X-Segments': `${asked} -> HTTP ${res.status} (cors ${cors}, retry ${res.headers.get('retry-after') ?? '-'})` });
+      // Turned away (shared Cloudflare address over its limit): hand the app the query, so it can
+      // ask TheIntroDB itself from the viewer's own connection, which has its own allowance.
+      const busy = res.status === 429 || res.status >= 500;
+      return json(busy ? { ask: qs.toString() } : {}, 200, { 'Cache-Control': res.status === 404 ? 'public, max-age=21600' : 'no-store', 'X-Segments': `${asked} -> HTTP ${res.status} (retry ${res.headers.get('retry-after') ?? '-'})` });
     }
     const out = parseSegments(await res.json());
     return json(out, 200, { 'Cache-Control': 'public, max-age=43200', 'X-Segments': `${asked} -> ${Object.keys(out).join(',') || 'none'}` });
@@ -667,23 +664,6 @@ async function segments(q: URLSearchParams, bindings: ApiBindings, env: Env = {}
   }
 }
 
-/** TheIntroDB's answer (lists of {start_ms, end_ms}) → seconds; 0/0 means "confirmed none". */
-export function parseSegments(body: unknown): Segments {
-  const b = (body ?? {}) as Record<string, { start_ms?: number | null; end_ms?: number | null }[] | undefined>;
-  const first = (k: string) => (Array.isArray(b[k]) ? b[k]![0] : undefined);
-  const out: Segments = {};
-  for (const k of ['intro', 'recap'] as const) {
-    const s = first(k);
-    // Intro/recap: the end is required, the start may be omitted (= from the beginning).
-    if (s && typeof s.end_ms === 'number' && s.end_ms > (s.start_ms ?? 0)) out[k] = { start: (s.start_ms ?? 0) / 1000, end: s.end_ms / 1000 };
-  }
-  const c = first('credits');
-  // Credits: the start is required, the end may be omitted (= to the end).
-  if (c && typeof c.start_ms === 'number' && c.start_ms > 0 && (c.end_ms == null || c.end_ms > c.start_ms)) {
-    out.credits = { start: c.start_ms / 1000, ...(typeof c.end_ms === 'number' ? { end: c.end_ms / 1000 } : {}) };
-  }
-  return out;
-}
 
 // ─── Free libraries (Internet Archive collections) ─────────────────────────
 

@@ -42,7 +42,7 @@ describe('intro / recap / credits times', () => {
   });
 
   it('a failing lookup just means no skip button', async () => {
-    const introFetch = (async () => new Response('busy', { status: 429 })) as unknown as typeof fetch;
+    const introFetch = (async () => new Response('bad request', { status: 400 })) as unknown as typeof fetch;
     const r = await handleApi(new Request('https://relay.test/api/segments?tmdb=1&type=movie'), {}, { introFetch });
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({});
@@ -71,5 +71,19 @@ describe('which id the catalog knows a show by', () => {
     expect(catalogId({ imdbId: 'tt11280740' }, false)).toBe(11280740);
     expect(catalogId({ tmdbId: 95396, imdbId: 'tt11280740' }, false)).toBe(11280740);
     expect(catalogId({}, false)).toBeUndefined();
+  });
+});
+
+describe('when TheIntroDB turns the relay away', () => {
+  it('hands the app the query so it can ask from its own connection', async () => {
+    const introFetch = (async () => new Response('{"error":"Too many"}', { status: 429, headers: { 'retry-after': '57888' } })) as unknown as typeof fetch;
+    const r = await handleApi(new Request('https://relay.test/api/segments?tmdb=95396&type=series&season=1&episode=1'), {}, { introFetch });
+    expect(await r.json()).toEqual({ ask: 'tmdb_id=95396&season=1&episode=1' });
+    expect(r.headers.get('Cache-Control')).toBe('no-store');
+  });
+  it('a plain "not found" is just no times', async () => {
+    const introFetch = (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch;
+    const r = await handleApi(new Request('https://relay.test/api/segments?tmdb=1&type=movie'), {}, { introFetch });
+    expect(await r.json()).toEqual({});
   });
 });

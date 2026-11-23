@@ -86,7 +86,7 @@ export const api = {
 
   /** Intro / recap / credits times for an episode or movie (TheIntroDB, through the relay). */
   segments: (p: { tmdb?: number; imdb?: string; type?: string; season?: number; episode?: number; duration?: number }, signal?: AbortSignal) =>
-    get<import('./server/handlers').Segments>('/api/segments', p, signal),
+    get<import('./segments').Segments>('/api/segments', p, signal),
 
   subtitles: (p: Record<string, string | number | undefined>, signal?: AbortSignal) =>
     get<{ tracks: SubtitleTrackInfo[]; errors: { provider: string; message: string }[] }>('/api/subtitles', p, signal),

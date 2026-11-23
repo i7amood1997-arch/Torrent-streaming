@@ -12,7 +12,7 @@ import { findNext, playNext, streamFor, type NextEp } from '@/lib/next-episode';
 import type { PlayRequest } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TorrentResult } from '@/lib/types';
-import type { Segments } from '@/lib/server/handlers';
+import { INTRODB, parseSegments, type Segments } from '@/lib/segments';
 import { IconPlay } from './icons';
 
 const COUNTDOWN = 10;
@@ -30,7 +30,15 @@ export function useSegments(req: PlayRequest | undefined, duration: number): Seg
     setSeg({});
     const ac = new AbortController();
     api.segments({ tmdb: req.tmdbId, imdb: req.imdbId, type: req.type, season: req.season, episode: req.episode, duration }, ac.signal)
-      .then((s) => setSeg(s ?? {}))
+      .then(async (s) => {
+        // The relay was turned away: ask TheIntroDB from this device's own connection.
+        if (s?.ask) {
+          const res = await fetch(`${INTRODB}?${s.ask}`, { signal: ac.signal, headers: { Accept: 'application/json' } });
+          return res.ok ? parseSegments(await res.json()) : {};
+        }
+        return s ?? {};
+      })
+      .then((s) => setSeg(s))
       .catch(() => undefined);
     return () => ac.abort();
   }, [req, duration]);
