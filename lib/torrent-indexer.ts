@@ -649,7 +649,12 @@ const torrentclaw: IndexerAdapter = {
   supports: (q) => !!textQueryFor(q),
   search: (q, { config, fetchJson }) => eachQuery(q, async (term) => {
     const type = q.type === 'series' ? '&type=show' : q.type === 'movie' ? '&type=movie' : '';
-    return parseTorrentClaw(await fetchJson(`${config.torrentclawUrl}/api/v1/search?q=${encodeURIComponent(term)}&limit=50${type}`));
+    const body = await fetchJson<Record<string, unknown>>(`${config.torrentclawUrl}/api/v1/search?q=${encodeURIComponent(term)}&limit=50${type}`);
+    const out = parseTorrentClaw(body as never);
+    // An answer of another shape: say what it holds instead of silently finding nothing.
+    if (!out.length && !Array.isArray(body?.results)) throw new Error(`unexpected answer (${Object.keys(body ?? {}).slice(0, 6).join(', ') || 'empty'})`);
+    if (!out.length && Array.isArray(body.results) && body.results.length) throw new Error(`answer without torrents (${Object.keys((body.results as Record<string, unknown>[])[0] ?? {}).slice(0, 8).join(', ')})`);
+    return out;
   }),
 };
 
