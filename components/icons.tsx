@@ -40,3 +40,4 @@ export const IconGearFill = (p: P) => <svg {...base(p)} fill="currentColor" stro
 export const IconPlus = (p: P) => <svg {...base(p)}><path d="M12 5v14M5 12h14" /></svg>;
 export const IconCheck = (p: P) => <svg {...base(p)}><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>;
 export const IconMic = (p: P) => <svg {...base(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>;
+export const IconNext = (p: P) => <svg {...base(p)} fill="currentColor" stroke="none"><path d="M5 5.5v13l9.5-6.5zM16.5 5h2.5v14h-2.5z" /></svg>;

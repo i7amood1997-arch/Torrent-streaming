@@ -13,7 +13,7 @@ import type { PlayRequest } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TorrentResult } from '@/lib/types';
 import { INTRODB, parseSegments, type Segments } from '@/lib/segments';
-import { IconPlay } from './icons';
+import { IconNext, IconPlay } from './icons';
 
 const COUNTDOWN = 10;
 /** No credits time known: offer the next episode this long before the end. */
@@ -33,8 +33,14 @@ export function useSegments(req: PlayRequest | undefined, duration: number): Seg
       .then(async (s) => {
         // The relay was turned away: ask TheIntroDB from this device's own connection.
         if (s?.ask) {
-          const res = await fetch(`${INTRODB}?${s.ask}`, { signal: ac.signal, headers: { Accept: 'application/json' } });
-          return res.ok ? parseSegments(await res.json()) : {};
+          const ask = async (q: string) => {
+            const res = await fetch(`${INTRODB}?${q}`, { signal: ac.signal, headers: { Accept: 'application/json' } });
+            return res.ok ? parseSegments(await res.json()) : {};
+          };
+          const got = await ask(s.ask);
+          // Nothing for this exact length (another release): ask for the episode in general.
+          if (!got.intro && !got.recap && /duration_ms=/.test(s.ask)) return ask(s.ask.replace(/&?duration_ms=\d+/, ''));
+          return got;
         }
         return s ?? {};
       })
@@ -134,5 +140,36 @@ export function NextUp({ req, seg, time, duration, ended, tv }: { req: PlayReque
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Next Episode in the player's controls (series): always there, like streaming apps, not only at
+ * the credits. Starts the next episode with the stream the title page would pick.
+ */
+export function NextEpisodeButton({ req }: { req: PlayRequest }) {
+  const [next, setNext] = useState<NextEp | null>();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setNext(undefined);
+    if (req.type !== 'series') return;
+    let live = true;
+    findNext(req).then((n) => live && setNext(n ?? null)).catch(() => live && setNext(null));
+    return () => { live = false; };
+  }, [req]);
+  if (!next) return null;
+  const go = async () => {
+    setBusy(true);
+    try {
+      const s = await streamFor(req, next);
+      if (s) playNext(req, next, s);
+    } finally { setBusy(false); }
+  };
+  return (
+    <button className="btn-ghost gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-white" onClick={() => void go()} disabled={busy}
+      aria-label={`Next episode: S${next.season} E${next.episode}`} title={`S${next.season} · E${next.episode}${next.name ? ` · ${next.name}` : ''}`}>
+      {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <IconNext size={18} />}
+      <span className="hidden sm:inline">Next Episode</span>
+    </button>
   );
 }

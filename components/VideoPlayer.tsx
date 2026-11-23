@@ -26,7 +26,7 @@ import { debridStalled, type DebridProgress } from '@/lib/debrid-wait';
 import { deadLinkMessage } from '@/lib/playback-errors';
 import { formatBytes } from '@/lib/release-parser';
 import { hasDebrid, useApp } from '@/lib/store';
-import { NextUp, SkipButton, useSegments } from './player-extras';
+import { NextEpisodeButton, NextUp, SkipButton, useSegments } from './player-extras';
 import { applySeriesPrefs, rememberSeries, resumePosition, savePosition } from '@/lib/library';
 import { toVtt } from '@/lib/subtitle-parser';
 import { startWebTorrent, type WebTorrentSession, type WebTorrentStats } from '@/lib/webtorrent-engine';
@@ -1090,6 +1090,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
               <button className="tv-flex btn-ghost hidden p-2 text-white [@media(pointer:fine)]:inline-flex" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <IconPause size={20} /> : <IconPlay size={20} />}</button>
               <span className="px-1 text-xs tabular-nums text-white/90">{fmtTime(shownTime)} <span className="text-white/50">/ {fmtTime(duration)}</span></span>
               <div className="flex-1" />
+              {req?.type === 'series' && <NextEpisodeButton req={req} />}
               <div className="group hidden items-center lg:flex">
                 <button className="btn-ghost p-2 text-white" onClick={() => { const v = videoRef.current; if (v) v.muted = !v.muted; }} aria-label={muted ? 'Unmute' : 'Mute'}>{muted || volume === 0 ? <IconMute size={18} /> : <IconVolume size={18} />}</button>
                 <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} onChange={(e) => setVol(+e.target.value)} className="w-0 opacity-0 transition-all group-hover:w-20 group-hover:opacity-100 focus:w-20 focus:opacity-100" aria-label="Volume" />
