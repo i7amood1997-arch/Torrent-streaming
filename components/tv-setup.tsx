@@ -9,7 +9,7 @@ import { api, apiBase } from '@/lib/client-api';
 import { BASE_PATH } from '@/lib/config';
 import { applyReceived, collect, openPairing, pairLink, type Pairing } from '@/lib/pairing';
 import { useApp } from '@/lib/store';
-import { isTV, onTvBack } from '@/lib/tv';
+import { initialFocus, isTV, onTvBack, popFocus, pushFocus } from '@/lib/tv';
 
 type Phase = { k: 'opening' } | { k: 'waiting'; p: Pairing; svg: string } | { k: 'expired' } | { k: 'done' } | { k: 'failed'; why: string };
 
@@ -23,6 +23,15 @@ export function TvSetup() {
   const [left, setLeft] = useState(0);
   const [attempt, setAttempt] = useState(0);
   const laterRef = useRef<HTMLButtonElement>(null);
+
+  // Remote: when this screen closes, focus goes back to what opened it (Settings), or on first run
+  // to the start of Home — never to nothing, which would swallow the next press.
+  useEffect(() => {
+    if (!isTV()) return;
+    const opener = document.activeElement && document.activeElement !== document.body;
+    if (opener) pushFocus();
+    return () => { if (opener) popFocus(); else setTimeout(() => initialFocus('[data-tv-start]', true), 80); };
+  }, []);
 
   // Back = set up later.
   useEffect(() => onTvBack(() => { setDone(true); return true; }, 50), [setDone]);

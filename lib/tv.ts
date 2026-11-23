@@ -77,7 +77,6 @@ export function initialFocus(selector: string, force = false) {
   if (force ? el.getBoundingClientRect().width > 0 && getComputedStyle(el).visibility !== 'hidden' : visible(el)) focus(el, 'auto');
 }
 
-/** Called by the TV app on Back. Returns false when the app should close. */
 /**
  * Back in the player: a sheet open → close it; playing with the controls up → hide them (one more
  * Back leaves); otherwise → leave the player. While paused the controls stay on screen, so hiding
@@ -89,6 +88,7 @@ export function playerBack(s: { panel: boolean; playing: boolean; focusInPlayer:
   return 'leave';
 }
 
+/** Called by the TV app on Back. Returns false when the app should close. */
 function handleBack(): boolean {
   // (Android closes the on-screen keyboard itself before Back reaches the app.)
   if (closePicker()) return true;
