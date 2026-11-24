@@ -92,3 +92,37 @@ describe('Anime rows through the relay', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('Anime rows when AniList turns the relay away', () => {
+  const call = async (init: RequestInit & { list?: string } = {}) => {
+    const { handleApi } = await import('@/lib/server/handlers');
+    return handleApi(new Request(`https://relay.test/api/tmdb?action=anime&list=${init.list ?? 'trending'}`, { ...init, headers: { origin: 'https://app.test', 'content-type': 'application/json' } }), {}, {});
+  };
+  it('the relay answers with what to ask AniList, for the app to ask it directly', async () => {
+    const real = globalThis.fetch;
+    globalThis.fetch = vi.fn(async () => new Response('forbidden', { status: 403 })) as typeof fetch;
+    try {
+      const body = await (await call()).json() as { ask?: { url: string; query: string; variables: unknown } };
+      expect(body.ask?.url).toBe('https://graphql.anilist.co');
+      expect(body.ask?.query).toMatch(/TRENDING|sort/);
+      expect(body.ask?.variables).toEqual({ sort: ['TRENDING_DESC'] });
+    } finally { globalThis.fetch = real; }
+  });
+  it('the app sends AniList’s list back and the relay links it', async () => {
+    const media = [media0({ id: 154587, title: { english: 'Frieren', romaji: 'Sousou no Frieren' }, coverImage: { extraLarge: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/x.jpg' } })];
+    const res = await call({ method: 'POST', body: JSON.stringify({ media }) });
+    const body = await res.json() as { results: TmdbItem[] };
+    expect(body.results[0]).toMatchObject({ title: 'Frieren', imdbId: 'tt22248376', posterPath: 'https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/x.jpg' });
+  });
+  it('only AniList’s own picture addresses are passed on; junk is dropped', async () => {
+    const media = [media0({ id: 154587, coverImage: { extraLarge: 'javascript:alert(1)' }, bannerImage: 'https://evil.example/x.jpg' }), { id: 'x' }, null];
+    const body = await (await call({ method: 'POST', body: JSON.stringify({ media }) })).json() as { results: TmdbItem[] };
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0].posterPath).toBeNull();
+    expect(body.results[0].backdropPath).toBeNull();
+  });
+  it('a broken body is refused', async () => {
+    expect((await call({ method: 'POST', body: '{not json' })).status).toBe(400);
+  });
+});
+const media0 = (m: Partial<AniMedia> & { id: number }): AniMedia => ({ format: 'TV', seasonYear: 2023, averageScore: 90, title: { english: 'T', romaji: 'T' }, coverImage: null, bannerImage: null, description: '', ...m });

@@ -1,6 +1,7 @@
 'use client';
 import { friendlyError } from './friendly-error';
 import './runtime'; // older Safari: AbortSignal.timeout
+import { loadAnimeRow } from './anime-client';
 import { makeCache } from './catalog-cache';
 import { DEFAULT_API_BASE } from './config';
 import { parseMagnet } from './magnet';
@@ -108,7 +109,21 @@ export const api = {
   tmdbSearch: (q: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'search', q }, signal),
   tmdbTrending: (_signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.trending, '/api/tmdb', { action: 'trending' }),
   /** Anime rows (AniList, linked to catalog titles by the relay): trending · airing · top. */
-  anime: (list: string) => cachedGet<{ results: TmdbItem[] }>(FRESH.anime, '/api/tmdb', { action: 'anime', list }),
+  anime: (list: string) => cat().get(catalogKey('/api/tmdb', { action: 'anime', list }), FRESH.anime, () => loadAnimeRow(list, {
+    relayGet: (l) => get('/api/tmdb', { action: 'anime', list: l }),
+    anilist: async ({ url, query, variables }) => {
+      if (!/^https:\/\/graphql\.anilist\.co\/?$/.test(url)) throw new Error('Unexpected anime source');
+      const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ query, variables }) });
+      if (!res.ok) throw new Error(`AniList answered HTTP ${res.status}`);
+      return res.json();
+    },
+    relayLink: async (l, media) => {
+      const res = await call(`/api/tmdb?action=anime&list=${encodeURIComponent(l)}`, { method: 'POST', headers: { ...headers(), 'content-type': 'application/json' }, body: JSON.stringify({ media }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      return body;
+    },
+  }), worthKeeping),
   shelf: (type: string, genre?: string, _signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.shelf, '/api/tmdb', { action: 'shelf', type, genre }),
   tmdbDetails: (type: string, id: number) => cachedGet<TmdbDetails>(FRESH.details, '/api/tmdb', { action: 'details', type, id }),
   tmdbSeason: (id: number, season: number) => cachedGet<{ episodes: TmdbEpisode[] }>(FRESH.season, '/api/tmdb', { action: 'season', id, season }),

@@ -58,17 +58,47 @@ export interface AnimeDeps {
   search: (title: string) => Promise<TmdbItem[]>;
 }
 
-export async function animeShelf(list: AnimeList, deps: AnimeDeps): Promise<TmdbItem[]> {
-  const res = await deps.fetch(ANILIST, {
+/** What to send AniList for a list (also handed to the app when AniList turns the relay away). */
+export function aniListRequest(list: AnimeList) {
+  return { url: ANILIST, query: query(list), variables: { sort: [SORT[list]] } };
+}
+
+export class AniListRefused extends Error {
+  constructor(public status: number) { super(`AniList answered HTTP ${status}`); }
+}
+
+export async function fetchAniList(list: AnimeList, f: typeof fetch): Promise<AniMedia[]> {
+  const { url, ...body } = aniListRequest(list);
+  const res = await f(url, {
     method: 'POST',
     // AniList turns away requests that don't say who they are (no browser here to say it).
     headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'Streamdeck/1.0 (+https://github.com/i7amood1997-arch/Torrent-streaming)' },
-    body: JSON.stringify({ query: query(list), variables: { sort: [SORT[list]] } }),
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`AniList answered HTTP ${res.status}`);
-  const body = (await res.json()) as { data?: { Page?: { media?: AniMedia[] } } };
-  const media = body.data?.Page?.media ?? [];
+  if (!res.ok) throw new AniListRefused(res.status);
+  const data = (await res.json()) as { data?: { Page?: { media?: AniMedia[] } } };
+  return data.data?.Page?.media ?? [];
+}
 
+/** AniList's answer as sent by the app: only the fields used, of the right types, at most 50. */
+export function sanitizeMedia(raw: unknown): AniMedia[] {
+  if (!Array.isArray(raw)) return [];
+  const str = (v: unknown, n = 300) => (typeof v === 'string' ? v.slice(0, n) : null);
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const url = (v: unknown) => { const u = str(v, 500); return u && /^https:\/\/[\w.-]*anilist\.co\//.test(u) ? u : null; };
+  return raw.slice(0, 50).flatMap((m: any): AniMedia[] => {
+    const id = num(m?.id);
+    if (!id) return [];
+    return [{
+      id, format: str(m.format, 20), seasonYear: num(m.seasonYear), averageScore: num(m.averageScore),
+      title: { english: str(m.title?.english), romaji: str(m.title?.romaji) },
+      coverImage: { extraLarge: url(m.coverImage?.extraLarge), large: url(m.coverImage?.large) },
+      bannerImage: url(m.bannerImage), description: str(m.description, 4000),
+    }];
+  });
+}
+
+export async function linkAnime(media: AniMedia[], deps: Omit<AnimeDeps, 'fetch'>): Promise<TmdbItem[]> {
   let lookups = 0;
   const out = await Promise.all(media.map(async (m): Promise<TmdbItem | undefined> => {
     const type = m.format === 'MOVIE' ? 'movie' : 'series';
@@ -108,4 +138,8 @@ export async function animeShelf(list: AnimeList, deps: AnimeDeps): Promise<Tmdb
     seen.add(k);
     return true;
   });
+}
+
+export async function animeShelf(list: AnimeList, deps: AnimeDeps): Promise<TmdbItem[]> {
+  return linkAnime(await fetchAniList(list, deps.fetch), deps);
 }

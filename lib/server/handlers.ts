@@ -16,7 +16,7 @@
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
  */
-import { animeShelf, ANIME_LISTS, type AnimeList } from './anime';
+import { AniListRefused, aniListRequest, animeShelf, ANIME_LISTS, linkAnime, sanitizeMedia, type AnimeList } from './anime';
 import ANIME_MAP from './anime-map.json';
 import { checkRealDebridCache, DebridError, envDebridKey, resolveDebridStream } from '../debrid';
 import { parseMagnet } from '../magnet';
@@ -244,8 +244,22 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
       case 'anime': {
         const list = sp.get('list') as AnimeList;
         if (!ANIME_LISTS.includes(list)) return err('list must be one of: ' + ANIME_LISTS.join(', '), 400);
-        const results = await animeShelf(list, { fetch: (u, i) => fetch(u, i), map: ANIME_MAP as Record<string, string>, useTmdb: !!apiKey, search: (q) => client.search(q) });
-        return json({ results }, 200, { 'Cache-Control': `public, max-age=${results.length ? 10800 : 300}` });
+        const deps = { fetch: (u: RequestInfo | URL, i?: RequestInit) => fetch(u, i), map: ANIME_MAP as Record<string, string>, useTmdb: !!apiKey, search: (q: string) => client.search(q) };
+        // A list AniList sent the app itself (it turns some servers away): link it.
+        if (req.method === 'POST') {
+          let body: any;
+          try { body = await req.json(); } catch { return err('Invalid JSON', 400); }
+          return json({ results: await linkAnime(sanitizeMedia(body?.media), deps) }, 200, { 'Cache-Control': 'no-store' });
+        }
+        try {
+          const results = await animeShelf(list, deps);
+          return json({ results }, 200, { 'Cache-Control': `public, max-age=${results.length ? 10800 : 300}` });
+        } catch (e) {
+          // AniList turned the relay away: the app asks it from the viewer's own connection, then
+          // sends the answer back here (POST) to be linked.
+          if (e instanceof AniListRefused) return json({ ask: aniListRequest(list) }, 200, { 'Cache-Control': 'no-store' });
+          throw e;
+        }
       }
       default:
         return err('Unknown action', 400);
@@ -737,6 +751,7 @@ export async function handleApi(req: Request, env: Env, bindings: ApiBindings = 
       else if (path === '/api/config' && get) res = config(env, bindings);
       else if (path === '/api/search' && get) res = await search(req, env, url.searchParams);
       else if (path === '/api/tmdb' && get) res = await tmdb(req, env, url.searchParams);
+      else if (path === '/api/tmdb' && req.method === 'POST' && url.searchParams.get('action') === 'anime') res = await tmdb(req, env, url.searchParams);
       else if (path === '/api/debrid/resolve' && req.method === 'POST') res = await debridResolve(req, env);
       else if (path === '/api/debrid/check' && req.method === 'POST') res = await debridCheck(req, env);
       else if (path === '/api/subtitles' && get) res = await subtitles(req, env, url.searchParams);
