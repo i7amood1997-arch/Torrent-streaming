@@ -148,5 +148,7 @@ export interface TmdbEpisode {
   name: string;
   overview: string;
   stillPath?: string | null;
+  /** A second choice for the episode's picture (TVmaze), used when stillPath can't be loaded. */
+  stillAlt?: string;
   airDate?: string;
 }

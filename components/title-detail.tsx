@@ -153,7 +153,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
               return (
                 <button key={e.episodeNumber} onClick={() => setEpisode(e.episodeNumber)} className="group rounded-xl text-left outline-none w-56 md:w-64 xl:w-72" aria-pressed={on}>
                   <span className={`lift relative block aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-ink-700 to-ink-900 ${on ? 'ring-[3px] ring-white' : 'group-focus-visible:ring-[3px] group-focus-visible:ring-white/60'}`}>
-                    <Picture src={posterUrl(e.stillPath, 'w342')} className="absolute inset-0" />
+                    <Picture src={posterUrl(e.stillPath, 'w342')} also={[e.stillAlt]} className="absolute inset-0" />
                     <span className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent" />
                     <span className="absolute bottom-2 left-3 text-[11px] font-bold uppercase tracking-wider text-white/85">Episode {e.episodeNumber}</span>
                   </span>

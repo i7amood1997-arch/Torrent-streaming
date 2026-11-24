@@ -15,27 +15,37 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 /** Done loading, whether just now or from the browser's cache (no load event may come for those). */
 const loaded = (img: HTMLImageElement | null) => !!img && img.complete && img.naturalWidth > 0;
 
-export function Picture({ src, className = '', imgClassName = 'object-cover', lazy = true, fallback }: {
+export function Picture({ src, also, className = '', imgClassName = 'object-cover', lazy = true, fallback }: {
   src?: string | null;
+  /** Other addresses to try, in order, if the first can't be loaded. */
+  also?: (string | null | undefined)[];
   /** The tile (size, rounding, background). */
   className?: string;
   imgClassName?: string;
   lazy?: boolean;
-  /** Shown on the tile when there is no picture or it failed. */
+  /** Shown on the tile when there is no picture or none could be loaded. */
   fallback?: ReactNode;
 }) {
   const ref = useRef<HTMLImageElement>(null);
+  const sources = [src, ...(also ?? [])].filter((x): x is string => !!x);
+  const key = sources.join('|');
+  const [at, setAt] = useState(0);
   const [state, setState] = useState<'loading' | 'shown' | 'failed'>('loading');
-  // A new address: start over (already in the cache → shown at once, without a fade).
-  useLayoutEffect(() => { setState(loaded(ref.current) ? 'shown' : 'loading'); }, [src]);
-  const show = !!src && state !== 'failed';
+  // New addresses: start over (already in the cache → shown at once, without a fade).
+  useLayoutEffect(() => { setAt(0); setState(loaded(ref.current) ? 'shown' : 'loading'); }, [key]);
+  const current = sources[at];
+  const show = !!current && state !== 'failed';
+  const failed = () => {
+    if (at + 1 < sources.length) { setAt(at + 1); setState('loading'); } // the next choice
+    else setState('failed');
+  };
   return (
-    <span className={`${/\babsolute\b/.test(className) ? "" : "relative "}block overflow-hidden ${className}`}>
+    <span className={`${/\babsolute\b/.test(className) ? '' : 'relative '}block overflow-hidden ${className}`}>
       {!show && fallback}
       {show && (
         // eslint-disable-next-line @next/next/no-img-element
-        <img ref={ref} src={src!} alt="" decoding="async" loading={lazy ? 'lazy' : undefined} draggable={false}
-          onLoad={() => setState('shown')} onError={() => setState('failed')}
+        <img ref={ref} key={current} src={current} alt="" decoding="async" loading={lazy ? 'lazy' : undefined} draggable={false}
+          onLoad={() => setState('shown')} onError={failed}
           className={`absolute inset-0 h-full w-full transition-opacity duration-300 ease-out ${state === 'shown' ? 'opacity-100' : 'opacity-0'} ${imgClassName}`} />
       )}
     </span>

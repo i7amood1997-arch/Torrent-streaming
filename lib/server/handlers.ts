@@ -16,6 +16,8 @@
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
  */
+import { addTvmazeStills } from './tvmaze';
+import { imdbFromNumeric } from '../cinemeta';
 import { AniListRefused, aniListRequest, animeShelf, ANIME_LISTS, linkAnime, sanitizeMedia, type AnimeList } from './anime';
 import ANIME_MAP from './anime-map.json';
 import { checkRealDebridCache, DebridError, envDebridKey, resolveDebridStream } from '../debrid';
@@ -239,7 +241,10 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
       case 'season': {
         const season = intParam(sp.get('season'));
         if (!id || season == null) return err('id and season required', 400);
-        return json({ episodes: await client.season(id, season) }, 200, { 'Cache-Control': 'public, max-age=3600' });
+        let episodes = await client.season(id, season);
+        // The keyless catalog's episode pictures are often missing (anime past season 1): TVmaze's as a second choice.
+        if (!apiKey && episodes.length) episodes = await addTvmazeStills(imdbFromNumeric(id), episodes);
+        return json({ episodes }, 200, { 'Cache-Control': 'public, max-age=3600' });
       }
       case 'anime': {
         const list = sp.get('list') as AnimeList;
