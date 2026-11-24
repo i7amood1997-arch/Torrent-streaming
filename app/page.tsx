@@ -151,7 +151,7 @@ export default function App() {
           </div>
         </div>
         {detail && (
-          <div key={`${detail.type}-${detail.id}`} data-tv-pane={inPlayer ? undefined : ''} className={`fade absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin ${padBottom} md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
+          <div key={`${detail.type}-${detail.id}`} data-tv-pane={inPlayer ? undefined : ''} className={`screen-in absolute inset-0 overflow-y-auto overscroll-contain bg-black scrollbar-thin ${padBottom} md:pb-8 ${inPlayer ? 'hidden' : ''}`}>
             <TitleDetail item={detail} />
           </div>
         )}

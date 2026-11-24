@@ -235,7 +235,7 @@ textarea {
     color: rgba(255, 255, 255, 0.82);
   }
   .btn-ghost {
-    @apply btn text-ink-200 hover:bg-ink-700/60;
+    @apply btn text-ink-200 hover:bg-ink-700/60 active:bg-ink-700/80 active:scale-[0.97];
   }
   .input {
     @apply w-full rounded-xl border-0 bg-ink-800 px-3 py-2 text-ink-200 placeholder:text-ink-400
@@ -478,6 +478,7 @@ input[type='range'] {
 }
 .group:active .lift {
   transform: scale(0.97);
+  transition-duration: 0.1s; /* pressing shows at once; letting go eases back */
 }
 .top-numeral {
   font-size: 5.5rem;
@@ -511,6 +512,17 @@ input[type='range'] {
 .fade {
   animation: fade 0.5s ease both;
 }
+/* Home rows lower down: the browser skips laying them out and painting them until they near the
+   screen (Home has ~17 rows; re-showing it laid out every one). The remembered height keeps the
+   scroll position steady. */
+.offscreen-skip {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
+}
+/* A screen opening (title page): quick, like a native push, so it is usable at once. */
+.screen-in {
+  animation: fade 0.2s ease-out both;
+}
 @keyframes kenburns {
   from {
     transform: scale(1.02);
@@ -525,6 +537,7 @@ input[type='range'] {
 @media (prefers-reduced-motion: reduce) {
   .rise,
   .fade,
+  .screen-in,
   .kenburns {
     animation: none;
   }

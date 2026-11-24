@@ -123,7 +123,7 @@ function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie'
   }, [type, genre]);
   if (failed || (items && !items.length)) return null;
   return (
-    <section ref={ref} className="space-y-1">
+    <section ref={ref} className="offscreen-skip space-y-1">
       <ShelfTitle>{title}</ShelfTitle>
       <Shelf>{items ? items.map((it) => <Poster key={`${it.type}-${it.id}`} item={it} />) : <Skeleton />}</Shelf>
     </section>
@@ -315,7 +315,7 @@ function FreeShelf({ title, collection, order }: { title: string; collection: st
     setBusy(undefined);
   };
   return (
-    <section ref={ref} className="space-y-1">
+    <section ref={ref} className="offscreen-skip space-y-1">
       <ShelfTitle>{title}</ShelfTitle>
       {note && <p className="gutter text-xs text-red-300/90">{note}</p>}
       <Shelf>
