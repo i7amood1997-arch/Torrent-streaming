@@ -1,9 +1,10 @@
 'use client';
 import { friendlyError } from './friendly-error';
 import './runtime'; // older Safari: AbortSignal.timeout
+import { makeCache } from './catalog-cache';
 import { DEFAULT_API_BASE } from './config';
 import { parseMagnet } from './magnet';
-import { useApp, type ServerCaps } from './store';
+import { safeStorage, useApp, type ServerCaps } from './store';
 import type { SessionStats } from './bt/session';
 import { googleTranslate } from './translate';
 import type { Transcript } from './speech/generate';
@@ -71,18 +72,49 @@ async function get<T>(path: string, params: Record<string, string | number | und
   return body as T;
 }
 
+// ── Catalog answers kept on the device (lib/catalog-cache.ts): seen before → shown at once ──
+const MIN = 60_000;
+const FRESH = { trending: 30 * MIN, shelf: 6 * 60 * MIN, details: 6 * 60 * MIN, season: 20 * MIN, archive: 24 * 60 * MIN };
+let catalog: ReturnType<typeof makeCache> | undefined;
+const cat = () => (catalog ??= makeCache(safeStorage()));
+function catalogKey(path: string, params: Record<string, string | number | undefined>) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '') qs.set(k, String(v));
+  return `${apiBase()}|${path}?${qs}`;
+}
+/** Shared by everyone asking the same thing, so it isn't cancelled when one of them stops waiting. */
+const cachedGet = <T>(freshMs: number, path: string, params: Record<string, string | number | undefined>) =>
+  cat().get<T>(catalogKey(path, params), freshMs, () => get<T>(path, params), worthKeeping);
+/** An empty row or episode list is never kept: the next look asks again (it may have been a hiccup). */
+function worthKeeping(v: unknown): boolean {
+  const o = v as { results?: unknown[]; episodes?: unknown[] } | null;
+  if (!o || typeof o !== 'object') return false;
+  if (Array.isArray(o.results) && !o.results.length) return false;
+  if (Array.isArray(o.episodes) && !o.episodes.length) return false;
+  return true;
+}
+const peek = <T>(path: string, params: Record<string, string | number | undefined>) => cat().peek<T>(catalogKey(path, params));
+
 export const api = {
+  /** Saved answers, shown at once while a fresh one loads (undefined if never seen). */
+  peek: {
+    trending: () => peek<{ results: TmdbItem[] }>('/api/tmdb', { action: 'trending' }),
+    shelf: (type: string, genre?: string) => peek<{ results: TmdbItem[] }>('/api/tmdb', { action: 'shelf', type, genre }),
+    details: (type: string, id: number) => peek<TmdbDetails>('/api/tmdb', { action: 'details', type, id }),
+    season: (id: number, season: number) => peek<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
+    archiveShelf: (collection: string) => peek<{ results: import('./server/handlers').ArchiveItem[] }>('/api/archive', { collection }),
+  },
   tmdbSearch: (q: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'search', q }, signal),
-  tmdbTrending: (signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'trending' }, signal),
-  shelf: (type: string, genre?: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'shelf', type, genre }, signal),
-  tmdbDetails: (type: string, id: number) => get<TmdbDetails>('/api/tmdb', { action: 'details', type, id }),
-  tmdbSeason: (id: number, season: number) => get<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
+  tmdbTrending: (_signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.trending, '/api/tmdb', { action: 'trending' }),
+  shelf: (type: string, genre?: string, _signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.shelf, '/api/tmdb', { action: 'shelf', type, genre }),
+  tmdbDetails: (type: string, id: number) => cachedGet<TmdbDetails>(FRESH.details, '/api/tmdb', { action: 'details', type, id }),
+  tmdbSeason: (id: number, season: number) => cachedGet<{ episodes: TmdbEpisode[] }>(FRESH.season, '/api/tmdb', { action: 'season', id, season }),
 
   search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
     get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
 
   /** A free-library row (Internet Archive collection) and the file to play for one of its titles. */
-  archiveShelf: (collection: string, signal?: AbortSignal) => get<{ results: import('./server/handlers').ArchiveItem[] }>('/api/archive', { collection }, signal),
+  archiveShelf: (collection: string, _signal?: AbortSignal) => cachedGet<{ results: import('./server/handlers').ArchiveItem[] }>(FRESH.archive, '/api/archive', { collection }),
   archivePlay: (id: string) => get<{ url: string; title: string; fileName?: string }>('/api/archive/play', { id }),
 
   /** Intro / recap / credits times for an episode or movie (TheIntroDB, through the relay). */

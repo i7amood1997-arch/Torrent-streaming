@@ -1,4 +1,5 @@
 'use client';
+import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { unlockAudio } from './audio-tap';
 import { createJSONStorage, persist } from 'zustand/middleware';
@@ -297,4 +298,14 @@ export function usesRelayStreaming(s: Settings, caps?: ServerCaps): boolean {
 /** True if a debrid key is usable for the selected provider (user key or server key). */
 export function hasDebrid(s: Settings, caps?: ServerCaps) {
   return !!s.debridKeys[s.debridProvider] || !!caps?.debrid[s.debridProvider];
+}
+
+/** True once saved settings are loaded (they are loaded in a client effect, after the first render). */
+export function useHydrated(): boolean {
+  const [done, setDone] = useState(() => useApp.persist.hasHydrated());
+  useEffect(() => {
+    if (useApp.persist.hasHydrated()) { setDone(true); return; }
+    return useApp.persist.onFinishHydration(() => setDone(true));
+  }, []);
+  return done;
 }

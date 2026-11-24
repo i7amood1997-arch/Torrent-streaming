@@ -5,7 +5,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
-import { useApp } from '@/lib/store';
+import { friendlyError } from '@/lib/friendly-error';
+import { useApp, useHydrated } from '@/lib/store';
 import { posterUrl } from '@/lib/tmdb';
 import type { TmdbDetails, TmdbItem } from '@/lib/types';
 import type { ArchiveItem } from '@/lib/server/handlers';
@@ -14,10 +15,23 @@ import { useWatchlist } from '@/lib/library';
 import { detailsId, followedSeries, newEpisode } from '@/lib/new-episodes';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
+/** Resting on a poster (pointer, finger or remote) loads its page in the background, so it opens at once. */
+export function usePrefetch(item: TmdbItem) {
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const start = () => {
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => { api.tmdbDetails(item.type, item.id).catch(() => undefined); }, 180);
+  };
+  const stop = () => clearTimeout(timer.current);
+  useEffect(() => stop, []);
+  return { onPointerEnter: start, onPointerDown: start, onFocus: start, onPointerLeave: stop, onBlur: stop };
+}
+
 export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: number; wide?: boolean }) {
   const open = useApp((s) => s.openDetail);
+  const prefetch = usePrefetch(item);
   return (
-    <button className={`group rounded-xl text-left outline-none ${numeral ? 'flex items-end' : 'block'} ${wide ? 'w-full' : ''}`} onClick={() => open(item)} aria-label={item.title}>
+    <button {...prefetch} className={`group rounded-xl text-left outline-none ${numeral ? 'flex items-end' : 'block'} ${wide ? 'w-full' : ''}`} onClick={() => open(item)} aria-label={item.title}>
       {numeral && <span className="top-numeral -mr-3 w-[4.2rem] select-none text-right xl:w-[5.4rem] xl:text-[7rem]" aria-hidden>{numeral}</span>}
       <span className={`block ${wide ? 'w-full' : 'w-[7.4rem] md:w-40 xl:w-48 2xl:w-52'}`}>
         <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800 group-focus-visible:ring-[3px] group-focus-visible:ring-white">
@@ -85,8 +99,10 @@ export function Shelf({ children, className = '' }: { children: React.ReactNode;
 /** A row that fetches its titles when it comes near the screen. */
 function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie' | 'series'; genre?: string; order: number }) {
   const ref = useRef<HTMLElement>(null);
-  const [items, setItems] = useState<TmdbItem[]>();
+  const [items, setItems] = useState<TmdbItem[] | undefined>(() => api.peek.shelf(type, genre)?.results); // last time's, at once
   const [failed, setFailed] = useState(false);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -94,13 +110,13 @@ function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie'
     // never still loading when the remote reaches it (an empty row can't take focus, and its
     // arrival would shift the page mid-move). The pictures still load as rows come near.
     if (isTV()) {
-      const t = setTimeout(() => api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed(true)), 1200 + order * 350);
+      const t = setTimeout(() => api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length)), 1200 + order * 350);
       return () => clearTimeout(t);
     }
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
-      api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed(true));
+      api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length));
     }, { rootMargin: '400px' });
     io.observe(el);
     return () => io.disconnect();
@@ -276,12 +292,12 @@ const FREE_ROWS: { title: string; collection: string }[] = [
 
 function FreeShelf({ title, collection, order }: { title: string; collection: string; order: number }) {
   const ref = useRef<HTMLElement>(null);
-  const [items, setItems] = useState<ArchiveItem[]>();
+  const [items, setItems] = useState<ArchiveItem[] | undefined>(() => api.peek.archiveShelf(collection)?.results);
   const [busy, setBusy] = useState<string>();
   const [note, setNote] = useState<string>();
   const play = useApp((s) => s.play);
   useEffect(() => {
-    const load = () => api.archiveShelf(collection).then((r) => setItems(r.results ?? [])).catch(() => setItems([]));
+    const load = () => api.archiveShelf(collection).then((r) => setItems(r.results ?? [])).catch(() => setItems((cur) => cur ?? []));
     if (isTV()) { const t = setTimeout(load, 1200 + (SHELVES.length + order) * 350); return () => clearTimeout(t); }
     const el = ref.current;
     if (!el) return;
@@ -326,23 +342,29 @@ export function Home({ active }: { active: boolean }) {
   const setView = useApp((s) => s.setView);
   const [items, setItems] = useState<TmdbItem[]>([]);
   const [error, setError] = useState<string>();
-  const ready = !!caps && !caps.offline;
+  const hydrated = useHydrated();
+  const loaded = useRef(false);
 
+  // What was on Home last time shows at once; the fresh list replaces it when it arrives. It is
+  // asked for as soon as the saved settings (the relay's address) are known, without waiting for
+  // the relay's own check.
   useEffect(() => {
-    if (!active || !ready || items.length) return;
-    const ac = new AbortController();
+    if (!hydrated || loaded.current) return;
+    loaded.current = true;
+    const saved = api.peek.trending()?.results;
+    if (saved?.length) setItems(saved);
     setError(undefined);
-    api.tmdbTrending(ac.signal).then((r) => setItems(r?.results ?? [])).catch((e) => { if (e.name !== 'AbortError') setError(e.message); });
-    return () => ac.abort();
-  }, [active, ready, items.length]);
+    api.tmdbTrending().then((r) => { if (r?.results?.length) setItems(r.results); }).catch((e) => { if (!saved?.length) setError(friendlyError(e)); });
+  }, [hydrated]);
+  const retry = () => { loaded.current = false; setError(undefined); api.tmdbTrending().then((r) => setItems(r?.results ?? [])).catch((e) => setError(friendlyError(e))); };
 
-  if (caps?.offline || error) {
+  if ((caps?.offline || error) && !items.length) {
     return (
       <div className="gutter grid min-h-[70vh] place-items-center text-center">
         <div className="max-w-sm space-y-3">
           <h1 className="text-2xl font-bold text-white">Can’t load the catalog</h1>
           <p className="text-sm text-ink-400">{caps?.offline ?? error}</p>
-          <button className="btn-glass rounded-full px-5" onClick={() => (caps?.offline ? setView('settings') : setError(undefined))}>{caps?.offline ? 'Open Settings' : 'Try again'}</button>
+          <button className="btn-glass rounded-full px-5" onClick={() => (caps?.offline ? setView('settings') : retry())}>{caps?.offline ? 'Open Settings' : 'Try again'}</button>
         </div>
       </div>
     );
@@ -359,8 +381,8 @@ export function Home({ active }: { active: boolean }) {
         <ShelfTitle>Top 10 This Week</ShelfTitle>
         <Shelf className="!gap-1">{items.length ? items.slice(0, 10).map((it, i) => <Poster key={`${it.type}-${it.id}`} item={it} numeral={i + 1} />) : <Skeleton />}</Shelf>
       </section>
-      {ready && SHELVES.map((s, i) => <LazyShelf key={s.title} {...s} order={i} />)}
-      {ready && FREE_ROWS.map((r, i) => <FreeShelf key={r.collection} {...r} order={i} />)}
+      {hydrated && SHELVES.map((s, i) => <LazyShelf key={s.title} {...s} order={i} />)}
+      {hydrated && FREE_ROWS.map((r, i) => <FreeShelf key={r.collection} {...r} order={i} />)}
     </div>
   );
 }

@@ -5,6 +5,7 @@
  */
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client-api';
+import { friendlyError } from '@/lib/friendly-error';
 import { formatBytes } from '@/lib/release-parser';
 import { absoluteEpisode } from '@/lib/subtitle-parser';
 import { useApp } from '@/lib/store';
@@ -49,26 +50,40 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
   const [more, setMore] = useState(false);
 
   useEffect(() => {
-    setDetails(undefined); setSeason(undefined); setEpisodes([]); setEpisode(undefined); setError(undefined); setMore(false);
-    api.tmdbDetails(item.type, item.id).then((d) => {
+    setSeason(undefined); setEpisodes([]); setEpisode(undefined); setError(undefined); setMore(false);
+    const show = (d: TmdbDetails) => {
       setDetails(d);
       if (d.type === 'series') {
         const start = useApp.getState().detailStart;
-        setSeason(start && d.seasons?.some((x) => x.seasonNumber === start.season) ? start.season : d.seasons?.[0]?.seasonNumber ?? 1);
+        // Keep the season already chosen when the fresh details arrive after the saved ones.
+        setSeason((cur) => cur ?? (start && d.seasons?.some((x) => x.seasonNumber === start.season) ? start.season : d.seasons?.[0]?.seasonNumber ?? 1));
       }
-    }).catch((e) => setError(e.message));
+    };
+    // Seen before: show it at once; the fresh copy (if due) replaces it.
+    const saved = api.peek.details(item.type, item.id);
+    setDetails(saved);
+    if (saved) show(saved);
+    let live = true;
+    api.tmdbDetails(item.type, item.id).then((d) => { if (live && d !== saved) show(d); }).catch((e) => { if (live && !saved) setError(friendlyError(e)); });
+    return () => { live = false; };
   }, [item]);
 
   useEffect(() => {
     if (item.type !== 'series' || season == null) return;
-    setEpisodes([]);
-    setEpisode(undefined);
-    api.tmdbSeason(item.id, season).then((r) => {
-      const eps = r?.episodes ?? [];
+    const show = (eps: TmdbEpisode[]) => {
       setEpisodes(eps);
       const start = useApp.getState().detailStart;
-      setEpisode(start?.season === season && eps.some((e) => e.episodeNumber === start.episode) ? start.episode : eps[0]?.episodeNumber);
-    }).catch((e) => setError(e.message));
+      // The episode already picked stays picked when the fresh list arrives.
+      setEpisode((cur) => (cur != null && eps.some((e) => e.episodeNumber === cur) ? cur
+        : start?.season === season && eps.some((e) => e.episodeNumber === start.episode) ? start.episode : eps[0]?.episodeNumber));
+    };
+    const saved = api.peek.season(item.id, season)?.episodes;
+    setEpisodes(saved ?? []);
+    setEpisode(undefined);
+    if (saved?.length) show(saved);
+    let live = true;
+    api.tmdbSeason(item.id, season).then((r) => { if (live && r?.episodes !== saved) show(r?.episodes ?? []); }).catch((e) => { if (live && !saved?.length) setError(friendlyError(e)); });
+    return () => { live = false; };
   }, [item, season]);
 
   // TV: start on Play if a stream is already found, else on Back until it is (FocusPlay moves it).
