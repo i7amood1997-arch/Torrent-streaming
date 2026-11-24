@@ -292,7 +292,39 @@ const BOTTOM_CLEARANCE = 40;
  * brings the new row (with its title) to the same place under the top bar every time, as on
  * TV home screens; near the top the page scrolls right back to its start.
  */
+// ─── Text fields ────────────────────────────────────────────────────────────
+/*
+ * On a TV, focusing a text field opens the on-screen keyboard, so just moving over a search box
+ * or a Settings field with the remote would pop it up. Fields are read-only while the remote
+ * passes over them; OK makes the field editable and opens the keyboard, and leaving it locks it
+ * again.
+ */
+export const TEXT_FIELD = ['', '[type="text"]', '[type="search"]', '[type="url"]', '[type="email"]', '[type="password"]', '[type="number"]', '[type="tel"]']
+  .map((t) => (t ? `input${t}` : 'input:not([type])')).join(', ') + ', textarea';
+const LOCKED = 'data-tv-locked';
+let editing: HTMLElement | undefined;
+let reopening = false;
+function lockField(el: Element) {
+  const f = el as HTMLInputElement;
+  if (f === editing || !f.matches?.(TEXT_FIELD) || f.readOnly) return;
+  f.readOnly = true;
+  f.setAttribute(LOCKED, '');
+}
+/** OK on a locked field: make it editable and bring up the keyboard. */
+function editField(f: HTMLInputElement) {
+  f.readOnly = false;
+  f.removeAttribute(LOCKED);
+  editing = f;
+  // The keyboard opens when an editable field gains focus: focus it again, now editable.
+  reopening = true;
+  f.blur();
+  f.focus({ preventScroll: true });
+  reopening = false;
+  try { const n = f.value.length; f.setSelectionRange(n, n); } catch { /* number fields */ }
+}
+
 function focus(el: HTMLElement, behavior: ScrollBehavior = 'smooth', vertical = false) {
+  lockField(el);
   el.focus({ preventScroll: true });
   const r = el.getBoundingClientRect();
 
@@ -389,6 +421,13 @@ export function startTvMode() {
   if (!isTV() || (window as unknown as { __tvStarted?: boolean }).__tvStarted) return;
   (window as unknown as { __tvStarted?: boolean }).__tvStarted = true;
   document.documentElement.dataset.tv = '1';
+  // Text fields: locked whenever focus arrives without OK (see lockField); locked again on leaving.
+  document.addEventListener('focusin', (e) => { if (!reopening) lockField(e.target as Element); }, true);
+  document.addEventListener('focusout', (e) => {
+    if (reopening || e.target !== editing) return;
+    editing = undefined;
+    lockField(e.target as Element);
+  }, true);
   // Remember where focus was in each row and in the pane, to come back to it.
   document.addEventListener('focusin', (e) => {
     const el = e.target as HTMLElement;
@@ -425,6 +464,11 @@ export function startTvMode() {
   (window as unknown as { __tvBack: () => boolean }).__tvBack = handleBack;
   window.addEventListener('keydown', (e) => {
     if (keyOverride?.(e)) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+    if (e.key === 'Enter' && (document.activeElement as HTMLElement | null)?.hasAttribute(LOCKED)) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      editField(document.activeElement as HTMLInputElement);
+      return;
+    }
     // OK on a drop-down: our own list of its choices (the WebView's picker is unreliable on TVs).
     if (e.key === 'Enter' && (document.activeElement as HTMLElement | null)?.tagName === 'SELECT') {
       e.preventDefault(); e.stopImmediatePropagation();
@@ -442,7 +486,7 @@ export function startTvMode() {
       if (dir === 'left' ? v > Number(t.min || 0) : v < Number(t.max || 100)) return;
     }
     // Text boxes keep left/right for the cursor, until it reaches the start or the end.
-    if (el?.matches('input:not([type="range"]):not([type="checkbox"]), textarea') && (dir === 'left' || dir === 'right')) {
+    if (el?.matches('input:not([type="range"]):not([type="checkbox"]), textarea') && !el.hasAttribute(LOCKED) && (dir === 'left' || dir === 'right')) {
       const t = el as HTMLInputElement;
       let atEdge = true;
       try {
