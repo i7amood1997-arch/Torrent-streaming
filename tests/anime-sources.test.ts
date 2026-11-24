@@ -10,23 +10,23 @@ const MAP = {
 
 describe('anime: which Kitsu entry and episode to ask for', () => {
   it('a long-running show: its main entry, with the episode numbered straight through', () => {
-    expect(kitsuTarget('tt0388629', 2, 1, 9, MAP)).toEqual({ id: 12, episode: 9 });     // One Piece S2 E1 = episode 9
-    expect(kitsuTarget('tt0434665', 8, 1, 152, MAP)).toEqual({ id: 244, episode: 152 });
+    expect(kitsuTarget('tt0388629', 2, 1, 9, MAP)).toMatchObject({ id: 12, episode: 9 });     // One Piece S2 E1 = episode 9
+    expect(kitsuTarget('tt0434665', 8, 1, 152, MAP)).toMatchObject({ id: 244, episode: 152 });
   });
   it('a season with its own entry: that entry, with the season’s episode number', () => {
-    expect(kitsuTarget('tt2560140', 2, 5, 30, MAP)).toEqual({ id: 8671, episode: 5 });
-    expect(kitsuTarget('tt0434665', 17, 3, 369, MAP)).toEqual({ id: 43078, episode: 3 });
+    expect(kitsuTarget('tt2560140', 2, 5, 30, MAP)).toMatchObject({ id: 8671, episode: 5 });
+    expect(kitsuTarget('tt0434665', 17, 3, 369, MAP)).toMatchObject({ id: 43078, episode: 3 });
   });
   it('season 1 of a long-running show works without the straight-through number', () => {
-    expect(kitsuTarget('tt0388629', 1, 4, undefined, MAP)).toEqual({ id: 12, episode: 4 });
+    expect(kitsuTarget('tt0388629', 1, 4, undefined, MAP)).toMatchObject({ id: 12, episode: 4 });
   });
   it('not anime, or a later season with no number to go by: nothing (the usual search runs)', () => {
     expect(kitsuTarget('tt0903747', 1, 1, 1, MAP)).toBeUndefined();
     expect(kitsuTarget('tt0388629', 2, 1, undefined, MAP)).toBeUndefined();
   });
   it('the real list knows One Piece and Bleach', () => {
-    expect(kitsuTarget('tt0388629', 2, 1, 9)).toEqual({ id: 12, episode: 9 });
-    expect(kitsuTarget('tt0434665', 8, 1, 152)).toEqual({ id: 244, episode: 152 });
+    expect(kitsuTarget('tt0388629', 2, 1, 9)).toMatchObject({ id: 12, episode: 9 });
+    expect(kitsuTarget('tt0434665', 8, 1, 152)).toMatchObject({ id: 244, episode: 152 });
   });
 });
 
@@ -59,5 +59,27 @@ describe('anime: text searches', () => {
     expect(textQueryFor({ title: 'One Piece', type: 'series', season: 2, episode: 1, kitsu: { id: 12, episode: 9 } })).toBe('One Piece 09');
     expect(textQueryFor({ title: 'Bleach', type: 'series', season: 8, episode: 1, kitsu: { id: 244, episode: 152 } })).toBe('Bleach 152');
     expect(textQueryFor({ title: 'Breaking Bad', type: 'series', season: 2, episode: 1 })).toBe('Breaking Bad S02E01');
+  });
+});
+
+describe('anime numbered straight through: releases of another show are dropped', () => {
+  const stream = (title: string, hash: string) => ({ name: 'Torrentio\n1080p', title: `${title}\n👤 50 💾 1.2 GB`, infoHash: hash });
+  afterEach(() => vi.unstubAllGlobals());
+  it('One Piece: the 2023 live-action series is left out, the anime releases stay', async () => {
+    const titles = ['One.Piece.2023.S02.1080p.NF.WEB-DL', 'ONE PIECE S02E01 THE BEGINNING AND THE END 1080p NF WEB-DL', '[SubsPlease] One Piece - 009 (1080p)', '[Anime Time] One Piece (0001-1071+Movies+Specials) [BD+CR] [1080p]'];
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ streams: titles.map((t, i) => stream(t, String(i).repeat(40))) }), { status: 200 })));
+    const cfg = { ...configFromEnv({}), enabled: ['torrentio' as const] };
+    const r = await searchTorrents({ imdbId: 'tt0388629', type: 'series', season: 2, episode: 1, year: 1999, title: 'One Piece', kitsu: { id: 12, episode: 9, straight: true } }, cfg);
+    expect(r.results.map((x) => x.title).sort()).toEqual(['[Anime Time] One Piece (0001-1071+Movies+Specials) [BD+CR] [1080p]', '[SubsPlease] One Piece - 009 (1080p)']);
+  });
+  it('a seasonal anime keeps its season-numbered releases', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ streams: [stream('Attack.on.Titan.S02E05.1080p', 'a'.repeat(40))] }), { status: 200 })));
+    const cfg = { ...configFromEnv({}), enabled: ['torrentio' as const] };
+    const r = await searchTorrents({ imdbId: 'tt2560140', type: 'series', season: 2, episode: 5, year: 2013, kitsu: { id: 8671, episode: 5, straight: false } }, cfg);
+    expect(r.results).toHaveLength(1);
+  });
+  it('the Kitsu target says whether the show is numbered straight through', () => {
+    expect(kitsuTarget('tt0388629', 2, 1, 9)).toEqual({ id: 12, episode: 9, straight: true });
+    expect(kitsuTarget('tt2560140', 2, 5, 30)).toMatchObject({ straight: false });
   });
 });

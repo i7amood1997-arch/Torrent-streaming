@@ -986,6 +986,17 @@ const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, e
 // ─── Merge / sort ───────────────────────────────────────────────────────────
 
 /** Merge duplicates (same info-hash from several sources), keeping the richest record. */
+/**
+ * An anime numbered straight through (One Piece, Bleach) is never released with season numbers or
+ * a different year in the name: such a release is another show of the same name (One Piece's
+ * 2023 live-action series), which the sources file under the anime too.
+ */
+export function anotherShow(r: TorrentResult, q: SearchQuery): boolean {
+  if (!q.kitsu?.straight) return false;
+  if (r.year != null && q.year != null && Math.abs(r.year - q.year) > 1) return true;
+  return r.season != null && r.season >= 2;
+}
+
 export function mergeResults(results: TorrentResult[]): TorrentResult[] {
   const byHash = new Map<string, TorrentResult>();
   for (const r of results) {
@@ -1071,6 +1082,6 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
     else errors.push({ indexer: active[i].id, message: describeError(s.reason) });
   });
 
-  const results = sortBySeeders(mergeResults(all).filter((r) => matchesEpisode(r, q)));
+  const results = sortBySeeders(mergeResults(all).filter((r) => matchesEpisode(r, q) && !anotherShow(r, q)));
   return { query: q, results, errors, tookMs: Date.now() - started };
 }

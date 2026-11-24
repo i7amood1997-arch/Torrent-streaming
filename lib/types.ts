@@ -75,7 +75,7 @@ export interface SearchQuery {
   /** Episode numbered straight through the show (anime). */
   absEpisode?: number;
   /** Anime: the Kitsu entry and episode Torrentio/MediaFusion know it by (set by the relay). */
-  kitsu?: { id: number; episode: number };
+  kitsu?: { id: number; episode: number; /** One long entry numbered straight through (One Piece, Bleach). */ straight?: boolean };
 }
 
 export type DebridProvider = 'realdebrid' | 'torbox' | 'debridlink' | 'premiumize' | 'alldebrid';
