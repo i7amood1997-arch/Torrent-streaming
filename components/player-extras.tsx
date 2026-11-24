@@ -14,6 +14,7 @@ import { posterUrl } from '@/lib/tmdb';
 import type { TorrentResult } from '@/lib/types';
 import { INTRODB, parseSegments, type Segments } from '@/lib/segments';
 import { IconNext, IconPlay } from './icons';
+import { Picture } from './picture';
 
 const COUNTDOWN = 10;
 /** No credits time known: offer the next episode this long before the end. */
@@ -122,10 +123,7 @@ export function NextUp({ req, seg, time, duration, ended, tv }: { req: PlayReque
   return (
     <div className="absolute bottom-24 right-4 z-20 w-[min(22rem,calc(100%-2rem))] overflow-hidden rounded-3xl bg-black/70 shadow-2xl ring-1 ring-white/15 backdrop-blur-xl md:bottom-28 md:right-8"
       onPointerDown={(e) => e.stopPropagation()} onPointerUp={(e) => e.stopPropagation()}>
-      {n.still && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={posterUrl(n.still, 'w500')} alt="" className="aspect-video w-full object-cover" />
-      )}
+      {n.still && <Picture src={posterUrl(n.still, 'w500')} lazy={false} className="aspect-video w-full bg-ink-800" />}
       <div className="p-4">
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/55">Next Episode</p>
         <p className="mt-1 truncate text-[15px] font-semibold text-white" dir="auto">S{n.season} · E{n.episode}{n.name ? ` · ${n.name}` : ''}</p>

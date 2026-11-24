@@ -13,6 +13,7 @@ import type { ArchiveItem } from '@/lib/server/handlers';
 import { initialFocus, isTV } from '@/lib/tv';
 import { useWatchlist } from '@/lib/library';
 import { detailsId, followedSeries, newEpisode } from '@/lib/new-episodes';
+import { Backdrop, Picture } from './picture';
 import { IconBack, IconChevron, IconPlay, IconStar, IconX } from './icons';
 
 /** Resting on a poster (pointer, finger or remote) loads its page in the background, so it opens at once. */
@@ -35,12 +36,8 @@ export function Poster({ item, numeral, wide }: { item: TmdbItem; numeral?: numb
       {numeral && <span className="top-numeral -mr-3 w-[4.2rem] select-none text-right xl:w-[5.4rem] xl:text-[7rem]" aria-hidden>{numeral}</span>}
       <span className={`block ${wide ? 'w-full' : 'w-[7.4rem] md:w-40 xl:w-48 2xl:w-52'}`}>
         <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800 group-focus-visible:ring-[3px] group-focus-visible:ring-white">
-          {item.posterPath ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img decoding="async" src={posterUrl(item.posterPath, 'w342')} alt="" loading="lazy" className="h-full w-full object-cover" />
-          ) : (
-            <span className="grid h-full place-items-center p-3 text-center text-sm font-semibold text-ink-200">{item.title}</span>
-          )}
+          <Picture src={posterUrl(item.posterPath, 'w342')} className="h-full w-full"
+            fallback={<span className="absolute inset-0 grid place-items-center p-3 text-center text-sm font-semibold text-ink-200" dir="auto">{item.title}</span>} />
         </span>
         {!numeral && <span className="mt-2 block truncate text-[13px] font-medium text-ink-200" dir="auto">{item.title}</span>}
         {!numeral && <span className="block text-[11px] text-ink-400">{[item.year, item.type === 'series' ? 'TV Show' : 'Movie'].filter(Boolean).join(' · ')}</span>}
@@ -158,8 +155,7 @@ function Hero({ items }: { items: TmdbItem[] }) {
   if (!it) return <div className="h-[68vh] min-h-[420px] animate-pulse bg-ink-900 md:h-[min(78vh,70vw)]" />;
   return (
     <section ref={heroRef} className="relative h-[68vh] min-h-[420px] overflow-hidden md:h-[min(78vh,70vw)]">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img decoding="async" key={it.id} src={posterUrl(it.backdropPath ?? it.posterPath, 'w1280')} alt="" fetchPriority="high" className="fade kenburns absolute inset-0 h-full w-full object-cover" />
+      <Backdrop src={posterUrl(it.backdropPath ?? it.posterPath, 'w1280')} imgClassName="kenburns" />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/10" />
       <div className="absolute inset-0 hidden bg-gradient-to-r from-black/70 via-transparent to-transparent md:block" />
       <div key={`t-${it.id}`} className="gutter rise absolute inset-x-0 bottom-0 flex flex-col items-center pb-9 text-center md:items-start md:pb-14 md:text-left">
@@ -217,10 +213,7 @@ function NewEpisodes() {
         {found.map(({ item, ep }) => (
           <button key={item.id} className="group w-60 text-left outline-none md:w-72 xl:w-80" onClick={() => open(item, { season: ep.season, episode: ep.episode })} aria-label={`${item.title}, new episode ${ep.season}×${ep.episode}`}>
             <span className="lift relative block aspect-video overflow-hidden rounded-xl bg-ink-800">
-              {(ep.still || item.backdropPath) && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img decoding="async" src={posterUrl(ep.still || item.backdropPath, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
-              )}
+              <Picture src={posterUrl(ep.still || item.backdropPath, 'w500')} className="h-full w-full" />
               <span className="absolute left-2.5 top-2.5 rounded-full bg-[#4ba3ff] px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">New</span>
             </span>
             <span className="mt-2 block truncate text-[13px] font-medium text-ink-200" dir="auto">{item.title}</span>
@@ -257,10 +250,7 @@ function ContinueWatching() {
           <div key={`${h.imdbId ?? h.result?.id ?? h.url}-${h.season}-${h.episode}`} className="group relative w-60 md:w-72 xl:w-80">
             <button className="block w-full text-left" onClick={() => play(h)}>
               <span className="lift relative block aspect-video overflow-hidden rounded-xl bg-gradient-to-br from-ink-700 to-ink-900">
-                {(h.backdrop || h.poster) && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img decoding="async" src={posterUrl(h.backdrop ?? h.poster, 'w500')} alt="" loading="lazy" className="h-full w-full object-cover" />
-                )}
+                <Picture src={posterUrl(h.backdrop ?? h.poster, 'w500')} className="absolute inset-0" />
                 <span className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent" />
                 <span className="glass-btn absolute bottom-2.5 left-2.5 grid h-8 w-8 place-items-center rounded-full text-white"><IconPlay size={13} /></span>
               </span>
@@ -333,8 +323,8 @@ function FreeShelf({ title, collection, order }: { title: string; collection: st
           <button key={it.id} className="group block rounded-xl text-left outline-none" onClick={() => start(it)} aria-label={`Play ${it.title}`}>
             <span className="block w-[7.4rem] md:w-40 xl:w-48 2xl:w-52">
               <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img decoding="async" src={it.poster} alt="" loading="lazy" className="h-full w-full object-cover" />
+                <Picture src={it.poster} className="h-full w-full"
+                  fallback={<span className="absolute inset-0 grid place-items-center p-3 text-center text-sm font-semibold text-ink-200">{it.title}</span>} />
                 {busy === it.id && <span className="absolute inset-0 grid place-items-center bg-black/50"><span className="h-8 w-8 animate-spin rounded-full border-2 border-white/30 border-t-white" /></span>}
               </span>
               <span className="mt-2 block truncate text-[13px] font-medium text-ink-200">{it.title}</span>
