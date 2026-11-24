@@ -83,3 +83,35 @@ describe('anime numbered straight through: releases of another show are dropped'
     expect(kitsuTarget('tt2560140', 2, 5, 30)).toMatchObject({ straight: false });
   });
 });
+
+describe('releases that are clearly wrong are left out', () => {
+  const q = { imdbId: 'tt0388629', type: 'series' as const, season: 2, episode: 1, year: 1999, kitsu: { id: 12, episode: 9, straight: true } };
+  const r = (title: string) => ({ title, season: undefined, year: undefined } as never);
+  it('adult releases, in any search', async () => {
+    const { adultRelease } = await import('@/lib/torrent-indexer');
+    expect(adultRelease('Nubiles 24 09 20 Megan Moore One Piece XXX 2160p MP4 WRB [XC]')).toBe(true);
+    expect(adultRelease('One.Piece.S01E01.1080p.WEB')).toBe(false);
+    expect(adultRelease('Xxx Return of Xander Cage 2017 1080p')).toBe(false);
+  });
+  it('anime: a single episode number that isn’t the one asked for', async () => {
+    const { anotherShow } = await import('@/lib/torrent-indexer');
+    expect(anotherShow(r('[SubsPlease] One Piece - 1180 (720p) [09481FEB].mkv'), q)).toBe(true);
+    expect(anotherShow(r('[SubsPlease] One Piece - 009 (1080p)'), q)).toBe(false);
+    expect(anotherShow(r('[Erai-raws] One Piece - 09v2 [1080p]'), q)).toBe(false);
+  });
+  it('anime: a range of episodes that doesn’t include it', async () => {
+    const { anotherShow } = await import('@/lib/torrent-indexer');
+    expect(anotherShow(r('[Judas] One Piece 001-574 [1080p][HEVC x265 10bit]'), q)).toBe(false);
+    expect(anotherShow(r('[Anime Time] One Piece (0001-1071+Movies+Specials) [BD+CR] [1080p]'), q)).toBe(false);
+    expect(anotherShow(r('[Judas] One Piece 575-891 [1080p]'), q)).toBe(true);
+    expect(anotherShow(r('[Anime Time] One Piece - Season 1 - East Blue (Fixed) [1080p]'), q)).toBe(false); // no number: kept
+  });
+
+  it('a season range isn’t an episode range (seasonal anime packs are kept)', async () => {
+    const { anotherShow } = await import('@/lib/torrent-indexer');
+    const aot = { imdbId: 'tt2560140', type: 'series' as const, season: 2, episode: 5, kitsu: { id: 8671, episode: 5, straight: false } };
+    expect(anotherShow(r('[Trix] Shingeki no Kyojin (S01-04 + OVAs) (COMPLETE) [Dual Audio] (BD 1080p)'), aot)).toBe(false);
+    expect(anotherShow(r('[Anime Time] Attack On Titan (Complete Collection) (S01-S04+OVA+Movies)'), aot)).toBe(false);
+    expect(anotherShow(r('Attack on Titan Seasons 1-4 Complete'), aot)).toBe(false);
+  });
+});

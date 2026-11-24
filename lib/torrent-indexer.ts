@@ -992,9 +992,25 @@ const ADAPTERS: Record<IndexerId, IndexerAdapter> = { torrentio, torznab, yts, e
  * 2023 live-action series), which the sources file under the anime too.
  */
 export function anotherShow(r: TorrentResult, q: SearchQuery): boolean {
-  if (!q.kitsu?.straight) return false;
-  if (r.year != null && q.year != null && Math.abs(r.year - q.year) > 1) return true;
-  return r.season != null && r.season >= 2;
+  if (!q.kitsu) return false;
+  if (q.kitsu.straight) {
+    if (r.year != null && q.year != null && Math.abs(r.year - q.year) > 1) return true;
+    if (r.season != null && r.season >= 2) return true;
+  }
+  // Anime names carry the episode: "Title - 1180", or a range "001-574". One that doesn't include
+  // the episode asked for is a different episode (text searches find neighbours by number).
+  const ep = q.kitsu.episode;
+  // (Season ranges — "S01-04", "Seasons 1-4" — aren't episodes.)
+  const name = r.title.replace(/\[[0-9A-F]{8}\]|\b(?:480|576|720|1080|2160)p\b|\bx26[45]\b|\b(?:19|20)\d\d\b|\bseasons?\s*\d+\s*(?:-|~|to)\s*\d+|\bS\d+\s*-\s*S?\d+/gi, ' ');
+  const ranges = [...name.matchAll(/(?<![\d.A-Za-z])(\d{1,4})\s*(?:-|~|to)\s*(\d{1,4})(?![\d.])/gi)].map((m) => [Number(m[1]), Number(m[2])]).filter(([a, b]) => b > a);
+  if (ranges.length) return !ranges.some(([a, b]) => ep >= a && ep <= b);
+  const single = name.match(/\s-\s(\d{1,4})(?:v\d)?(?=[\s.\[(]|$)/);
+  return single ? Number(single[1]) !== ep : false;
+}
+
+/** Adult releases are never shown (text searches match them on a shared word). */
+export function adultRelease(title: string): boolean {
+  return /\b(?:xxx|porn|nubiles|brazzers|onlyfans|bangbros|realitykings|naughtyamerica)\b/i.test(title) && !/xander\s+cage/i.test(title);
 }
 
 export function mergeResults(results: TorrentResult[]): TorrentResult[] {
@@ -1082,6 +1098,6 @@ export async function searchTorrents(query: SearchQuery, config: IndexerConfig):
     else errors.push({ indexer: active[i].id, message: describeError(s.reason) });
   });
 
-  const results = sortBySeeders(mergeResults(all).filter((r) => matchesEpisode(r, q) && !anotherShow(r, q)));
+  const results = sortBySeeders(mergeResults(all).filter((r) => matchesEpisode(r, q) && !anotherShow(r, q) && !adultRelease(r.title)));
   return { query: q, results, errors, tookMs: Date.now() - started };
 }
