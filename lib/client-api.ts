@@ -74,7 +74,7 @@ async function get<T>(path: string, params: Record<string, string | number | und
 
 // ── Catalog answers kept on the device (lib/catalog-cache.ts): seen before → shown at once ──
 const MIN = 60_000;
-const FRESH = { trending: 30 * MIN, shelf: 6 * 60 * MIN, details: 6 * 60 * MIN, season: 20 * MIN, archive: 24 * 60 * MIN };
+const FRESH = { anime: 3 * 60 * MIN, trending: 30 * MIN, shelf: 6 * 60 * MIN, details: 6 * 60 * MIN, season: 20 * MIN, archive: 24 * 60 * MIN };
 let catalog: ReturnType<typeof makeCache> | undefined;
 const cat = () => (catalog ??= makeCache(safeStorage()));
 function catalogKey(path: string, params: Record<string, string | number | undefined>) {
@@ -102,10 +102,13 @@ export const api = {
     shelf: (type: string, genre?: string) => peek<{ results: TmdbItem[] }>('/api/tmdb', { action: 'shelf', type, genre }),
     details: (type: string, id: number) => peek<TmdbDetails>('/api/tmdb', { action: 'details', type, id }),
     season: (id: number, season: number) => peek<{ episodes: TmdbEpisode[] }>('/api/tmdb', { action: 'season', id, season }),
+    anime: (list: string) => peek<{ results: TmdbItem[] }>('/api/tmdb', { action: 'anime', list }),
     archiveShelf: (collection: string) => peek<{ results: import('./server/handlers').ArchiveItem[] }>('/api/archive', { collection }),
   },
   tmdbSearch: (q: string, signal?: AbortSignal) => get<{ results: TmdbItem[] }>('/api/tmdb', { action: 'search', q }, signal),
   tmdbTrending: (_signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.trending, '/api/tmdb', { action: 'trending' }),
+  /** Anime rows (AniList, linked to catalog titles by the relay): trending · airing · top. */
+  anime: (list: string) => cachedGet<{ results: TmdbItem[] }>(FRESH.anime, '/api/tmdb', { action: 'anime', list }),
   shelf: (type: string, genre?: string, _signal?: AbortSignal) => cachedGet<{ results: TmdbItem[] }>(FRESH.shelf, '/api/tmdb', { action: 'shelf', type, genre }),
   tmdbDetails: (type: string, id: number) => cachedGet<TmdbDetails>(FRESH.details, '/api/tmdb', { action: 'details', type, id }),
   tmdbSeason: (id: number, season: number) => cachedGet<{ episodes: TmdbEpisode[] }>(FRESH.season, '/api/tmdb', { action: 'season', id, season }),

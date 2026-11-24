@@ -16,6 +16,8 @@
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
  */
+import { animeShelf, ANIME_LISTS, type AnimeList } from './anime';
+import ANIME_MAP from './anime-map.json';
 import { checkRealDebridCache, DebridError, envDebridKey, resolveDebridStream } from '../debrid';
 import { parseMagnet } from '../magnet';
 import { fetchSubtitleCues, searchSubtitles, type SubtitleKeys } from '../subtitles';
@@ -238,6 +240,12 @@ async function tmdb(req: Request, env: Env, sp: URLSearchParams) {
         const season = intParam(sp.get('season'));
         if (!id || season == null) return err('id and season required', 400);
         return json({ episodes: await client.season(id, season) }, 200, { 'Cache-Control': 'public, max-age=3600' });
+      }
+      case 'anime': {
+        const list = sp.get('list') as AnimeList;
+        if (!ANIME_LISTS.includes(list)) return err('list must be one of: ' + ANIME_LISTS.join(', '), 400);
+        const results = await animeShelf(list, { fetch: (u, i) => fetch(u, i), map: ANIME_MAP as Record<string, string>, useTmdb: !!apiKey, search: (q) => client.search(q) });
+        return json({ results }, 200, { 'Cache-Control': `public, max-age=${results.length ? 10800 : 300}` });
       }
       default:
         return err('Unknown action', 400);

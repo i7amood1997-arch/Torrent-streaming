@@ -97,9 +97,10 @@ export function Shelf({ children, className = '' }: { children: React.ReactNode;
 }
 
 /** A row that fetches its titles when it comes near the screen. */
-function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie' | 'series'; genre?: string; order: number }) {
+function LazyShelf({ title, type, genre, anime, order }: { title: string; type: 'movie' | 'series'; genre?: string; anime?: string; order: number }) {
+  const fetchRow = () => (anime ? api.anime(anime) : api.shelf(type, genre));
   const ref = useRef<HTMLElement>(null);
-  const [items, setItems] = useState<TmdbItem[] | undefined>(() => api.peek.shelf(type, genre)?.results); // last time's, at once
+  const [items, setItems] = useState<TmdbItem[] | undefined>(() => (anime ? api.peek.anime(anime) : api.peek.shelf(type, genre))?.results); // last time's, at once
   const [failed, setFailed] = useState(false);
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -110,17 +111,17 @@ function LazyShelf({ title, type, genre, order }: { title: string; type: 'movie'
     // never still loading when the remote reaches it (an empty row can't take focus, and its
     // arrival would shift the page mid-move). The pictures still load as rows come near.
     if (isTV()) {
-      const t = setTimeout(() => api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length)), 1200 + order * 350);
+      const t = setTimeout(() => fetchRow().then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length)), 1200 + order * 350);
       return () => clearTimeout(t);
     }
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
-      api.shelf(type, genre).then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length));
+      fetchRow().then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length));
     }, { rootMargin: '400px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [type, genre]);
+  }, [type, genre, anime]);
   if (failed || (items && !items.length)) return null;
   return (
     <section ref={ref} className="offscreen-skip space-y-1">
@@ -269,15 +270,18 @@ function ContinueWatching() {
   );
 }
 
-const SHELVES: { title: string; type: 'movie' | 'series'; genre?: string }[] = [
+const SHELVES: { title: string; type: 'movie' | 'series'; genre?: string; anime?: 'trending' | 'airing' | 'top' }[] = [
   { title: 'Popular Movies', type: 'movie' },
   { title: 'Popular TV Shows', type: 'series' },
+  { title: 'Trending Anime', type: 'series', anime: 'trending' },
   { title: 'Action', type: 'movie', genre: 'Action' },
   { title: 'Drama Series', type: 'series', genre: 'Drama' },
   { title: 'Comedy', type: 'movie', genre: 'Comedy' },
   { title: 'Sci-Fi', type: 'movie', genre: 'Sci-Fi' },
   { title: 'Crime Series', type: 'series', genre: 'Crime' },
   { title: 'Animation', type: 'series', genre: 'Animation' },
+  { title: 'Anime Airing This Season', type: 'series', anime: 'airing' },
+  { title: 'Top Rated Anime', type: 'series', anime: 'top' },
   { title: 'Thrillers', type: 'movie', genre: 'Thriller' },
   { title: 'Documentaries', type: 'movie', genre: 'Documentary' },
 ];
