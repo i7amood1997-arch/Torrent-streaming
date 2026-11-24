@@ -997,6 +997,11 @@ export function anotherShow(r: TorrentResult, q: SearchQuery): boolean {
     if (r.year != null && q.year != null && Math.abs(r.year - q.year) > 1) return true;
     if (r.season != null && r.season >= 2) return true;
   }
+  // Anime name their season in words ("Sousou no Frieren 2nd Season - 05"): another season is another episode.
+  if (!q.kitsu.straight && q.season != null) {
+    const said = r.title.match(/\b(\d{1,2})(?:st|nd|rd|th)\s+season\b|\bseason\s+(\d{1,2})\b(?!\s*(?:-|~|to)\s*\d)/i);
+    if (said && Number(said[1] ?? said[2]) !== q.season) return true;
+  }
   // Anime names carry the episode: "Title - 1180", or a range "001-574". One that doesn't include
   // the episode asked for is a different episode (text searches find neighbours by number).
   const ep = q.kitsu.episode;

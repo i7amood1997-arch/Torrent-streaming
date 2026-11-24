@@ -114,4 +114,12 @@ describe('releases that are clearly wrong are left out', () => {
     expect(anotherShow(r('[Anime Time] Attack On Titan (Complete Collection) (S01-S04+OVA+Movies)'), aot)).toBe(false);
     expect(anotherShow(r('Attack on Titan Seasons 1-4 Complete'), aot)).toBe(false);
   });
+
+  it('a seasonal anime: a release of another season (named in words) is left out', async () => {
+    const { anotherShow } = await import('@/lib/torrent-indexer');
+    const fr = { imdbId: 'tt22248376', type: 'series' as const, season: 1, episode: 5, kitsu: { id: 46474, episode: 5, straight: false } };
+    expect(anotherShow(r('[Erai-raws] Sousou no Frieren 2nd Season - 05 [1080p CR WEB-DL AVC AAC]'), fr)).toBe(true);
+    expect(anotherShow(r('[SubsPlease] Sousou no Frieren - 05 (1080p) [8E3F8FA5].mkv'), fr)).toBe(false);
+    expect(anotherShow(r('[Feibanyama] Frieren Beyond Journeys End Season 1 [IQIYI Web]'), fr)).toBe(false);
+  });
 });
