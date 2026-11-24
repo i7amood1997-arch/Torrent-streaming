@@ -119,6 +119,7 @@ describe('releases that are clearly wrong are left out', () => {
     const { anotherShow } = await import('@/lib/torrent-indexer');
     const fr = { imdbId: 'tt22248376', type: 'series' as const, season: 1, episode: 5, kitsu: { id: 46474, episode: 5, straight: false } };
     expect(anotherShow(r('[Erai-raws] Sousou no Frieren 2nd Season - 05 [1080p CR WEB-DL AVC AAC]'), fr)).toBe(true);
+    expect(anotherShow(r('[Erai-raws]-Sousou-no-Frieren-2nd-Season--05-[720p-CR-WEB-DL-AVC-AAC]'), fr)).toBe(true);
     expect(anotherShow(r('[SubsPlease] Sousou no Frieren - 05 (1080p) [8E3F8FA5].mkv'), fr)).toBe(false);
     expect(anotherShow(r('[Feibanyama] Frieren Beyond Journeys End Season 1 [IQIYI Web]'), fr)).toBe(false);
   });
