@@ -15,3 +15,16 @@ for (const x of list) {
 }
 writeFileSync(new URL('../lib/server/anime-map.json', import.meta.url), JSON.stringify(map));
 console.log(`${Object.keys(map).length} anime with an IMDb id`);
+
+// IMDb title → its Kitsu series entries ("<kitsu id>:<TVDB season>", season empty when unknown):
+// Torrentio and MediaFusion find anime releases (Nyaa and others) by Kitsu id and episode.
+const kitsu = {};
+for (const x of list) {
+  if (!x.kitsu_id || !['TV', 'ONA'].includes(x.type)) continue;
+  for (const imdb of [x.imdb_id].flat()) {
+    if (!/^tt\d+$/.test(imdb ?? '')) continue;
+    (kitsu[imdb.slice(2)] ??= []).push(`${x.kitsu_id}:${x.season?.tvdb ?? ''}`);
+  }
+}
+writeFileSync(new URL('../lib/server/anime-kitsu.json', import.meta.url), JSON.stringify(kitsu));
+console.log(`${Object.keys(kitsu).length} IMDb titles with Kitsu entries`);

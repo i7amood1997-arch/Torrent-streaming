@@ -72,6 +72,10 @@ export interface SearchQuery {
   /** Title + year to help text-only indexers when searching by id. */
   title?: string;
   year?: number;
+  /** Episode numbered straight through the show (anime). */
+  absEpisode?: number;
+  /** Anime: the Kitsu entry and episode Torrentio/MediaFusion know it by (set by the relay). */
+  kitsu?: { id: number; episode: number };
 }
 
 export type DebridProvider = 'realdebrid' | 'torbox' | 'debridlink' | 'premiumize' | 'alldebrid';

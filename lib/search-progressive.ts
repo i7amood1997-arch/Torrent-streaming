@@ -23,6 +23,8 @@ export interface SearchParams {
   episode?: number;
   title?: string;
   year?: number;
+  /** Episode numbered straight through the show (anime). */
+  abs?: number;
 }
 
 export interface SearchProgress {

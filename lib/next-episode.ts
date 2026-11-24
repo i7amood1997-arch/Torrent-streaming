@@ -45,7 +45,8 @@ export async function findNext(r: PlayRequest): Promise<NextEp | undefined> {
 
 /** The stream to play for it, or undefined when none was found. */
 export async function streamFor(r: PlayRequest, n: NextEp, signal?: AbortSignal): Promise<TorrentResult | undefined> {
-  const res = await api.search({ imdb: r.imdbId, tmdb: r.tmdbId, type: 'series', season: n.season, episode: n.episode, title: r.title }, signal);
+  const abs = r.absEpisode != null && n.season === r.season ? r.absEpisode + (n.episode - r.episode!) : undefined;
+  const res = await api.search({ imdb: r.imdbId, tmdb: r.tmdbId, type: 'series', season: n.season, episode: n.episode, abs, title: r.title }, signal);
   const st = useApp.getState();
   return pickBest(res.results ?? [], { debrid: hasDebrid(st.settings, st.caps), preferMp4: !canPlayMkv(), audioOk: audioPlayable, preferQuality: seriesPrefs(r.tmdbId)?.quality });
 }

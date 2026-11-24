@@ -149,6 +149,9 @@ async function eachQuery(q: SearchQuery, run: (term: string) => Promise<TorrentR
 export function textQueryFor(q: SearchQuery): string | undefined {
   if (q.q?.trim()) return q.q.trim();
   if (!q.title) return undefined;
+  // Anime are released as "Title - 009", numbered within their Kitsu entry (straight through for a
+  // long-running show); "Title S02E01" finds a live-action show of the same name instead.
+  if (q.kitsu) { const n = q.kitsu.episode; return `${q.title} ${String(n).padStart(n >= 100 ? 3 : 2, '0')}`; }
   if (q.type === 'series' && q.season != null) {
     const s = String(q.season).padStart(2, '0');
     return q.episode != null ? `${q.title} S${s}E${String(q.episode).padStart(2, '0')}` : `${q.title} S${s}`;
@@ -270,10 +273,15 @@ export function parseTorrentioStream(s: StremioStream): TorrentResult | null {
 }
 
 /** Torrent streams from any Stremio add-on (base URL = manifest URL without /manifest.json). */
-async function stremioStreams(base: string, q: SearchQuery, fetchJson: Ctx['fetchJson'], label: string): Promise<TorrentResult[]> {
+async function stremioStreams(base: string, q: SearchQuery, fetchJson: Ctx['fetchJson'], label: string, byKitsu = false): Promise<TorrentResult[]> {
   const kind = q.type === 'series' ? 'series' : 'movie';
-  const id = kind === 'series' && q.season != null ? `${q.imdbId}:${q.season}:${q.episode ?? 1}` : q.imdbId!;
-  const data = await fetchJson<{ streams?: StremioStream[] }>(`${base}/stream/${kind}/${id}.json`);
+  // Anime: ask by Kitsu id first (anime releases, right episode); the IMDb id if that finds nothing.
+  if (byKitsu && q.kitsu) {
+    const found = await stremioStreams(base, { ...q, kitsu: undefined, imdbId: `kitsu:${q.kitsu.id}`, season: undefined, episode: q.kitsu.episode }, fetchJson, label).catch(() => []);
+    if (found.length) return found.map((r) => ({ ...r, imdbId: q.imdbId }));
+  }
+  const id = q.imdbId?.startsWith('kitsu:') ? `${q.imdbId}:${q.episode ?? 1}` : kind === 'series' && q.season != null ? `${q.imdbId}:${q.season}:${q.episode ?? 1}` : q.imdbId!;
+  const data = await fetchJson<{ streams?: StremioStream[] }>(`${base}/stream/${q.imdbId?.startsWith('kitsu:') ? 'series' : kind}/${id}.json`);
   return (data.streams ?? []).flatMap((s) => {
     const direct = parseStremioDirect(s, label, q.imdbId);
     if (direct) return [direct];
@@ -298,14 +306,14 @@ const torrentio: IndexerAdapter = {
   id: 'torrentio',
   supports: (q) => !!q.imdbId,
   search: (q, { config, fetchJson }) =>
-    stremioStreams(config.torrentioUrl + (config.torrentioOptions ? `/${config.torrentioOptions}` : ''), q, fetchJson, 'torrentio'),
+    stremioStreams(config.torrentioUrl + (config.torrentioOptions ? `/${config.torrentioOptions}` : ''), q, fetchJson, 'torrentio', true),
 };
 
 /** MediaFusion's public instance (aggregates Prowlarr, Zilean, Torrentio and more). May hide torrents for anonymous users. */
 const mediafusion: IndexerAdapter = {
   id: 'mediafusion',
   supports: (q) => !!q.imdbId,
-  search: (q, { config, fetchJson }) => stremioStreams(config.mediafusionUrl, q, fetchJson, 'mediafusion'),
+  search: (q, { config, fetchJson }) => stremioStreams(config.mediafusionUrl, q, fetchJson, 'mediafusion', true),
 };
 
 /** TorrentsDB: a large torrent catalogue served as a Stremio add-on (by IMDb id, like Torrentio). */
@@ -897,7 +905,8 @@ const nyaa: IndexerAdapter = {
   supports: (q) => !!textQueryFor(q) && !(q.imdbId && q.type === 'movie'),
   async search(q, { config, fetchText }) {
     // Anime releases are named "Title - 07", not "Title S01E07".
-    const term = q.q?.trim() || (q.title && q.episode != null ? `${q.title} ${String(q.episode).padStart(2, '0')}` : textQueryFor(q)!);
+    const ep = q.absEpisode ?? q.episode;
+    const term = q.q?.trim() || (q.title && ep != null ? `${q.title} ${String(ep).padStart(2, '0')}` : textQueryFor(q)!);
     // c=1_2: Anime, English-translated. f=0: no filter.
     return parseNyaaRss(await fetchText(`${config.nyaaUrl}/?page=rss&c=1_2&f=0&q=${encodeURIComponent(term)}`));
   },
@@ -910,7 +919,8 @@ const animetosho: IndexerAdapter = {
   supports: (q) => !!textQueryFor(q) && !(q.imdbId && q.type === 'movie'),
   async search(q, { config, fetchText }) {
     // Anime releases are named "Title - 07", not "Title S01E07".
-    const term = q.q?.trim() || (q.title && q.episode != null ? `${q.title} ${String(q.episode).padStart(2, '0')}` : textQueryFor(q)!);
+    const ep = q.absEpisode ?? q.episode;
+    const term = q.q?.trim() || (q.title && ep != null ? `${q.title} ${String(ep).padStart(2, '0')}` : textQueryFor(q)!);
     const xmlBody = await fetchText(`${config.animetoshoUrl}/api/torznab?t=search&limit=100&q=${encodeURIComponent(term)}`);
     return parseTorznabXml(xmlBody, 'animetosho').filter((r) => r.seeders > 0);
   },

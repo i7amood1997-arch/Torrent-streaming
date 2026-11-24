@@ -16,6 +16,7 @@
  * Why a backend at all: indexer/debrid/subtitle APIs mostly don't send CORS
  * headers, server-side keys must stay secret, and SubDL zips need unpacking.
  */
+import { kitsuTarget } from './anime-kitsu';
 import { addTvmazeStills } from './tvmaze';
 import { imdbFromNumeric } from '../cinemeta';
 import { AniListRefused, aniListRequest, animeShelf, ANIME_LISTS, linkAnime, sanitizeMedia, type AnimeList } from './anime';
@@ -181,8 +182,10 @@ async function search(req: Request, env: Env, sp: URLSearchParams) {
     episode: intParam(sp.get('episode')),
     title: sp.get('title')?.slice(0, 200) || undefined,
     year: intParam(sp.get('year')),
+    absEpisode: intParam(sp.get('abs')),
   };
   if (!query.q && !query.imdbId && !query.tmdbId) return err('Provide q, imdb or tmdb', 400);
+  if (query.type === 'series') query.kitsu = kitsuTarget(query.imdbId, query.season, query.episode, query.absEpisode);
 
   const cfg = configFromEnv(env);
   const subset = sp.get('indexers')?.split(',').filter((s): s is IndexerId => (ALL_INDEXERS as string[]).includes(s));

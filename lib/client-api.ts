@@ -128,7 +128,7 @@ export const api = {
   tmdbDetails: (type: string, id: number) => cachedGet<TmdbDetails>(FRESH.details, '/api/tmdb', { action: 'details', type, id }),
   tmdbSeason: (id: number, season: number) => cachedGet<{ episodes: TmdbEpisode[] }>(FRESH.season, '/api/tmdb', { action: 'season', id, season }),
 
-  search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; title?: string; year?: number }, signal?: AbortSignal) =>
+  search: (p: { q?: string; imdb?: string; tmdb?: number; type?: string; season?: number; episode?: number; abs?: number; title?: string; year?: number }, signal?: AbortSignal) =>
     get<SearchResponse>('/api/search', { ...p, indexers: useApp.getState().settings.indexers.join(',') }, signal),
 
   /** A free-library row (Internet Archive collection) and the file to play for one of its titles. */

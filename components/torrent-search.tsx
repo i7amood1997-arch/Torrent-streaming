@@ -100,7 +100,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
     searchProgressive(
       query
         ? { q: query }
-        : { imdb: context?.imdbId, tmdb: context?.tmdbId, type: context?.type, season: context?.season, episode: context?.episode, title: context?.title, year: context?.year },
+        : { imdb: context?.imdbId, tmdb: context?.tmdbId, type: context?.type, season: context?.season, episode: context?.episode, abs: context?.absEpisode, title: context?.title, year: context?.year },
       (s) => {
         setResults(s.results);
         setErrors(s.errors);
