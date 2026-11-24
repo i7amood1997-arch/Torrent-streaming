@@ -61,7 +61,8 @@ export interface AnimeDeps {
 export async function animeShelf(list: AnimeList, deps: AnimeDeps): Promise<TmdbItem[]> {
   const res = await deps.fetch(ANILIST, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    // AniList turns away requests that don't say who they are (no browser here to say it).
+    headers: { 'content-type': 'application/json', accept: 'application/json', 'user-agent': 'Streamdeck/1.0 (+https://github.com/i7amood1997-arch/Torrent-streaming)' },
     body: JSON.stringify({ query: query(list), variables: { sort: [SORT[list]] } }),
   });
   if (!res.ok) throw new Error(`AniList answered HTTP ${res.status}`);
