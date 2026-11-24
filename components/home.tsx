@@ -102,6 +102,10 @@ function LazyShelf({ title, type, genre, anime, order }: { title: string; type: 
   const ref = useRef<HTMLElement>(null);
   const [items, setItems] = useState<TmdbItem[] | undefined>(() => (anime ? api.peek.anime(anime) : api.peek.shelf(type, genre))?.results); // last time's, at once
   const [failed, setFailed] = useState(false);
+  // Phones and computers: the posters are only put in once the row comes near the screen, even
+  // when its list is already saved, so far-down rows don't download pictures while a title's
+  // cover is loading (it then came in slowly, top first).
+  const [near, setNear] = useState(false);
   const itemsRef = useRef(items);
   itemsRef.current = items;
   useEffect(() => {
@@ -117,6 +121,7 @@ function LazyShelf({ title, type, genre, anime, order }: { title: string; type: 
     const io = new IntersectionObserver((entries) => {
       if (!entries.some((e) => e.isIntersecting)) return;
       io.disconnect();
+      setNear(true);
       fetchRow().then((r) => setItems(r?.results ?? [])).catch(() => setFailed((f) => f || !itemsRef.current?.length));
     }, { rootMargin: '400px' });
     io.observe(el);
@@ -126,7 +131,7 @@ function LazyShelf({ title, type, genre, anime, order }: { title: string; type: 
   return (
     <section ref={ref} className="offscreen-skip space-y-1">
       <ShelfTitle>{title}</ShelfTitle>
-      <Shelf>{items ? items.map((it) => <Poster key={`${it.type}-${it.id}`} item={it} />) : <Skeleton />}</Shelf>
+      <Shelf>{items && (near || isTV()) ? items.map((it) => <Poster key={`${it.type}-${it.id}`} item={it} />) : <Skeleton />}</Shelf>
     </section>
   );
 }
@@ -154,7 +159,7 @@ function Hero({ items }: { items: TmdbItem[] }) {
   return (
     <section ref={heroRef} className="relative h-[68vh] min-h-[420px] overflow-hidden md:h-[min(78vh,70vw)]">
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img decoding="async" key={it.id} src={posterUrl(it.backdropPath ?? it.posterPath, 'w1280')} alt="" className="fade kenburns absolute inset-0 h-full w-full object-cover" />
+      <img decoding="async" key={it.id} src={posterUrl(it.backdropPath ?? it.posterPath, 'w1280')} alt="" fetchPriority="high" className="fade kenburns absolute inset-0 h-full w-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-t from-black via-black/35 to-black/10" />
       <div className="absolute inset-0 hidden bg-gradient-to-r from-black/70 via-transparent to-transparent md:block" />
       <div key={`t-${it.id}`} className="gutter rise absolute inset-x-0 bottom-0 flex flex-col items-center pb-9 text-center md:items-start md:pb-14 md:text-left">
@@ -300,12 +305,13 @@ function FreeShelf({ title, collection, order }: { title: string; collection: st
   const [busy, setBusy] = useState<string>();
   const [note, setNote] = useState<string>();
   const play = useApp((s) => s.play);
+  const [near, setNear] = useState(false); // see LazyShelf
   useEffect(() => {
     const load = () => api.archiveShelf(collection).then((r) => setItems(r.results ?? [])).catch(() => setItems((cur) => cur ?? []));
     if (isTV()) { const t = setTimeout(load, 1200 + (SHELVES.length + order) * 350); return () => clearTimeout(t); }
     const el = ref.current;
     if (!el) return;
-    const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) { io.disconnect(); load(); } }, { rootMargin: '400px' });
+    const io = new IntersectionObserver((e) => { if (e.some((x) => x.isIntersecting)) { io.disconnect(); setNear(true); load(); } }, { rootMargin: '400px' });
     io.observe(el);
     return () => io.disconnect();
   }, [collection, order]);
@@ -323,7 +329,7 @@ function FreeShelf({ title, collection, order }: { title: string; collection: st
       <ShelfTitle>{title}</ShelfTitle>
       {note && <p className="gutter text-xs text-red-300/90">{note}</p>}
       <Shelf>
-        {items ? items.map((it) => (
+        {items && (near || isTV()) ? items.map((it) => (
           <button key={it.id} className="group block rounded-xl text-left outline-none" onClick={() => start(it)} aria-label={`Play ${it.title}`}>
             <span className="block w-[7.4rem] md:w-40 xl:w-48 2xl:w-52">
               <span className="lift relative block aspect-[2/3] overflow-hidden rounded-xl bg-ink-800">

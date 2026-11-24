@@ -3,7 +3,7 @@
  * Title page: backdrop, one Play button (starts the best stream found), seasons and
  * episodes for shows, and every stream underneath for those who want to choose.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { friendlyError } from '@/lib/friendly-error';
 import { formatBytes } from '@/lib/release-parser';
@@ -39,6 +39,29 @@ function WatchlistButton({ item }: { item: TmdbItem }) {
 }
 
 interface StreamState { best?: TorrentResult; play: (r: TorrentResult) => void; loading: boolean; count: number; instant?: boolean }
+
+/**
+ * The cover at the top. A big picture arrives top first, and iOS draws it as it comes, so a slow
+ * one showed as a strip. It stays hidden until it has fully arrived, and loads before anything
+ * else on the page; meanwhile the poster (already on the device from Home) shows blurred behind,
+ * as on Apple TV.
+ */
+function Cover({ src, placeholder }: { src?: string; placeholder?: string }) {
+  const [shown, setShown] = useState<string>();
+  const ref = useRef<HTMLImageElement>(null);
+  // Already in the browser's cache: no load event may come.
+  useEffect(() => { const im = ref.current; if (im?.complete && im.naturalWidth) setShown(src); }, [src]);
+  const ready = !!src && shown === src;
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {placeholder && placeholder !== src && <img src={placeholder} alt="" aria-hidden className={`absolute inset-0 h-full w-full scale-110 object-cover blur-2xl transition-opacity duration-500 ${ready ? 'opacity-0' : 'opacity-60'}`} />}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {src && <img ref={ref} src={src} alt="" fetchPriority="high" decoding="async" onLoad={() => setShown(src)}
+        className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 ${ready ? 'opacity-100' : 'opacity-0'}`} />}
+    </>
+  );
+}
 
 export function TitleDetail({ item }: { item: TmdbItem }) {
   const onBack = useApp((s) => s.closeDetail);
@@ -100,10 +123,7 @@ export function TitleDetail({ item }: { item: TmdbItem }) {
   const top = (stream?: StreamState) => (
     <div className="space-y-7">
       <section className="relative -mx-[var(--gutter)] min-h-[62vh] overflow-hidden md:min-h-[min(72vh,64vw)]">
-        {(d.backdropPath || d.posterPath) && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img decoding="async" src={posterUrl(d.backdropPath ?? d.posterPath, 'w1280')} alt="" className="fade absolute inset-0 h-full w-full object-cover" />
-        )}
+        <Cover src={posterUrl(d.backdropPath ?? d.posterPath, 'w1280')} placeholder={posterUrl(d.posterPath, 'w342')} />
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-black/10" />
         <div className="absolute inset-0 hidden bg-gradient-to-r from-black/75 via-black/10 to-transparent md:block" />
         <button className="glass absolute left-[var(--gutter)] top-[max(1rem,env(safe-area-inset-top))] z-10 grid h-10 w-10 place-items-center rounded-full text-white md:top-20" onClick={onBack} aria-label="Back" data-tv-back><IconBack size={20} /></button>
