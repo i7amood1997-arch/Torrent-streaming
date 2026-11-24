@@ -68,6 +68,9 @@ function seedColor(n: number) {
   return 'text-red-400';
 }
 
+/** Stream rows built at a time. */
+const ROWS_PAGE = 25;
+
 export function TorrentSearch({ query, context, header, renderHeader }: Props) {
   const debrid = useApp((s) => hasDebrid(s.settings, s.caps));
   const play = useApp((s) => s.play);
@@ -113,6 +116,21 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
 
   const counts = useMemo(() => countByQuality(results), [results]);
   const visible = useMemo(() => applyFilters(results, filters), [results, filters]);
+  // Long lists (a popular title can have 400+ streams) are built a page at a time: building every
+  // row at once froze the title page on phones and TVs. More rows come as the end nears.
+  const ordered = useMemo(() => [...visible.filter((r) => r.url), ...visible.filter((r) => !r.url)], [visible]);
+  const [limit, setLimit] = useState(ROWS_PAGE);
+  useEffect(() => setLimit(ROWS_PAGE), [key, filters]);
+  const rows = ordered.slice(0, limit);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const hasMore = ordered.length > limit;
+  useEffect(() => {
+    const el = moreRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) setLimit((l) => l + ROWS_PAGE); }, { rootMargin: '800px 0px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [limit, hasMore]);
   const set = (p: Partial<ResultFilters>) => setFilters((f) => ({ ...f, ...p }));
   const toggleTier = (q: QualityTier) =>
     set({ qualities: filters.qualities.includes(q) ? filters.qualities.filter((x) => x !== q) : [...filters.qualities, q] });
@@ -252,7 +270,7 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
               Direct links <span className="font-normal normal-case text-ink-400">· start instantly, no seeders needed</span>
             </li>
           )}
-          {[...visible.filter((r) => r.url), ...visible.filter((r) => !r.url)].map((r, i, all) => (
+          {rows.map((r, i, all) => (
             <Fragment key={r.id}>
             {!r.url && i > 0 && all[i - 1].url && (
               <li className="px-1 pt-3 text-xs font-semibold uppercase tracking-wide text-ink-400">Torrents</li>
@@ -282,6 +300,13 @@ export function TorrentSearch({ query, context, header, renderHeader }: Props) {
             </li>
             </Fragment>
           ))}
+          {hasMore && (
+            <li>
+              <button ref={moreRef} className="btn-glass h-11 w-full rounded-full text-sm" onClick={() => setLimit((l) => l + ROWS_PAGE)}>
+                Show more streams ({ordered.length - limit} more)
+              </button>
+            </li>
+          )}
         </ul>
       )}
 
