@@ -116,6 +116,29 @@ export function activeCues(cues: SubtitleCue[], t: number): SubtitleCue[] {
   return out;
 }
 
+/** Gaps between lines shorter than this are bridged (the line stays until the next one starts). */
+export const SUB_GAP_BRIDGE = 0.6;
+
+/**
+ * The lines to show at time t. Files often leave a few hundred milliseconds between one line and
+ * the next; shown literally, the text blinks off and on (and, with two languages, the other line
+ * jumps). Like streaming players, keep the previous line up through such a short gap.
+ */
+export function shownCues(cues: SubtitleCue[], t: number, bridge = SUB_GAP_BRIDGE): SubtitleCue[] {
+  const now = activeCues(cues, t);
+  if (now.length) return now;
+  // The last line that started before t, and the one after it.
+  let lo = 0, hi = cues.length - 1, last = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (cues[mid].start <= t) { last = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  const prev = cues[last];
+  const next = cues[last + 1];
+  if (prev && next && t - prev.end < bridge && next.start - prev.end < bridge) return [prev];
+  return [];
+}
+
 const RTL_LANGS = new Set(['ar', 'fa', 'he', 'ur', 'ps', 'ku', 'yi']);
 export const isRtlLang = (lang?: string) => !!lang && RTL_LANGS.has(lang.slice(0, 2).toLowerCase());
 export const hasRtlChars = (s: string) => /[֐-ࣿיִ-﷿ﹰ-ﻼ]/.test(s);

@@ -740,6 +740,36 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
   const seekFillRef = useRef<HTMLDivElement>(null);
   const seekRef = useRef<HTMLInputElement>(null);
   const dragging = useRef(false);
+  /** Dragging the seek bar (its time shows over the thumb, not in the middle of the video). */
+  const [barDrag, setBarDrag] = useState(false);
+  /** Mouse over the seek bar: the time under the pointer. */
+  const [hoverAt, setHoverAt] = useState<{ t: number; frac: number }>();
+  const scrubRef = useRef<number>(undefined);
+  scrubRef.current = scrub;
+  const seekBarTime = (e: { clientX: number; currentTarget: HTMLElement }) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - r.left - 7) / Math.max(1, r.width - 14)));
+    return { t: frac * (duration || 0), frac };
+  };
+  // Drag: the thumb, bar and time follow the pointer; the video jumps once, on release (each jump
+  // in a torrent stream costs a new download, so not on every pixel).
+  const startBarDrag = () => {
+    dragging.current = true;
+    setBarDrag(true);
+    setScrub(videoRef.current?.currentTime ?? 0);
+    const end = () => {
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      dragging.current = false;
+      setBarDrag(false);
+      const v = videoRef.current;
+      if (v && scrubRef.current != null) v.currentTime = scrubRef.current;
+      setScrub(undefined);
+    };
+    // Capture: the controls bar stops pointerup from bubbling (taps there mustn't reach the video).
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+  };
   useEffect(() => {
     if (!playing || !controls || scrub != null) return;
     let raf = 0;
@@ -1101,7 +1131,7 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
           </div>
         )}
 
-        {scrub != null && (
+        {scrub != null && !barDrag && (
           <div className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-lg bg-black/70 px-4 py-2 text-lg font-semibold tabular-nums text-white">
             {fmtTime(scrub)} / {fmtTime(duration)}
           </div>
@@ -1144,8 +1174,20 @@ export function VideoPlayer({ onBack }: { onBack?: () => void }) {
                 <div className="absolute inset-y-0 left-0 bg-white/35" style={{ width: `${duration ? (buffered / duration) * 100 : 0}%` }} />
                 <div ref={seekFillRef} className="absolute inset-y-0 left-0 bg-accent" style={{ width: `${duration ? (shownTime / duration) * 100 : 0}%` }} />
               </div>
-              <input ref={seekRef} type="range" aria-label="Seek" onPointerDown={() => { dragging.current = true; }} onPointerUp={() => { dragging.current = false; }} onPointerCancel={() => { dragging.current = false; }} min={0} max={duration || 0} step={0.1} value={shownTime}
-                onChange={(e) => { const v = videoRef.current; if (v) v.currentTime = +e.target.value; }}
+              {(barDrag || hoverAt) && duration > 0 && (
+                <div className="pointer-events-none absolute bottom-full mb-2 -translate-x-1/2 rounded-md bg-black/80 px-2 py-1 text-[13px] font-semibold tabular-nums text-white shadow-lg ring-1 ring-white/15"
+                  style={{ left: `calc(7px + (100% - 14px) * ${barDrag && scrub != null ? scrub / duration : hoverAt!.frac})` }}>
+                  {fmtTime(barDrag && scrub != null ? scrub : hoverAt!.t)}
+                </div>
+              )}
+              <input ref={seekRef} type="range" aria-label="Seek" min={0} max={duration || 0} step={0.1} value={shownTime}
+                onPointerDown={startBarDrag}
+                onPointerMove={(e) => { if (e.pointerType === 'mouse' && !dragging.current) setHoverAt(seekBarTime(e)); }}
+                onPointerLeave={() => setHoverAt(undefined)}
+                onChange={(e) => {
+                  if (dragging.current) { setScrub(+e.target.value); return; }
+                  const v = videoRef.current; if (v) v.currentTime = +e.target.value; // keyboard
+                }}
                 className="seek absolute inset-0 h-5 w-full cursor-pointer appearance-none bg-transparent" />
             </div>
           </div>

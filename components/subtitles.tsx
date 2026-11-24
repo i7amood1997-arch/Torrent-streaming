@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/client-api';
 import { useApp, type PlayRequest } from '@/lib/store';
-import { activeCues, decodeSubtitleBytes, firstWorking, hasRtlChars, isRtlLang, parseSubtitles, rankTracks, releaseSimilarity } from '@/lib/subtitle-parser';
+import { decodeSubtitleBytes, firstWorking, hasRtlChars, isRtlLang, parseSubtitles, rankTracks, releaseSimilarity, shownCues } from '@/lib/subtitle-parser';
 import { firstPassLines, languageName, plainLine, translateLines, upgradeLines, type BatchTranslateFn } from '@/lib/translate';
 import { getTranslation, putTranslation } from '@/lib/translation-cache';
 import type { SubtitleCue, SubtitleTrackInfo } from '@/lib/types';
@@ -590,7 +590,7 @@ export function SubtitleOverlay({ video, subs }: { video: HTMLVideoElement | nul
         const tr = subs.loaded[lang];
         if (!tr?.cues.length) continue;
         const { shiftMs, scale } = subs.timing(lang);
-        const cues = activeCues(tr.cues, (t - shiftMs / 1000) / scale);
+        const cues = shownCues(tr.cues, (t - shiftMs / 1000) / scale);
         if (cues.length) out.push({ lang, text: cues.map((c) => c.text).join('\n') });
       }
       // Single-language fallback: if the primary language has no track loaded, show whatever is loaded.
